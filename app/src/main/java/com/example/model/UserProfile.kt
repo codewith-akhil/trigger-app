@@ -5,8 +5,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 data class UserProfile(
-    val name: String = "Akhil",
-    val email: String = "akhil@gmail.com",
+    val id: String = "",
+    val name: String = "",
+    val email: String = "",
     val username: String = "",
     val about: String = "Hey there! I am using Trigger App.",
     val links: String = "",
@@ -15,14 +16,7 @@ data class UserProfile(
 
 object UserRepository {
     private val _profile = MutableStateFlow(
-        UserProfile(
-            name = "Akhil",
-            email = "akhil@gmail.com",
-            username = "",
-            about = "Hey there! I am using Trigger App.",
-            links = "",
-            avatarUri = null
-        )
+        UserProfile()
     )
     val profile: StateFlow<UserProfile> = _profile.asStateFlow()
 
@@ -50,7 +44,12 @@ object UserRepository {
         _profile.value = _profile.value.copy(avatarUri = uri)
     }
 
-    fun setUser(name: String, email: String) {
-        _profile.value = _profile.value.copy(name = name, email = email)
+    fun setUser(name: String, email: String, id: String = "") {
+        _profile.value = _profile.value.copy(name = name, email = email, id = id)
+    }
+
+    fun clear() {
+        _profile.value = UserProfile()
     }
 }
+

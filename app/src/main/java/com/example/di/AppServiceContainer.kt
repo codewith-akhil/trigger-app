@@ -7,6 +7,8 @@ import com.example.model.CallType
 import com.example.model.DomainMessage
 import com.example.model.MessageType
 import com.example.service.*
+import com.example.service.supabase.SupabaseClient
+import com.example.service.webrtc.AgoraWebRtcService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,9 +37,16 @@ object AppServiceContainer {
         private set
     lateinit var notificationService: NotificationService
         private set
+    lateinit var supabaseClient: SupabaseClient
+        private set
+    lateinit var agoraWebRtcService: AgoraWebRtcService
+        private set
 
     fun initialize(context: Context) {
         if (initialized) return
+
+        supabaseClient = SupabaseClient()
+        agoraWebRtcService = AgoraWebRtcService(appScope)
 
         database = ChatDatabase.getInstance(context)
         chatRepository = ChatRepositoryImpl(database, appScope)

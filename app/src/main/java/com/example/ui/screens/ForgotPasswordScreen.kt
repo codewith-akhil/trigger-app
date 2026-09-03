@@ -25,7 +25,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.di.AppServiceContainer
+import com.example.service.supabase.SupabaseResult
 import com.example.ui.theme.*
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,10 +37,11 @@ fun ForgotPasswordScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var email by remember { mutableStateOf("akhil@gmail.com") }
+    var email by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isSubmitting by remember { mutableStateOf(false) }
 
+    val coroutineScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
 
@@ -50,8 +54,16 @@ fun ForgotPasswordScreen(
         }
 
         isSubmitting = true
-        val generatedOtp = (100000..999999).random().toString()
-        onNavigateToOtp(trimmedEmail, generatedOtp)
+        coroutineScope.launch {
+            val result = AppServiceContainer.supabaseClient.recoverPassword(trimmedEmail)
+            isSubmitting = false
+            if (result is SupabaseResult.Success) {
+                val generatedOtp = (100000..999999).random().toString()
+                onNavigateToOtp(trimmedEmail, generatedOtp)
+            } else if (result is SupabaseResult.Error) {
+                errorMessage = result.message
+            }
+        }
     }
 
     Scaffold(
@@ -66,7 +78,7 @@ fun ForgotPasswordScreen(
                         text = "Reset password",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        color = WhatsAppHeaderGreen
+                        color = TriggerHeaderGreen
                     )
                 },
                 navigationIcon = {
@@ -74,7 +86,7 @@ fun ForgotPasswordScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
-                            tint = WhatsAppHeaderGreen
+                            tint = TriggerHeaderGreen
                         )
                     }
                 },
@@ -114,7 +126,7 @@ fun ForgotPasswordScreen(
                     Icon(
                         imageVector = Icons.Outlined.Email,
                         contentDescription = null,
-                        tint = WhatsAppHeaderGreen
+                        tint = TriggerHeaderGreen
                     )
                 },
                 trailingIcon = {
@@ -136,9 +148,9 @@ fun ForgotPasswordScreen(
                     }
                 ),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = WhatsAppFabGreen,
+                    focusedBorderColor = TriggerFabGreen,
                     unfocusedBorderColor = GeometricBorderLight,
-                    focusedLabelColor = WhatsAppFabGreen
+                    focusedLabelColor = TriggerFabGreen
                 ),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
@@ -184,7 +196,7 @@ fun ForgotPasswordScreen(
                     .height(48.dp)
                     .testTag("send_reset_code_button"),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = WhatsAppFabGreen,
+                    containerColor = TriggerFabGreen,
                     contentColor = Color.White
                 ),
                 shape = RoundedCornerShape(24.dp),
@@ -207,3 +219,4 @@ fun ForgotPasswordScreen(
         }
     }
 }
+

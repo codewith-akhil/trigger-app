@@ -28,7 +28,10 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.di.AppServiceContainer
+import com.example.service.supabase.SupabaseResult
 import com.example.ui.theme.*
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +48,7 @@ fun ResetPasswordScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isSubmitting by remember { mutableStateOf(false) }
 
+    val coroutineScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
 
@@ -60,7 +64,15 @@ fun ResetPasswordScreen(
         }
 
         isSubmitting = true
-        onResetSuccess()
+        coroutineScope.launch {
+            val result = AppServiceContainer.supabaseClient.updatePassword(newPassword)
+            isSubmitting = false
+            if (result is SupabaseResult.Success) {
+                onResetSuccess()
+            } else if (result is SupabaseResult.Error) {
+                errorMessage = result.message
+            }
+        }
     }
 
     Scaffold(
@@ -75,7 +87,7 @@ fun ResetPasswordScreen(
                         text = "Create new password",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        color = WhatsAppHeaderGreen
+                        color = TriggerHeaderGreen
                     )
                 },
                 navigationIcon = {
@@ -83,7 +95,7 @@ fun ResetPasswordScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
-                            tint = WhatsAppHeaderGreen
+                            tint = TriggerHeaderGreen
                         )
                     }
                 },
@@ -123,7 +135,7 @@ fun ResetPasswordScreen(
                     Icon(
                         imageVector = Icons.Outlined.Lock,
                         contentDescription = null,
-                        tint = WhatsAppHeaderGreen
+                        tint = TriggerHeaderGreen
                     )
                 },
                 trailingIcon = {
@@ -145,9 +157,9 @@ fun ResetPasswordScreen(
                     onNext = { focusManager.moveFocus(FocusDirection.Down) }
                 ),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = WhatsAppFabGreen,
+                    focusedBorderColor = TriggerFabGreen,
                     unfocusedBorderColor = GeometricBorderLight,
-                    focusedLabelColor = WhatsAppFabGreen
+                    focusedLabelColor = TriggerFabGreen
                 ),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
@@ -170,7 +182,7 @@ fun ResetPasswordScreen(
                     Icon(
                         imageVector = Icons.Outlined.Lock,
                         contentDescription = null,
-                        tint = WhatsAppHeaderGreen
+                        tint = TriggerHeaderGreen
                     )
                 },
                 trailingIcon = {
@@ -195,9 +207,9 @@ fun ResetPasswordScreen(
                     }
                 ),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = WhatsAppFabGreen,
+                    focusedBorderColor = TriggerFabGreen,
                     unfocusedBorderColor = GeometricBorderLight,
-                    focusedLabelColor = WhatsAppFabGreen
+                    focusedLabelColor = TriggerFabGreen
                 ),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
@@ -243,7 +255,7 @@ fun ResetPasswordScreen(
                     .height(48.dp)
                     .testTag("reset_password_submit_button"),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = WhatsAppFabGreen,
+                    containerColor = TriggerFabGreen,
                     contentColor = Color.White
                 ),
                 shape = RoundedCornerShape(24.dp),
@@ -266,3 +278,4 @@ fun ResetPasswordScreen(
         }
     }
 }
+

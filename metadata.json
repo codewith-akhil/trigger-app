@@ -1,6 +1,6 @@
 {
   "name": "Trigger App",
-  "description": "Trigger App featuring modern WhatsApp Dashboard, real-time interactive Chat, Email + Password Authentication, 6-digit Email OTP Verification, Forgot Password Flow, Profile with Username & Email, and New Message contact picker.",
+  "description": "Trigger App - Modern full-stack communication platform with Supabase backend (Auth, Storage, Database, Functions), Agora WebRTC live video/audio calling and interactive streaming, 5-tab navigation (Chats, Updates, Stream, Calls, Profile), 6-digit email OTP verification, and profile management.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

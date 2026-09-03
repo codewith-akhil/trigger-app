@@ -33,8 +33,11 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.di.AppServiceContainer
 import com.example.model.UserRepository
+import com.example.service.supabase.SupabaseResult
 import com.example.ui.theme.*
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,8 +47,8 @@ fun SignUpScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var fullName by remember { mutableStateOf("Akhil") }
-    var email by remember { mutableStateOf("akhil@gmail.com") }
+    var fullName by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
@@ -53,6 +56,7 @@ fun SignUpScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isSubmitting by remember { mutableStateOf(false) }
 
+    val coroutineScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
 
@@ -79,10 +83,20 @@ fun SignUpScreen(
         }
 
         isSubmitting = true
-        // Generate authentic 6-digit email OTP
-        val generatedOtp = (100000..999999).random().toString()
-        UserRepository.setUser(name = trimmedName, email = trimmedEmail)
-        onNavigateToOtp(trimmedName, trimmedEmail, generatedOtp)
+        coroutineScope.launch {
+            when (val result = AppServiceContainer.supabaseClient.signUp(trimmedEmail, password, trimmedName)) {
+                is SupabaseResult.Success -> {
+                    isSubmitting = false
+                    val generatedOtp = (100000..999999).random().toString()
+                    UserRepository.setUser(name = trimmedName, email = trimmedEmail, id = result.data.id)
+                    onNavigateToOtp(trimmedName, trimmedEmail, generatedOtp)
+                }
+                is SupabaseResult.Error -> {
+                    isSubmitting = false
+                    errorMessage = result.message
+                }
+            }
+        }
     }
 
     Scaffold(
@@ -97,7 +111,7 @@ fun SignUpScreen(
                         text = "Create your account",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        color = WhatsAppHeaderGreen
+                        color = TriggerHeaderGreen
                     )
                 },
                 navigationIcon = {
@@ -105,7 +119,7 @@ fun SignUpScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
-                            tint = WhatsAppHeaderGreen
+                            tint = TriggerHeaderGreen
                         )
                     }
                 },
@@ -140,12 +154,12 @@ fun SignUpScreen(
                     errorMessage = null
                 },
                 label = { Text("Full Name") },
-                placeholder = { Text("e.g. Akhil") },
+                placeholder = { Text("Enter your full name") },
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Outlined.Person,
                         contentDescription = null,
-                        tint = WhatsAppHeaderGreen
+                        tint = TriggerHeaderGreen
                     )
                 },
                 singleLine = true,
@@ -157,9 +171,9 @@ fun SignUpScreen(
                     onNext = { focusManager.moveFocus(FocusDirection.Down) }
                 ),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = WhatsAppFabGreen,
+                    focusedBorderColor = TriggerFabGreen,
                     unfocusedBorderColor = GeometricBorderLight,
-                    focusedLabelColor = WhatsAppFabGreen
+                    focusedLabelColor = TriggerFabGreen
                 ),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
@@ -182,7 +196,7 @@ fun SignUpScreen(
                     Icon(
                         imageVector = Icons.Outlined.Email,
                         contentDescription = null,
-                        tint = WhatsAppHeaderGreen
+                        tint = TriggerHeaderGreen
                     )
                 },
                 singleLine = true,
@@ -194,9 +208,9 @@ fun SignUpScreen(
                     onNext = { focusManager.moveFocus(FocusDirection.Down) }
                 ),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = WhatsAppFabGreen,
+                    focusedBorderColor = TriggerFabGreen,
                     unfocusedBorderColor = GeometricBorderLight,
-                    focusedLabelColor = WhatsAppFabGreen
+                    focusedLabelColor = TriggerFabGreen
                 ),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
@@ -219,7 +233,7 @@ fun SignUpScreen(
                     Icon(
                         imageVector = Icons.Outlined.Lock,
                         contentDescription = null,
-                        tint = WhatsAppHeaderGreen
+                        tint = TriggerHeaderGreen
                     )
                 },
                 trailingIcon = {
@@ -241,9 +255,9 @@ fun SignUpScreen(
                     onNext = { focusManager.moveFocus(FocusDirection.Down) }
                 ),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = WhatsAppFabGreen,
+                    focusedBorderColor = TriggerFabGreen,
                     unfocusedBorderColor = GeometricBorderLight,
-                    focusedLabelColor = WhatsAppFabGreen
+                    focusedLabelColor = TriggerFabGreen
                 ),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
@@ -266,7 +280,7 @@ fun SignUpScreen(
                     Icon(
                         imageVector = Icons.Outlined.Lock,
                         contentDescription = null,
-                        tint = WhatsAppHeaderGreen
+                        tint = TriggerHeaderGreen
                     )
                 },
                 trailingIcon = {
@@ -291,9 +305,9 @@ fun SignUpScreen(
                     }
                 ),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = WhatsAppFabGreen,
+                    focusedBorderColor = TriggerFabGreen,
                     unfocusedBorderColor = GeometricBorderLight,
-                    focusedLabelColor = WhatsAppFabGreen
+                    focusedLabelColor = TriggerFabGreen
                 ),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
@@ -339,7 +353,7 @@ fun SignUpScreen(
                     .height(48.dp)
                     .testTag("signup_submit_button"),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = WhatsAppFabGreen,
+                    containerColor = TriggerFabGreen,
                     contentColor = Color.White
                 ),
                 shape = RoundedCornerShape(24.dp),
@@ -377,8 +391,9 @@ fun SignUpScreen(
                     text = "Log in",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
-                    color = WhatsAppHeaderGreen,
+                    color = TriggerHeaderGreen,
                     modifier = Modifier
+
                         .clickable { onNavigateToLogin() }
                         .padding(4.dp)
                         .testTag("navigate_to_login_button")

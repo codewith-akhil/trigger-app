@@ -38,10 +38,10 @@ fun TriggerAppNavHost(
         mutableStateOf(LanguageRepository.languages.first())
     }
     var currentEmail by remember {
-        mutableStateOf("akhil@gmail.com")
+        mutableStateOf("")
     }
     var currentOtp by remember {
-        mutableStateOf("123456")
+        mutableStateOf("")
     }
     var otpPurpose by remember {
         mutableStateOf(OtpPurpose.SIGN_UP)

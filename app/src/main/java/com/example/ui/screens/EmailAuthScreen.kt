@@ -32,8 +32,11 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.di.AppServiceContainer
 import com.example.model.UserRepository
+import com.example.service.supabase.SupabaseResult
 import com.example.ui.theme.*
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,12 +47,13 @@ fun EmailAuthScreen(
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    var email by remember { mutableStateOf("akhil@gmail.com") }
+    var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
 
+    val coroutineScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
 
@@ -66,8 +70,24 @@ fun EmailAuthScreen(
         }
 
         isLoading = true
-        UserRepository.updateEmail(trimmedEmail)
-        onLoginSuccess()
+        coroutineScope.launch {
+            when (val result = AppServiceContainer.supabaseClient.signInWithPassword(trimmedEmail, password)) {
+                is SupabaseResult.Success -> {
+                    val user = result.data.user
+                    UserRepository.setUser(
+                        name = user.fullName ?: trimmedEmail.substringBefore("@"),
+                        email = user.email,
+                        id = user.id
+                    )
+                    isLoading = false
+                    onLoginSuccess()
+                }
+                is SupabaseResult.Error -> {
+                    isLoading = false
+                    errorMessage = result.message
+                }
+            }
+        }
     }
 
     Scaffold(
@@ -82,7 +102,7 @@ fun EmailAuthScreen(
                         text = "Enter your email",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        color = WhatsAppHeaderGreen
+                        color = TriggerHeaderGreen
                     )
                 },
                 navigationIcon = {
@@ -91,7 +111,7 @@ fun EmailAuthScreen(
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "Back",
-                                tint = WhatsAppHeaderGreen
+                                tint = TriggerHeaderGreen
                             )
                         }
                     }
@@ -132,7 +152,7 @@ fun EmailAuthScreen(
                     Icon(
                         imageVector = Icons.Outlined.Email,
                         contentDescription = null,
-                        tint = WhatsAppHeaderGreen
+                        tint = TriggerHeaderGreen
                     )
                 },
                 trailingIcon = {
@@ -151,9 +171,9 @@ fun EmailAuthScreen(
                     onNext = { focusManager.moveFocus(FocusDirection.Down) }
                 ),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = WhatsAppFabGreen,
+                    focusedBorderColor = TriggerFabGreen,
                     unfocusedBorderColor = GeometricBorderLight,
-                    focusedLabelColor = WhatsAppFabGreen
+                    focusedLabelColor = TriggerFabGreen
                 ),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
@@ -176,7 +196,7 @@ fun EmailAuthScreen(
                     Icon(
                         imageVector = Icons.Outlined.Lock,
                         contentDescription = null,
-                        tint = WhatsAppHeaderGreen
+                        tint = TriggerHeaderGreen
                     )
                 },
                 trailingIcon = {
@@ -201,9 +221,9 @@ fun EmailAuthScreen(
                     }
                 ),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = WhatsAppFabGreen,
+                    focusedBorderColor = TriggerFabGreen,
                     unfocusedBorderColor = GeometricBorderLight,
-                    focusedLabelColor = WhatsAppFabGreen
+                    focusedLabelColor = TriggerFabGreen
                 ),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
@@ -220,7 +240,7 @@ fun EmailAuthScreen(
             ) {
                 Text(
                     text = "Forgot password?",
-                    color = WhatsAppHeaderGreen,
+                    color = TriggerHeaderGreen,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
@@ -268,7 +288,7 @@ fun EmailAuthScreen(
                     .height(48.dp)
                     .testTag("login_submit_button"),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = WhatsAppFabGreen,
+                    containerColor = TriggerFabGreen,
                     contentColor = Color.White
                 ),
                 shape = RoundedCornerShape(24.dp),
@@ -306,7 +326,7 @@ fun EmailAuthScreen(
                     text = "Sign up",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
-                    color = WhatsAppHeaderGreen,
+                    color = TriggerHeaderGreen,
                     modifier = Modifier
                         .clickable { onNavigateToSignUp() }
                         .padding(4.dp)
@@ -316,3 +336,4 @@ fun EmailAuthScreen(
         }
     }
 }
+

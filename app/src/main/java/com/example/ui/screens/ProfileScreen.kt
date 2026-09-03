@@ -36,10 +36,10 @@ import coil.compose.AsyncImage
 import com.example.R
 import com.example.model.UserRepository
 
-private val WhatsAppDarkBg = Color(0xFF0B141B)
-private val WhatsAppDarkCard = Color(0xFF111B21)
-private val WhatsAppGreenAccent = Color(0xFF25D366)
-private val WhatsAppTextSecondary = Color(0xFF8696A0)
+private val TriggerDarkBg = Color(0xFF0B141B)
+private val TriggerDarkCard = Color(0xFF111B21)
+private val TriggerGreenAccent = Color(0xFF25D366)
+private val TriggerTextSecondary = Color(0xFF8696A0)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,7 +71,7 @@ fun ProfileScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("profile_screen"),
-        containerColor = WhatsAppDarkBg,
+        containerColor = TriggerDarkBg,
         topBar = {
             TopAppBar(
                 title = {
@@ -92,7 +92,7 @@ fun ProfileScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = WhatsAppDarkBg
+                    containerColor = TriggerDarkBg
                 )
             )
         }
@@ -128,7 +128,7 @@ fun ProfileScreen(
                             modifier = Modifier.fillMaxSize()
                         )
                     } else {
-                        // WhatsApp Default Grey Silhouette
+                        // Default Silhouette
                         Icon(
                             imageVector = Icons.Filled.Person,
                             contentDescription = "Profile Photo",
@@ -144,7 +144,7 @@ fun ProfileScreen(
                         .size(46.dp)
                         .align(Alignment.BottomEnd)
                         .clip(CircleShape)
-                        .background(WhatsAppGreenAccent)
+                        .background(TriggerGreenAccent)
                         .clickable {
                             photoPickerLauncher.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -167,8 +167,8 @@ fun ProfileScreen(
             ProfileDetailItem(
                 icon = Icons.Outlined.Person,
                 label = "Name",
-                value = profile.name.ifEmpty { "Akhil" },
-                isValueGreen = false,
+                value = profile.name.ifEmpty { "Set Name" },
+                isValueGreen = profile.name.isEmpty(),
                 onClick = { showEditNameDialog = true },
                 testTag = "profile_name_item"
             )
@@ -203,8 +203,8 @@ fun ProfileScreen(
             ProfileDetailItem(
                 icon = Icons.Outlined.Email,
                 label = "Email",
-                value = profile.email.ifEmpty { "akhil@gmail.com" },
-                isValueGreen = false,
+                value = profile.email.ifEmpty { "Add email address" },
+                isValueGreen = profile.email.isEmpty(),
                 onClick = { showEditEmailDialog = true },
                 testTag = "profile_email_item"
             )
@@ -308,7 +308,7 @@ fun ProfileDetailItem(
         Icon(
             imageVector = icon,
             contentDescription = label,
-            tint = WhatsAppTextSecondary,
+            tint = TriggerTextSecondary,
             modifier = Modifier.size(24.dp)
         )
 
@@ -318,21 +318,21 @@ fun ProfileDetailItem(
             Text(
                 text = label,
                 fontSize = 14.sp,
-                color = WhatsAppTextSecondary
+                color = TriggerTextSecondary
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = value,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Normal,
-                color = if (isValueGreen) WhatsAppGreenAccent else Color.White
+                color = if (isValueGreen) TriggerGreenAccent else Color.White
             )
         }
 
         Icon(
             imageVector = Icons.Filled.Edit,
             contentDescription = "Edit $label",
-            tint = WhatsAppTextSecondary.copy(alpha = 0.5f),
+            tint = TriggerTextSecondary.copy(alpha = 0.5f),
             modifier = Modifier.size(18.dp)
         )
     }
@@ -360,15 +360,15 @@ fun ProfileEditDialog(
                     value = textValue,
                     onValueChange = { textValue = it },
                     prefix = if (prefix != null) {
-                        { Text(prefix, color = WhatsAppGreenAccent) }
+                        { Text(prefix, color = TriggerGreenAccent) }
                     } else null,
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Color.White,
                         unfocusedTextColor = Color.White,
-                        focusedBorderColor = WhatsAppGreenAccent,
-                        unfocusedBorderColor = WhatsAppTextSecondary,
-                        cursorColor = WhatsAppGreenAccent
+                        focusedBorderColor = TriggerGreenAccent,
+                        unfocusedBorderColor = TriggerTextSecondary,
+                        cursorColor = TriggerGreenAccent
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -377,15 +377,16 @@ fun ProfileEditDialog(
         confirmButton = {
             Button(
                 onClick = { onConfirm(textValue) },
-                colors = ButtonDefaults.buttonColors(containerColor = WhatsAppGreenAccent)
+                colors = ButtonDefaults.buttonColors(containerColor = TriggerGreenAccent)
             ) {
                 Text("Save", color = Color.White, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = WhatsAppTextSecondary)
+                Text("Cancel", color = TriggerTextSecondary)
             }
         }
     )
 }
+

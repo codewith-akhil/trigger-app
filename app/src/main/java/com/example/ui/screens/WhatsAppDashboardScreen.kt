@@ -36,7 +36,7 @@ import com.example.model.ChatRepository
 import com.example.ui.theme.*
 
 enum class DashboardTab {
-    CHATS, UPDATES, COMMUNITIES, CALLS
+    CHATS, UPDATES, STREAM, CALLS, PROFILE
 }
 
 enum class ChatFilter {
@@ -57,11 +57,17 @@ fun WhatsAppDashboardScreen(
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedFilter by viewModel.selectedFilter.collectAsState()
 
+    val agoraCallState by com.example.di.AppServiceContainer.agoraService.callState.collectAsState()
+
     var selectedTab by remember { mutableStateOf(DashboardTab.CHATS) }
     var showTopMenu by remember { mutableStateOf(false) }
     var showNewChatDialog by remember { mutableStateOf(false) }
     var showStatusStoryDialog by remember { mutableStateOf<String?>(null) }
     var showCameraDialog by remember { mutableStateOf(false) }
+    var showGoLiveDialog by remember { mutableStateOf(false) }
+    var showActiveCallDialog by remember { mutableStateOf(false) }
+    var activeCallContactName by remember { mutableStateOf("Contact") }
+    var activeCallIsVideo by remember { mutableStateOf(false) }
 
     val allChats = remember(dbConversations) {
         if (dbConversations.isNotEmpty()) {
@@ -91,46 +97,48 @@ fun WhatsAppDashboardScreen(
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
-            .testTag("whatsapp_dashboard_screen"),
+            .testTag("trigger_dashboard_screen"),
         containerColor = Color.White,
         topBar = {
-            Column {
-                WhatsAppTopHeader(
-                    onCameraClick = { showCameraDialog = true },
-                    onMenuClick = { showTopMenu = true },
-                    showMenu = showTopMenu,
-                    onDismissMenu = { showTopMenu = false },
-                    onOpenProfile = onOpenProfile,
-                    onRestartOnboarding = onRestartFlow,
-                    onToggleNetwork = { viewModel.toggleNetworkConnection() }
-                )
-                if (connectionState == com.example.model.PresenceStatus.OFFLINE) {
-                    Surface(color = Color(0xFFE53935), modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Filled.CloudOff, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Waiting for network...", color = Color.White, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                            Text(
-                                "Reconnect",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.clickable { viewModel.toggleNetworkConnection() }
-                            )
+            if (selectedTab != DashboardTab.PROFILE) {
+                Column {
+                    WhatsAppTopHeader(
+                        onCameraClick = { showCameraDialog = true },
+                        onMenuClick = { showTopMenu = true },
+                        showMenu = showTopMenu,
+                        onDismissMenu = { showTopMenu = false },
+                        onOpenProfile = { selectedTab = DashboardTab.PROFILE },
+                        onRestartOnboarding = onRestartFlow,
+                        onToggleNetwork = { viewModel.toggleNetworkConnection() }
+                    )
+                    if (connectionState == com.example.model.PresenceStatus.OFFLINE) {
+                        Surface(color = Color(0xFFE53935), modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Filled.CloudOff, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Waiting for network...", color = Color.White, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                Text(
+                                    "Reconnect",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.clickable { viewModel.toggleNetworkConnection() }
+                                )
+                            }
                         }
-                    }
-                } else if (connectionState == com.example.model.PresenceStatus.RECONNECTING) {
-                    Surface(color = Color(0xFFF57C00), modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(color = Color.White, strokeWidth = 1.5.dp, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Reconnecting...", color = Color.White, fontSize = 12.sp)
+                    } else if (connectionState == com.example.model.PresenceStatus.RECONNECTING) {
+                        Surface(color = Color(0xFFF57C00), modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(color = Color.White, strokeWidth = 1.5.dp, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Reconnecting...", color = Color.White, fontSize = 12.sp)
+                            }
                         }
                     }
                 }
@@ -144,21 +152,61 @@ fun WhatsAppDashboardScreen(
             )
         },
         floatingActionButton = {
-            if (selectedTab == DashboardTab.CHATS) {
-                FloatingActionButton(
-                    onClick = { onOpenSelectContact() },
-                    shape = RoundedCornerShape(16.dp),
-                    containerColor = WhatsAppFabGreen,
-                    contentColor = Color.White,
-                    elevation = FloatingActionButtonDefaults.elevation(3.dp),
-                    modifier = Modifier.testTag("new_chat_fab")
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.AddComment,
-                        contentDescription = "New Chat",
-                        modifier = Modifier.size(24.dp)
-                    )
+            when (selectedTab) {
+                DashboardTab.CHATS -> {
+                    FloatingActionButton(
+                        onClick = { onOpenSelectContact() },
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = TriggerFabGreen,
+                        contentColor = Color.White,
+                        elevation = FloatingActionButtonDefaults.elevation(3.dp),
+                        modifier = Modifier.testTag("new_chat_fab")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AddComment,
+                            contentDescription = "New Chat",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
+                DashboardTab.STREAM -> {
+                    FloatingActionButton(
+                        onClick = { showGoLiveDialog = true },
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = TriggerFabGreen,
+                        contentColor = Color.White,
+                        elevation = FloatingActionButtonDefaults.elevation(3.dp),
+                        modifier = Modifier.testTag("go_live_fab")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.LiveTv,
+                            contentDescription = "Go Live",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+                DashboardTab.CALLS -> {
+                    FloatingActionButton(
+                        onClick = {
+                            activeCallContactName = "Live Contact"
+                            activeCallIsVideo = true
+                            com.example.di.AppServiceContainer.agoraService.startCall("call_general", isVideo = true)
+                            showActiveCallDialog = true
+                        },
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = TriggerFabGreen,
+                        contentColor = Color.White,
+                        elevation = FloatingActionButtonDefaults.elevation(3.dp),
+                        modifier = Modifier.testTag("new_call_fab")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AddCall,
+                            contentDescription = "New Call",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+                else -> {}
             }
         }
     ) { innerPadding ->
@@ -170,7 +218,7 @@ fun WhatsAppDashboardScreen(
             when (selectedTab) {
                 DashboardTab.CHATS -> {
                     Column(modifier = Modifier.fillMaxSize()) {
-                        // "Ask Meta AI or Search" Pill Box
+                        // "Search or Ask Trigger AI" Pill Box
                         MetaAISearchBar(
                             query = searchQuery,
                             onQueryChanged = { viewModel.setSearchQuery(it) }
@@ -186,7 +234,7 @@ fun WhatsAppDashboardScreen(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Chat List matching image 2
+                        // Chat List
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(bottom = 80.dp)
@@ -213,23 +261,59 @@ fun WhatsAppDashboardScreen(
                 DashboardTab.UPDATES -> {
                     UpdatesTabContent(
                         onViewStatus = { name -> showStatusStoryDialog = name },
-                        onNewChat = { onOpenChat("darling", "darling", R.drawable.img_darling_avatar) }
+                        onNewChat = { onOpenSelectContact() }
                     )
                 }
 
-                DashboardTab.COMMUNITIES -> {
-                    CommunitiesTabContent()
+                DashboardTab.STREAM -> {
+                    StreamTabContent(
+                        onGoLive = { showGoLiveDialog = true }
+                    )
                 }
 
                 DashboardTab.CALLS -> {
                     CallsTabContent(
                         onCallContact = { name ->
-                            onOpenChat("darling", name, R.drawable.img_darling_avatar)
+                            activeCallContactName = name
+                            activeCallIsVideo = false
+                            com.example.di.AppServiceContainer.agoraService.startCall("call_${name.lowercase().replace(" ", "_")}", isVideo = false)
+                            showActiveCallDialog = true
+                        },
+                        onVideoCallContact = { name ->
+                            activeCallContactName = name
+                            activeCallIsVideo = true
+                            com.example.di.AppServiceContainer.agoraService.startCall("call_${name.lowercase().replace(" ", "_")}", isVideo = true)
+                            showActiveCallDialog = true
                         }
+                    )
+                }
+
+                DashboardTab.PROFILE -> {
+                    ProfileScreen(
+                        onBack = { selectedTab = DashboardTab.CHATS }
                     )
                 }
             }
         }
+    }
+
+    // Agora Active Call Dialog
+    if (showActiveCallDialog) {
+        AgoraActiveCallDialog(
+            contactName = activeCallContactName,
+            isVideo = activeCallIsVideo,
+            onDismiss = {
+                com.example.di.AppServiceContainer.agoraService.endCall()
+                showActiveCallDialog = false
+            }
+        )
+    }
+
+    // Agora Go Live Dialog
+    if (showGoLiveDialog) {
+        AgoraGoLiveDialog(
+            onDismiss = { showGoLiveDialog = false }
+        )
     }
 
     // New Chat modal sheet
@@ -417,10 +501,10 @@ fun WhatsAppTopHeader(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Brand name "WhatsApp" matching the screenshot!
+            // Brand name "Trigger App"
             Text(
-                text = "WhatsApp",
-                color = WhatsAppHeaderGreen,
+                text = "Trigger App",
+                color = TriggerHeaderGreen,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.3).sp,
@@ -527,7 +611,7 @@ fun MetaAISearchBar(
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Meta AI Colorful Ring Icon (Gradient cyan-blue-purple)
+            // Trigger AI Colorful Ring Icon (Gradient emerald-teal-cyan)
             Box(
                 modifier = Modifier
                     .size(22.dp)
@@ -536,11 +620,11 @@ fun MetaAISearchBar(
                         width = 3.dp,
                         brush = Brush.sweepGradient(
                             listOf(
+                                Color(0xFF00A884),
+                                Color(0xFF008069),
                                 Color(0xFF00C6FF),
-                                Color(0xFF0072FF),
-                                Color(0xFF9D00FF),
-                                Color(0xFFFF007F),
-                                Color(0xFF00C6FF)
+                                Color(0xFF0A56D1),
+                                Color(0xFF00A884)
                             )
                         ),
                         shape = CircleShape
@@ -552,7 +636,7 @@ fun MetaAISearchBar(
             Box(modifier = Modifier.weight(1f)) {
                 if (query.isEmpty()) {
                     Text(
-                        text = "Ask Meta AI or Search",
+                        text = "Search or Ask Trigger AI",
                         color = Color(0xFF667781),
                         fontSize = 15.sp
                     )
@@ -565,7 +649,7 @@ fun MetaAISearchBar(
                         color = Color(0xFF111B21),
                         fontSize = 15.sp
                     ),
-                    cursorBrush = SolidColor(WhatsAppHeaderGreen),
+                    cursorBrush = SolidColor(TriggerHeaderGreen),
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -832,18 +916,18 @@ fun WhatsAppBottomNavBar(
                 onClick = { onTabSelected(DashboardTab.UPDATES) }
             )
 
-            // Tab 3: Communities
+            // Tab 3: Stream
             BottomNavItem(
-                title = "Communities",
-                isSelected = selectedTab == DashboardTab.COMMUNITIES,
+                title = "Stream",
+                isSelected = selectedTab == DashboardTab.STREAM,
                 icon = { isSelected ->
                     Icon(
-                        imageVector = if (isSelected) Icons.Filled.Groups else Icons.Outlined.Groups,
-                        contentDescription = "Communities",
-                        modifier = Modifier.size(24.dp)
+                        imageVector = if (isSelected) Icons.Filled.LiveTv else Icons.Outlined.LiveTv,
+                        contentDescription = "Stream",
+                        modifier = Modifier.size(22.dp)
                     )
                 },
-                onClick = { onTabSelected(DashboardTab.COMMUNITIES) }
+                onClick = { onTabSelected(DashboardTab.STREAM) }
             )
 
             // Tab 4: Calls
@@ -858,6 +942,20 @@ fun WhatsAppBottomNavBar(
                     )
                 },
                 onClick = { onTabSelected(DashboardTab.CALLS) }
+            )
+
+            // Tab 5: Profile
+            BottomNavItem(
+                title = "Profile",
+                isSelected = selectedTab == DashboardTab.PROFILE,
+                icon = { isSelected ->
+                    Icon(
+                        imageVector = if (isSelected) Icons.Filled.Person else Icons.Outlined.Person,
+                        contentDescription = "Profile",
+                        modifier = Modifier.size(22.dp)
+                    )
+                },
+                onClick = { onTabSelected(DashboardTab.PROFILE) }
             )
         }
     }

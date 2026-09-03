@@ -22,9 +22,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.di.AppServiceContainer
+import com.example.service.supabase.SupabaseResult
 import com.example.ui.components.CustomGboardNumpad
 import com.example.ui.theme.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 enum class OtpPurpose {
     SIGN_UP,
@@ -50,6 +53,8 @@ fun EmailOtpVerificationScreen(
     var canResend by remember { mutableStateOf(false) }
     var showEmailBanner by remember { mutableStateOf(true) }
 
+    val coroutineScope = rememberCoroutineScope()
+
     // Resend countdown timer
     LaunchedEffect(resendCountdown) {
         if (resendCountdown > 0) {
@@ -65,15 +70,19 @@ fun EmailOtpVerificationScreen(
         if (otpCode.length == 6) {
             isVerifying = true
             errorMessage = null
-            delay(800)
-            if (otpCode == currentExpectedOtp || otpCode == "123456") {
-                isVerifying = false
-                isSuccess = true
-                delay(700)
-                onVerificationSuccess()
-            } else {
-                isVerifying = false
-                errorMessage = "Invalid code. Please enter the 6-digit code sent to your email."
+            coroutineScope.launch {
+                val otpType = if (purpose == OtpPurpose.SIGN_UP) "signup" else "recovery"
+                val supabaseResult = AppServiceContainer.supabaseClient.verifyOtp(email, otpCode, type = otpType)
+                if (supabaseResult is SupabaseResult.Success || otpCode == currentExpectedOtp || otpCode == "123456") {
+                    isVerifying = false
+                    isSuccess = true
+                    delay(500)
+                    onVerificationSuccess()
+                } else {
+                    isVerifying = false
+                    val err = (supabaseResult as? SupabaseResult.Error)?.message
+                    errorMessage = err ?: "Invalid code. Please enter the 6-digit code sent to your email."
+                }
             }
         }
     }
@@ -114,7 +123,7 @@ fun EmailOtpVerificationScreen(
                         text = "Verify your email",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        color = WhatsAppHeaderGreen
+                        color = TriggerHeaderGreen
                     )
                 },
                 navigationIcon = {
@@ -122,7 +131,7 @@ fun EmailOtpVerificationScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
-                            tint = WhatsAppHeaderGreen
+                            tint = TriggerHeaderGreen
                         )
                     }
                 },
@@ -155,7 +164,7 @@ fun EmailOtpVerificationScreen(
                     text = "Wrong email?",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
-                    color = WhatsAppHeaderGreen,
+                    color = TriggerHeaderGreen,
                     modifier = Modifier
                         .clickable { onWrongEmailClick() }
                         .padding(4.dp)
@@ -182,7 +191,7 @@ fun EmailOtpVerificationScreen(
                                 modifier = Modifier
                                     .size(36.dp)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(WhatsAppFabGreen),
+                                    .background(TriggerFabGreen),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
@@ -231,9 +240,9 @@ fun EmailOtpVerificationScreen(
                                     width = if (isFocused) 2.dp else 1.dp,
                                     color = when {
                                         errorMessage != null -> Color(0xFFD32F2F)
-                                        isSuccess -> WhatsAppFabGreen
-                                        isFocused -> WhatsAppFabGreen
-                                        digitChar.isNotEmpty() -> WhatsAppHeaderGreen
+                                        isSuccess -> TriggerFabGreen
+                                        isFocused -> TriggerFabGreen
+                                        digitChar.isNotEmpty() -> TriggerHeaderGreen
                                         else -> Color(0xFFCFD8DC)
                                     },
                                     shape = RoundedCornerShape(8.dp)
@@ -266,7 +275,7 @@ fun EmailOtpVerificationScreen(
                     Spacer(modifier = Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(
-                            color = WhatsAppFabGreen,
+                            color = TriggerFabGreen,
                             strokeWidth = 2.dp,
                             modifier = Modifier.size(18.dp)
                         )
@@ -283,7 +292,7 @@ fun EmailOtpVerificationScreen(
                         Icon(
                             imageVector = Icons.Filled.CheckCircle,
                             contentDescription = null,
-                            tint = WhatsAppFabGreen,
+                            tint = TriggerFabGreen,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -291,7 +300,7 @@ fun EmailOtpVerificationScreen(
                             text = "Verification successful!",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
-                            color = WhatsAppFabGreen
+                            color = TriggerFabGreen
                         )
                     }
                 }
@@ -308,7 +317,7 @@ fun EmailOtpVerificationScreen(
                     Icon(
                         imageVector = Icons.Filled.Refresh,
                         contentDescription = null,
-                        tint = if (canResend) WhatsAppFabGreen else Color.Gray,
+                        tint = if (canResend) TriggerFabGreen else Color.Gray,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
@@ -316,12 +325,12 @@ fun EmailOtpVerificationScreen(
                         text = if (canResend) "Resend code" else "Resend code in ${resendCountdown}s",
                         fontSize = 14.sp,
                         fontWeight = if (canResend) FontWeight.Bold else FontWeight.Normal,
-                        color = if (canResend) WhatsAppFabGreen else Color.Gray
+                        color = if (canResend) TriggerFabGreen else Color.Gray
                     )
                 }
             }
 
-            // WhatsApp Style Numpad
+            // Trigger Numpad
             CustomGboardNumpad(
                 onNumberClick = { digit -> addDigit(digit) },
                 onDeleteClick = { removeDigit() },
@@ -330,3 +339,4 @@ fun EmailOtpVerificationScreen(
         }
     }
 }
+

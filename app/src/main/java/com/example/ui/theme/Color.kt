@@ -53,22 +53,44 @@ val TriggerNumpadBg = GeometricNumpadBg
 val TriggerKeyBg = GeometricKeyBg
 val TriggerKeyActive = GeometricKeySpecialBg
 
-// WhatsApp Modern Dashboard & Chat Specific Palette
-val WhatsAppHeaderGreen = Color(0xFF008069)
-val WhatsAppChatTeal = Color(0xFF075E54)
-val WhatsAppChatDarkTeal = Color(0xFF005D4B)
-val WhatsAppChatBg = Color(0xFFE5DDD5)
-val WhatsAppChatBgLight = Color(0xFFECE5DD)
-val WhatsAppBubbleIncoming = Color(0xFFFFFFFF)
-val WhatsAppBubbleOutgoing = Color(0xFFE7FFDB)
-val WhatsAppCheckmarkBlue = Color(0xFF53BDEB)
-val WhatsAppSearchBg = Color(0xFFF0F2F5)
-val WhatsAppFilterActiveBg = Color(0xFFD8FDD2)
-val WhatsAppFilterActiveText = Color(0xFF0B614E)
-val WhatsAppFilterInactiveBg = Color(0xFFF0F2F5)
-val WhatsAppFilterInactiveText = Color(0xFF54656F)
-val WhatsAppDatePillBg = Color(0xFFD4EAF4)
-val WhatsAppFabGreen = Color(0xFF00A884)
-val WhatsAppBottomBarBg = Color(0xFFFFFFFF)
-val WhatsAppUnreadGreen = Color(0xFF25D366)
+// Trigger App Modern Dashboard & Chat Specific Palette
+val TriggerHeaderGreen = Color(0xFF008069)
+val TriggerChatTeal = Color(0xFF075E54)
+val TriggerChatDarkTeal = Color(0xFF005D4B)
+val TriggerChatBg = Color(0xFFE5DDD5)
+val TriggerChatBgLight = Color(0xFFECE5DD)
+val TriggerBubbleIncoming = Color(0xFFFFFFFF)
+val TriggerBubbleOutgoing = Color(0xFFE7FFDB)
+val TriggerCheckmarkBlue = Color(0xFF53BDEB)
+val TriggerSearchBg = Color(0xFFF0F2F5)
+val TriggerFilterActiveBg = Color(0xFFD8FDD2)
+val TriggerFilterActiveText = Color(0xFF0B614E)
+val TriggerFilterInactiveBg = Color(0xFFF0F2F5)
+val TriggerFilterInactiveText = Color(0xFF54656F)
+val TriggerDatePillBg = Color(0xFFD4EAF4)
+val TriggerFabGreen = Color(0xFF00A884)
+val TriggerBottomBarBg = Color(0xFFFFFFFF)
+val TriggerUnreadGreen = Color(0xFF25D366)
+val TriggerDarkBg = Color(0xFF0B141B)
+val TriggerDarkCard = Color(0xFF111B21)
+
+// Backward compatible aliases
+val WhatsAppHeaderGreen = TriggerHeaderGreen
+val WhatsAppChatTeal = TriggerChatTeal
+val WhatsAppChatDarkTeal = TriggerChatDarkTeal
+val WhatsAppChatBg = TriggerChatBg
+val WhatsAppChatBgLight = TriggerChatBgLight
+val WhatsAppBubbleIncoming = TriggerBubbleIncoming
+val WhatsAppBubbleOutgoing = TriggerBubbleOutgoing
+val WhatsAppCheckmarkBlue = TriggerCheckmarkBlue
+val WhatsAppSearchBg = TriggerSearchBg
+val WhatsAppFilterActiveBg = TriggerFilterActiveBg
+val WhatsAppFilterActiveText = TriggerFilterActiveText
+val WhatsAppFilterInactiveBg = TriggerFilterInactiveBg
+val WhatsAppFilterInactiveText = TriggerFilterInactiveText
+val WhatsAppDatePillBg = TriggerDatePillBg
+val WhatsAppFabGreen = TriggerFabGreen
+val WhatsAppBottomBarBg = TriggerBottomBarBg
+val WhatsAppUnreadGreen = TriggerUnreadGreen
+
 
