@@ -1,0 +1,36 @@
+<resources>
+    <string name="app_name">Trigger App</string>
+    <string name="welcome_title">Welcome to Trigger App</string>
+    <string name="welcome_privacy_prefix">Read our </string>
+    <string name="privacy_policies">Privacy Policies</string>
+    <string name="welcome_privacy_middle">. Tap \"Agree and continue\" to accept our </string>
+    <string name="terms_of_service">Terms of Service</string>
+    <string name="agree_and_continue">Agree and continue</string>
+    <string name="default_language">English</string>
+    <string name="app_language">App language</string>
+    <string name="help">Help</string>
+    <string name="enter_phone_title">Enter your phone number</string>
+    <string name="enter_phone_desc">Trigger App will need to verify your phone number. Carrier charges may apply. </string>
+    <string name="whats_my_number">What\'s my number?</string>
+    <string name="phone_number_placeholder">Phone number</string>
+    <string name="next">Next</string>
+    <string name="choose_country">Choose a country</string>
+    <string name="search_country">Search country or code</string>
+    <string name="verifying_title">Verifying your number</string>
+    <string name="verifying_desc">Waiting to automatically detect 6-digit code sent by SMS to %1$s. </string>
+    <string name="wrong_number">Wrong number?</string>
+    <string name="didnt_receive_code">Didn\'t receive code?</string>
+    <string name="sending_code">Sending code…</string>
+    <string name="confirm_number_title">Is this the correct number?</string>
+    <string name="edit">Edit</string>
+    <string name="yes">Yes</string>
+    <string name="notification_dialog_title">Allow Trigger App to send you notifications?</string>
+    <string name="allow">Allow</string>
+    <string name="dont_allow">Don\'t allow</string>
+    <string name="help_title">Trigger App Help</string>
+    <string name="help_contact_support">Contact Support</string>
+    <string name="help_faq">Frequently Asked Questions</string>
+    <string name="help_terms">Terms and Privacy Policy</string>
+    <string name="verification_complete">Verification successful!</string>
+    <string name="continue_to_app">Continue to Trigger App</string>
+</resources>

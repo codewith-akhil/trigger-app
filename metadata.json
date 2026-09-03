@@ -1,0 +1,6 @@
+{
+  "name": "Trigger App",
+  "description": "Trigger App featuring modern WhatsApp Dashboard, real-time interactive Chat, Email + Password Authentication, 6-digit Email OTP Verification, Forgot Password Flow, Profile with Username & Email, and New Message contact picker.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
