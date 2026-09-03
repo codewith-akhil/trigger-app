@@ -3,14 +3,16 @@
 [![Android](https://img.shields.io/badge/Platform-Android-3DDC84?style=flat&logo=android&logoColor=white)](https://developer.android.com/)
 [![Kotlin](https://img.shields.io/badge/Language-Kotlin-7F52FF?style=flat&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
 [![Jetpack Compose](https://img.shields.io/badge/UI-Jetpack%20Compose%20M3-4285F4?style=flat&logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
+[![Agora RTC 4.x](https://img.shields.io/badge/WebRTC-Agora%20RTC%204.x-099DFD?style=flat&logo=webrtc&logoColor=white)](https://www.agora.io/)
+[![Supabase](https://img.shields.io/badge/Backend-Supabase%20PostgreSQL-3ECF8E?style=flat&logo=supabase&logoColor=white)](https://supabase.com/)
 [![Room](https://img.shields.io/badge/Database-Room%20Persistence-F58220?style=flat&logo=sqlite&logoColor=white)](https://developer.android.com/training/data-storage/room)
 [![Min SDK](https://img.shields.io/badge/Min%20SDK-24-blue.svg)](https://developer.android.com/)
 [![Target SDK](https://img.shields.io/badge/Target%20SDK-36-green.svg)](https://developer.android.com/)
 [![License](https://img.shields.io/badge/License-MIT-lightgrey.svg)](LICENSE)
 
-**Trigger App** is a modern, responsive, feature-rich messaging and communication Android application built natively from the ground up with **Jetpack Compose (Material Design 3)**, **Kotlin Coroutines & Flow**, **Clean Architecture**, and an **Offline-First Room Database**.
+**Trigger App** is a modern, responsive, feature-rich messaging, live-broadcasting, and communication Android application built natively from the ground up with **Jetpack Compose (Material Design 3)**, **Agora RTC 4.x**, **Supabase (Auth, Database, Storage, Edge Functions)**, **Kotlin Coroutines & Flow**, and an **Offline-First Room Database**.
 
-Designed with authentic styling inspired by modern communication platforms like WhatsApp, Trigger App provides an end-to-end user journey: comprehensive authentication (Email + Password + 6-Digit OTP verification + Password Reset), rich real-time chat threads with voice notes and media sharing, interactive audio and video calling overlays, user profile customization with custom usernames, and contacts management.
+Designed with authentic styling inspired by modern communication platforms like WhatsApp, Trigger App provides an end-to-end user journey: comprehensive authentication (Email + Password + 6-Digit OTP verification + Password Reset), real-time chat threads with voice notes and media sharing, hardware-accelerated **1-to-1 WebRTC audio & video calling**, **interactive live streaming broadcasts**, user profile customization, and offline persistence.
 
 ---
 
@@ -20,13 +22,20 @@ Designed with authentic styling inspired by modern communication platforms like 
   - [🔐 Authentication & Verification](#-authentication--verification)
   - [💬 Chats & Dashboard](#-chats--dashboard)
   - [🎙️ Interactive Chat Experience](#-interactive-chat-experience)
-  - [📞 Audio & Video Calling](#-audio--video-calling)
+  - [📞 Real Agora RTC Audio & Video Calling](#-real-agora-rtc-audio--video-calling)
+  - [📡 Agora Live Streaming Broadcasts](#-agora-live-streaming-broadcasts)
+  - [📅 Schedule Stream & Audience Slots](#-schedule-stream--audience-slots)
+  - [📜 Stream History & Analytics](#-stream-history--analytics)
+  - [💳 Trigger Wallet, Bank Details & Withdrawals](#-trigger-wallet-bank-details--withdrawals)
+  - [🛡️ Secret Vault (6-Digit PIN Protected)](#-secret-vault-6-digit-pin-protected)
   - [👤 User Profile Management](#-user-profile-management)
   - [👥 Contact Picker & New Chat](#-contact-picker--new-chat)
-  - [💾 Offline-First Architecture](#-offline-first-architecture)
+  - [🆘 Help & Support (info@triggerapp.com)](#-help--support-infotriggerappcom)
+  - [💾 Supabase Backend & Offline-First Architecture](#-supabase-backend--offline-first-architecture)
 - [Architecture & Design Principles](#-architecture--design-principles)
 - [Tech Stack & Libraries](#-tech-stack--libraries)
 - [Project Directory Structure](#-project-directory-structure)
+- [Backend & Agora Setup (.env Configuration)](#-backend--agora-setup-env-configuration)
 - [User Journey & Navigation Flow](#-user-journey--navigation-flow)
 - [Getting Started](#-getting-started)
   - [Prerequisites](#prerequisites)
@@ -52,9 +61,9 @@ Designed with authentic styling inspired by modern communication platforms like 
   - **Chats**: Active conversation threads with unread counters, delivery status ticks (sent, delivered, read), pinned chats, and last message previews.
   - **Updates / Status**: Status stories section with recent updates and camera status creator.
   - **Communities**: Group and community hubs.
-  - **Calls**: Call history logs with incoming/outgoing indicators and quick call triggers.
+  - **Calls & Live Streams**: Call history logs, active live broadcasts, and quick calling / go-live triggers.
 - **Interactive Top App Bar**: Quick search filter across messages and contacts, camera shortcut, and an overflow options dropdown.
-- **Live Online / Offline Simulation**: Built-in network state toggle to test and demonstrate offline-first caching and presence indicators.
+- **Live Online / Offline Mode**: Instant network state toggle to demonstrate offline-first local caching and presence indicators.
 
 ### 🎙️ Interactive Chat Experience
 - **Voice Notes**: Voice recording animation with waveform visualizer and audio player controls with progress tracking.
@@ -63,10 +72,69 @@ Designed with authentic styling inspired by modern communication platforms like 
 - **Emoji & Sticker Picker**: Comprehensive bottom sheet picker categorized with smiles, animals, food, sports, and objects.
 - **Message Status Indicators**: Real-time message receipt indicators (Single grey tick = Sent, Double grey tick = Delivered, Double blue tick = Read).
 
-### 📞 Audio & Video Calling
-- **Calling Overlays (`ChatCallingOverlay.kt`)**: WhatsApp-style full-screen calling experience.
-- **Call States**: Dialing, Ringing, and Active Call with a real-time call duration timer (`00:15`, `00:16`, etc.).
-- **Interactive Call Controls**: Speakerphone toggle, microphone mute/unmute, front/rear camera toggle, and end call button.
+### 📞 Real Agora RTC Audio & Video Calling
+- **Production Agora RTC 4.x Engine (`AgoraRtcEngineManager`)**: Hardware-accelerated audio and video pipeline.
+- **Hardware Video Rendering**: Native video rendering using `SurfaceView` inside Jetpack Compose (`AndroidView`) for remote user video feeds and floating picture-in-picture local self-views.
+- **Call Session Management (`AgoraCallService`)**: Real asynchronous call signaling and session persistence synced with Supabase (`call_sessions` table).
+- **Network Quality Monitoring**: Real-time packet loss and network quality callbacks alerting users if connection is poor or unstable.
+- **Controls**: Live microphone muting, speakerphone audio routing, front/rear camera flip, and automatic call logging into local chat history upon termination.
+- **Incoming Call Notifications (`IncomingCallNotificationHelper`)**: High-priority full-screen calling notifications with custom ringtone and vibration attributes, plus one-tap **Accept** and **Decline** actions.
+
+### 📡 Agora Live Streaming Broadcasts
+- **Host Broadcaster Mode**: Launch live video broadcasts to an Agora live broadcasting channel (`CHANNEL_PROFILE_LIVE_BROADCASTING`), publishing local camera and microphone feeds.
+- **Audience Viewer Mode**: Join and view live broadcasts with low-latency hardware video playback and zero publishing overhead.
+- **Interactive Live Player (`LiveStreamPlayerScreen`)**:
+  - Floating animated heart reaction bursts.
+  - Synchronized live comment stream with auto-scrolling.
+  - Dynamic viewer counter.
+  - Broadcaster controls (mute audio, toggle camera, switch front/rear, end stream confirmation).
+
+### 📅 Schedule Stream & Audience Slots
+- **Schedule Stream Page (`ScheduleStreamScreen.kt`)**: Comprehensive event setup with validation:
+  - **Stream Name**: Custom title and category tag.
+  - **Date & Time Selectors**: Interactive calendar date picker and time picker with formatted display.
+  - **Slot Limits**: Dropdown supporting audience caps: **25, 50, 150, 200, 500**, or **ANY (Unlimited)**.
+  - **Stream Pricing**: Dropdown for **FREE** or **PAID**.
+  - **Pricing Box & Currency**: When set to Paid, dynamically reveals an amount input box and currency dropdown selector (**USD, EUR, GBP, INR, JPY, CAD, AUD**).
+  - **Social Link Sharing**: Generates unique stream invitation link (`https://triggerapp.com/stream/...`) with one-tap copy and Android System Share Sheet intent.
+  - **Pre-Payment Slot Availability Check**: Strict slot verification before payment. If user fixed a slot limit, the system verifies availability. If full, payment is prohibited and "Sold Out" is displayed.
+  - **Push & Email Notifications**: Production-ready notification engine (`StreamNotificationHelper.kt`):
+    - Dispatches high-priority Android system Push Notification with custom channel attributes.
+    - Dispatches rich HTML email confirmation via `ACTION_SENDTO` to the registered email for **both the Streamer and Joined Users**.
+
+### 📜 Stream History & Analytics
+- **Stream History Screen (`StreamHistoryScreen.kt`)**:
+  - Overview cards showing Total Broadcasts, All-Time Viewers, and Monetization Revenue.
+  - Broadcast log detailing date, duration, peak live viewers, ticket revenue, and video recording status.
+  - Quick action to schedule new streams.
+
+### 💳 Trigger Wallet, Bank Details & Withdrawals
+- **Wallet & Payouts (`WalletScreen.kt`)**:
+  - Direct access from the **Settings** screen.
+  - **Live Balances**: Current Available Balance, Total Earned, and Pending Withdrawals.
+  - **Bank & Payout Method Update**: Secure modal to configure and save Bank Name, Account Number, Account Holder Name, and SWIFT / IFSC / Routing code, plus PayPal / UPI ID.
+  - **Instant Withdrawal Engine**: Enter withdrawal amount, select saved payout method, and initiate bank payout with real-time balance validation and payout record logging.
+
+### 🛡️ Secret Vault (6-Digit PIN Protected)
+- **Secret Vault Screen (`SecretVaultScreen.kt`)**:
+  - Direct access from the **Settings** screen.
+  - **6-Digit PIN Code Lock**:
+    - First-time setup with confirm PIN flow.
+    - Keypad layout with instant vibration/visual feedback.
+    - Automatic auto-lock when navigating away or tapping the Lock icon.
+  - **Encrypted Local Storage (`SecretVaultService.kt`)**:
+    - Store private images and videos inside internal app sandboxed storage (`vault_media/`).
+    - Media import via Android Photo Picker (`ActivityResultContracts.PickMultipleVisualMedia`).
+    - Categorized gallery tabs: **All**, **Photos**, **Videos**.
+    - Full-screen media preview dialog with metadata and secure permanent deletion.
+
+### 🆘 Help & Support (info@triggerapp.com)
+- **Help Settings Screen (`HelpSettingsScreen.kt`)**:
+  - Direct access from the **Settings** screen.
+  - Dedicated **Trigger App Team Support** banner.
+  - Prominently displays official contact email: **`info@triggerapp.com`**.
+  - One-tap **"Email Us"** button launching pre-addressed native email client (`mailto:info@triggerapp.com`).
+  - Interactive "Contact Us" feedback submission dialog.
 
 ### 👤 User Profile Management
 - **Dark Theme Profile Screen (`ProfileScreen.kt`)**: Centered circular avatar with a green floating camera button integrated with the Android Photo Picker (`ActivityResultContracts.PickVisualMedia`).
@@ -84,7 +152,9 @@ Designed with authentic styling inspired by modern communication platforms like 
 - **Self-Chat**: Includes "Message yourself" for personal notes and reminders.
 - **Instant Search**: Live search filtering by contact name or status subtitle.
 
-### 💾 Offline-First Architecture
+### 💾 Supabase Backend & Offline-First Architecture
+- **Supabase Cloud Backend**: PostgreSQL database tables (`call_sessions`, `live_streams`, `live_stream_comments`), Storage buckets, Auth, and Edge Functions.
+- **Secure Token Generation**: Agora RTC tokens are generated securely via a Supabase Edge Function (`generate-agora-token`) with HMAC-SHA256 tokens, keeping the Agora Primary Certificate off client devices.
 - **Room SQLite Persistence**: Conversations and messages are persisted locally in `ChatDatabase`.
 - **Reactive Data Streams**: Room DAOs return Kotlin Coroutines `Flow`, ensuring the UI updates instantaneously when new messages or conversations arrive.
 - **Repository Abstraction**: `ChatRepositoryImpl` abstracts network and database layers, ensuring seamless offline functionality.
@@ -129,13 +199,15 @@ Trigger App is built using modern **Clean Architecture** combined with **MVVM (M
 |---|---|---|
 | **Language** | [Kotlin](https://kotlinlang.org/) | 100% modern Kotlin with Coroutines and Flow |
 | **UI Toolkit** | [Jetpack Compose](https://developer.android.com/jetpack/compose) | Declarative UI framework with Compose Material 3 |
+| **Real-time WebRTC** | [Agora RTC 4.x](https://www.agora.io/) | Full RTC SDK (`io.agora.rtc:full-rtc-basic`) for voice/video calls and live broadcasting |
+| **Backend as a Service** | [Supabase](https://supabase.com/) | Cloud PostgreSQL, Row Level Security, Auth, Storage, and Edge Functions |
 | **Navigation** | [Navigation Compose](https://developer.android.com/jetpack/compose/navigation) | Type-safe navigation routing and backstack management |
 | **Local Database** | [Room Database](https://developer.android.com/training/data-storage/room) | SQLite abstraction layer with KSP code generation |
 | **Image Loading** | [Coil Compose](https://coil-kt.github.io/coil/) | Lightweight, asynchronous image loading library |
 | **Networking** | [Retrofit](https://square.github.io/retrofit/) & [OkHttp](https://square.github.io/okhttp/) | Type-safe HTTP client with logging interceptor |
 | **Serialization** | [Moshi Kotlin](https://github.com/square/moshi) | JSON parsing and code generation with KSP |
 | **Testing** | [Robolectric](https://robolectric.org/) & [Roborazzi](https://github.com/takahirom/roborazzi) | JVM unit testing and screenshot regression testing |
-| **Dependency Injection** | Service Container / Manual DI | Lightweight, clean dependency injection container |
+| **Dependency Injection** | Service Container / Manual DI | Lightweight, clean dependency injection container (`AppServiceContainer`) |
 
 ---
 
@@ -145,6 +217,8 @@ Trigger App is built using modern **Clean Architecture** combined with **MVVM (M
 app/src/main/java/com/example/
 ├── MainActivity.kt                      # Application entry point with Edge-to-Edge
 ├── config/                             # App-wide configuration & constants
+│   ├── AgoraConfig.kt                  # Agora App ID, token expiry & channel settings
+│   └── SupabaseConfig.kt               # Supabase project URL and anon key configuration
 ├── data/
 │   ├── local/
 │   │   ├── ChatDatabase.kt             # Room Database configuration
@@ -155,7 +229,7 @@ app/src/main/java/com/example/
 │   └── repository/
 │       └── ChatRepositoryImpl.kt       # Repository implementation with local persistence
 ├── di/
-│   └── AppServiceContainer.kt          # Dependency injection container & service locator
+│   └── AppServiceContainer.kt          # Service locator holding Agora, Supabase, & DB singletons
 ├── model/
 │   ├── ChatDomainModels.kt             # Domain entities for messages & threads
 │   ├── ChatModels.kt                   # UI models and attachment types
@@ -163,10 +237,19 @@ app/src/main/java/com/example/
 │   ├── Language.kt                     # Localization languages
 │   └── UserProfile.kt                  # User profile state & in-memory repository
 ├── service/
-│   ├── CallService.kt                  # Audio/Video call state management
-│   ├── MessageService.kt               # Message delivery simulation
+│   ├── CallService.kt                  # Call state management & legacy dispatcher
+│   ├── IncomingCallNotificationHelper.kt # High-priority full-screen incoming call notifications
+│   ├── MessageService.kt               # Message delivery & receipt tracker
 │   ├── PresenceService.kt              # Online/offline user presence tracker
-│   └── UploadService.kt                # Media upload & file handling
+│   ├── UploadService.kt                # Media upload & file handling
+│   ├── agora/
+│   │   ├── AgoraRtcEngineManager.kt    # Core Agora RTC 4.x wrapper (init, join, video canvas, tokens)
+│   │   ├── AgoraTokenService.kt        # Supabase Edge Function client for HMAC-SHA256 RTC tokens
+│   │   └── AgoraLiveStreamService.kt   # Live streaming broadcast host/audience lifecycle
+│   ├── supabase/
+│   │   └── SupabaseService.kt          # Supabase REST client (calls, live streams, comments)
+│   └── webrtc/
+│       └── AgoraCallService.kt         # 1-to-1 audio/video call signaling & Supabase sync
 └── ui/
     ├── components/
     │   ├── CustomNumpad.kt             # WhatsApp-style custom numeric keypad
@@ -181,9 +264,10 @@ app/src/main/java/com/example/
     │   ├── EmailOtpVerificationScreen.kt # 6-digit email OTP verification
     │   ├── ForgotPasswordScreen.kt     # Email lookup for password recovery
     │   ├── ResetPasswordScreen.kt      # Password reset submission
-    │   ├── WhatsAppDashboardScreen.kt  # Main 4-tab dashboard
+    │   ├── WhatsAppDashboardScreen.kt  # Main 4-tab dashboard with calls & live streams
     │   ├── ChatScreen.kt               # Live chat thread with media & voice notes
-    │   ├── ChatCallingOverlay.kt       # Voice & video calling screen
+    │   ├── ChatCallingOverlay.kt       # Hardware-accelerated WebRTC voice & video calling screen
+    │   ├── LiveStreamPlayerScreen.kt   # Full-screen interactive live broadcasting player
     │   ├── ChatMediaViewer.kt          # Full-screen image attachment viewer
     │   ├── ProfileScreen.kt            # User profile, username, avatar & details
     │   ├── SelectContactScreen.kt      # Contact picker & New Chat selector
@@ -193,8 +277,37 @@ app/src/main/java/com/example/
     │   ├── Theme.kt                    # Material 3 theme wrapper
     │   └── Type.kt                     # Typography system
     └── viewmodel/
-        └── DashboardViewModel.kt       # State manager for chats & presence
+        └── DashboardViewModel.kt       # State manager for chats, presence, & calls
 ```
+
+---
+
+## ⚡ Backend & Agora Setup (.env Configuration)
+
+Trigger App seamlessly connects to **Supabase** for backend operations and **Agora RTC** for media communications. All sensitive keys are managed securely via `.env` (or the AI Studio Secrets panel) and injected through `BuildConfig`:
+
+```ini
+# .env file at project root
+
+# --- Supabase Configuration ---
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your_supabase_anon_public_key
+
+# --- Agora RTC Configuration ---
+AGORA_APP_ID=your_agora_app_id
+
+# Optional: Agora Primary Certificate (for token generation on backend edge functions)
+AGORA_PRIMARY_CERTIFICATE=your_agora_primary_certificate
+```
+
+### Supabase Database Schema
+The app automatically synchronizes with the following PostgreSQL tables in Supabase:
+- `call_sessions`: Stores `caller_id`, `receiver_id`, `call_type` (audio/video), `status` (ringing, accepted, ended), and `channel_name`.
+- `live_streams`: Stores `stream_id`, `host_id`, `host_name`, `channel_name`, `title`, `viewer_count`, and `status`.
+- `live_stream_comments`: Real-time chat messages submitted by viewers during live stream broadcasts.
+
+### Supabase Edge Function (`generate-agora-token`)
+A dedicated Deno TypeScript Edge Function generates secure HMAC-SHA256 tokens for Agora RTC channels without bundling credentials into the client APK. In offline or development modes, safe mock tokens are generated as a seamless fallback.
 
 ---
 
@@ -216,12 +329,15 @@ app/src/main/java/com/example/
 │   ├── [ Chats Tab ] ──────▶ [ Select Contact / New Message ]    │
 │   │         │                                                   │
 │   │         └─────────────▶ [ Chat Screen ]                     │
-│   │                               ├──▶ [ Audio / Video Call ]   │
+│   │                               ├──▶ [ Agora RTC Audio/Video] │
 │   │                               ├──▶ [ Media Viewer ]         │
 │   │                               └──▶ [ Location Sharing ]     │
 │   ├── [ Updates / Status Tab ]                                  │
 │   ├── [ Communities Tab ]                                       │
-│   └── [ Calls Tab ]                                             │
+│   └── [ Calls & Live Streams Tab ]                              │
+│             ├──▶ [ New Call / Dial Contact ]                    │
+│             ├──▶ [ Go Live Dialog (Host Stream) ]               │
+│             └──▶ [ Live Stream Player (Audience Stream) ]       │
 └────────────────────────────────┬────────────────────────────────┘
                                  │
                                  ▼

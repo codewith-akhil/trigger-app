@@ -1,15 +1,14 @@
 package com.example.service.webrtc
 
-import com.example.config.BackendConfig
+import com.example.model.CallState
+import com.example.model.CallType
+import com.example.service.CallService
+import com.example.service.LiveStreamItem
+import com.example.service.LiveStreamRole
+import com.example.service.LiveStreamService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 enum class AgoraCallStatus {
@@ -58,73 +57,127 @@ data class AgoraState(
     val errorMessage: String? = null
 )
 
+/**
+ * Production WebRTC communication service backed by real Agora RTC Engine and Supabase.
+ * Delegates 1-to-1 calling to [CallService] and live streaming to [LiveStreamService].
+ */
 class AgoraWebRtcService(
-    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Main)
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Main),
+    private val callService: CallService? = null,
+    private val liveStreamService: LiveStreamService? = null
 ) {
-    private val _agoraState = MutableStateFlow(
-        AgoraState(
-            activeStreams = listOf(
-                AgoraLiveStream(
-                    id = "stream_1",
-                    title = "⚡ Trigger App Dev & Architecture Q&A",
-                    streamerName = "Akhil Canara Bank",
-                    viewerCount = 142,
-                    category = "Tech & Dev",
-                    channelName = "trigger_dev_qa"
-                ),
-                AgoraLiveStream(
-                    id = "stream_2",
-                    title = "🎧 Coding Lofi Radio & Chill Vibes",
-                    streamerName = "Sarah Jenkins",
-                    viewerCount = 89,
-                    category = "Music",
-                    channelName = "trigger_lofi"
-                ),
-                AgoraLiveStream(
-                    id = "stream_3",
-                    title = "🚀 Global Tech Talk: Realtime WebRTC & Supabase",
-                    streamerName = "Alex Rivera",
-                    viewerCount = 310,
-                    category = "WebRTC",
-                    channelName = "agora_webrtc_global"
-                )
-            )
-        )
-    )
+    private val _agoraState = MutableStateFlow(AgoraState())
     val agoraState: StateFlow<AgoraState> = _agoraState.asStateFlow()
+    val callState: StateFlow<AgoraState> = _agoraState.asStateFlow()
 
-    private var durationTimerJob: Job? = null
+    init {
+        // Observe real CallService session if provided
+        callService?.let { cs ->
+            scope.launch {
+                cs.currentCall.collect { session ->
+                    if (session == null) {
+                        if (_agoraState.value.mode != AgoraCallMode.LIVE_STREAM) {
+                            _agoraState.update {
+                                it.copy(
+                                    status = AgoraCallStatus.IDLE,
+                                    durationSeconds = 0
+                                )
+                            }
+                        }
+                    } else {
+                        val status = when (session.state) {
+                            CallState.CALLING -> AgoraCallStatus.DIALING
+                            CallState.RINGING -> AgoraCallStatus.RINGING
+                            CallState.CONNECTING -> AgoraCallStatus.RINGING
+                            CallState.CONNECTED -> AgoraCallStatus.CONNECTED
+                            CallState.RECONNECTING -> AgoraCallStatus.CONNECTED
+                            CallState.ENDED, CallState.DECLINED, CallState.MISSED -> AgoraCallStatus.DISCONNECTED
+                            CallState.FAILED -> AgoraCallStatus.FAILED
+                            CallState.IDLE -> AgoraCallStatus.IDLE
+                        }
+                        _agoraState.update {
+                            it.copy(
+                                status = status,
+                                channelName = "call_" + session.callId.take(8),
+                                mode = if (session.type == CallType.VIDEO) AgoraCallMode.VIDEO_CALL else AgoraCallMode.AUDIO_CALL,
+                                role = AgoraUserRole.BROADCASTER,
+                                remoteUserName = session.contactName,
+                                isMuted = session.isMuted,
+                                isVideoEnabled = session.isVideoEnabled,
+                                isSpeakerOn = session.isSpeakerOn,
+                                isFrontCamera = session.isFrontCamera,
+                                durationSeconds = session.durationSeconds.toLong()
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Observe real LiveStreamService if provided
+        liveStreamService?.let { ls ->
+            scope.launch {
+                ls.activeStreams.collect { streams ->
+                    val mapped = streams.map { item ->
+                        AgoraLiveStream(
+                            id = item.id,
+                            title = item.title,
+                            streamerName = item.streamerName,
+                            viewerCount = item.viewerCount,
+                            category = item.category,
+                            channelName = item.channelName,
+                            isLive = item.isLive
+                        )
+                    }
+                    _agoraState.update { it.copy(activeStreams = mapped) }
+                }
+            }
+
+            scope.launch {
+                ls.currentStreamState.collect { streamState ->
+                    val stream = streamState.stream
+                    if (stream != null && streamState.isJoined) {
+                        _agoraState.update {
+                            it.copy(
+                                status = AgoraCallStatus.CONNECTED,
+                                channelName = stream.channelName,
+                                mode = AgoraCallMode.LIVE_STREAM,
+                                role = if (streamState.role == LiveStreamRole.HOST) AgoraUserRole.BROADCASTER else AgoraUserRole.AUDIENCE,
+                                remoteUserName = stream.title,
+                                isMuted = streamState.isMuted,
+                                isVideoEnabled = streamState.isVideoEnabled,
+                                isFrontCamera = streamState.isFrontCamera,
+                                durationSeconds = streamState.durationSeconds
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     fun startCall(
         channelName: String,
-        contactName: String,
-        isVideo: Boolean
+        contactName: String = "Contact",
+        isVideo: Boolean = false
     ) {
-        val mode = if (isVideo) AgoraCallMode.VIDEO_CALL else AgoraCallMode.AUDIO_CALL
-        _agoraState.update {
-            it.copy(
-                status = AgoraCallStatus.DIALING,
-                channelName = channelName,
-                mode = mode,
-                role = AgoraUserRole.BROADCASTER,
-                remoteUserName = contactName,
-                isMuted = false,
-                isVideoEnabled = isVideo,
-                durationSeconds = 0,
-                errorMessage = null
+        val type = if (isVideo) CallType.VIDEO else CallType.AUDIO
+        if (callService != null) {
+            callService.startCall(
+                contactId = channelName,
+                contactName = contactName,
+                avatarRes = null,
+                type = type
             )
-        }
-
-        // WebRTC Connection handshake with Agora Console credentials
-        scope.launch {
-            delay(1200) // Simulating network signaling handshake
-            if (_agoraState.value.status == AgoraCallStatus.DIALING) {
-                _agoraState.update { it.copy(status = AgoraCallStatus.RINGING) }
-            }
-            delay(1500) // Simulating remote peer acceptance
-            if (_agoraState.value.status == AgoraCallStatus.RINGING) {
-                _agoraState.update { it.copy(status = AgoraCallStatus.CONNECTED) }
-                startDurationTimer()
+        } else {
+            _agoraState.update {
+                it.copy(
+                    status = AgoraCallStatus.DIALING,
+                    channelName = channelName,
+                    mode = if (isVideo) AgoraCallMode.VIDEO_CALL else AgoraCallMode.AUDIO_CALL,
+                    remoteUserName = contactName,
+                    isVideoEnabled = isVideo
+                )
             }
         }
     }
@@ -133,85 +186,93 @@ class AgoraWebRtcService(
         streamTitle: String,
         channelName: String
     ) {
-        _agoraState.update {
-            val newStream = AgoraLiveStream(
-                id = "stream_" + System.currentTimeMillis(),
-                title = streamTitle,
-                streamerName = "You (Broadcaster)",
-                viewerCount = 1,
-                category = "Broadcasting",
-                channelName = channelName,
-                isLive = true
-            )
-            it.copy(
-                status = AgoraCallStatus.CONNECTED,
-                channelName = channelName,
-                mode = AgoraCallMode.LIVE_STREAM,
-                role = AgoraUserRole.BROADCASTER,
-                remoteUserName = streamTitle,
-                isMuted = false,
-                isVideoEnabled = true,
-                durationSeconds = 0,
-                activeStreams = listOf(newStream) + it.activeStreams
-            )
+        if (liveStreamService != null) {
+            scope.launch {
+                liveStreamService.startLiveStream(title = streamTitle)
+            }
+        } else {
+            _agoraState.update {
+                it.copy(
+                    status = AgoraCallStatus.CONNECTED,
+                    channelName = channelName,
+                    mode = AgoraCallMode.LIVE_STREAM,
+                    role = AgoraUserRole.BROADCASTER,
+                    remoteUserName = streamTitle
+                )
+            }
         }
-        startDurationTimer()
     }
 
     fun joinLiveStream(stream: AgoraLiveStream) {
-        _agoraState.update {
-            it.copy(
-                status = AgoraCallStatus.CONNECTED,
-                channelName = stream.channelName,
-                mode = AgoraCallMode.LIVE_STREAM,
-                role = AgoraUserRole.AUDIENCE,
-                remoteUserName = stream.title,
-                isMuted = true,
-                isVideoEnabled = true,
-                durationSeconds = 0
-            )
+        if (liveStreamService != null) {
+            scope.launch {
+                val item = LiveStreamItem(
+                    id = stream.id,
+                    hostId = "host",
+                    channelName = stream.channelName,
+                    title = stream.title,
+                    streamerName = stream.streamerName,
+                    viewerCount = stream.viewerCount,
+                    category = stream.category
+                )
+                liveStreamService.joinLiveStream(item)
+            }
+        } else {
+            _agoraState.update {
+                it.copy(
+                    status = AgoraCallStatus.CONNECTED,
+                    channelName = stream.channelName,
+                    mode = AgoraCallMode.LIVE_STREAM,
+                    role = AgoraUserRole.AUDIENCE,
+                    remoteUserName = stream.title
+                )
+            }
         }
-        startDurationTimer()
     }
 
     fun endCall() {
-        durationTimerJob?.cancel()
-        durationTimerJob = null
+        if (_agoraState.value.mode == AgoraCallMode.LIVE_STREAM) {
+            liveStreamService?.leaveLiveStream()
+        } else {
+            callService?.endCall()
+        }
         _agoraState.update {
             it.copy(
                 status = AgoraCallStatus.DISCONNECTED,
                 durationSeconds = 0
             )
         }
-        scope.launch {
-            delay(400)
-            _agoraState.update { it.copy(status = AgoraCallStatus.IDLE) }
-        }
     }
 
     fun toggleMute() {
+        if (_agoraState.value.mode == AgoraCallMode.LIVE_STREAM) {
+            liveStreamService?.toggleMute()
+        } else {
+            callService?.toggleMute()
+        }
         _agoraState.update { it.copy(isMuted = !it.isMuted) }
     }
 
     fun toggleVideo() {
+        if (_agoraState.value.mode == AgoraCallMode.LIVE_STREAM) {
+            liveStreamService?.toggleVideo()
+        } else {
+            callService?.toggleVideo()
+        }
         _agoraState.update { it.copy(isVideoEnabled = !it.isVideoEnabled) }
     }
 
     fun toggleSpeaker() {
+        callService?.toggleSpeaker()
         _agoraState.update { it.copy(isSpeakerOn = !it.isSpeakerOn) }
     }
 
     fun switchCamera() {
-        _agoraState.update { it.copy(isFrontCamera = !it.isFrontCamera) }
-    }
-
-    private fun startDurationTimer() {
-        durationTimerJob?.cancel()
-        durationTimerJob = scope.launch {
-            while (isActive) {
-                delay(1000)
-                _agoraState.update { it.copy(durationSeconds = it.durationSeconds + 1) }
-            }
+        if (_agoraState.value.mode == AgoraCallMode.LIVE_STREAM) {
+            liveStreamService?.switchCamera()
+        } else {
+            callService?.switchCamera()
         }
+        _agoraState.update { it.copy(isFrontCamera = !it.isFrontCamera) }
     }
 }

@@ -23,6 +23,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import android.view.SurfaceView
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import com.example.di.AppServiceContainer
 import com.example.model.CallState
 import com.example.model.CallType
 import com.example.service.CallSession
@@ -37,21 +42,22 @@ fun ChatCallingOverlay(
     onSwitchCamera: () -> Unit
 ) {
     val isVideo = session.type == CallType.VIDEO && session.isVideoEnabled
+    val engineState by AppServiceContainer.agoraRtcEngineManager.engineState.collectAsState()
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    if (isVideo) listOf(Color(0xFF0F1418), Color(0xFF0F1418))
-                    else listOf(Color(0xFF0B141B), Color(0xFF1F2C34), Color(0xFF0B141B))
+                    if (isVideo) listOf(Color(0xFF075E54), Color(0xFF008069))
+                    else listOf(Color(0xFF075E54), Color(0xFF008069), Color(0xFF054C44))
                 )
             )
             .statusBarsPadding()
             .navigationBarsPadding()
             .testTag("calling_overlay")
     ) {
-        // Video background if video enabled
+        // Real Agora Video Views if video is enabled
         if (isVideo) {
             Box(
                 modifier = Modifier
@@ -59,51 +65,67 @@ fun ChatCallingOverlay(
                     .background(Color(0xFF1E2830)),
                 contentAlignment = Alignment.Center
             ) {
-                if (session.avatarRes != null) {
-                    Image(
-                        painter = painterResource(id = session.avatarRes),
-                        contentDescription = session.contactName,
-                        contentScale = ContentScale.Crop,
+                if (engineState.remoteUid != null) {
+                    // Real Remote Video Feed from Agora
+                    AndroidView(
+                        factory = { ctx ->
+                            SurfaceView(ctx).apply {
+                                AppServiceContainer.agoraRtcEngineManager.setupRemoteVideo(this, engineState.remoteUid!!)
+                            }
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
+                } else {
+                    // Waiting for remote video placeholder
+                    if (session.avatarRes != null) {
+                        Image(
+                            painter = painterResource(id = session.avatarRes),
+                            contentDescription = session.contactName,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.4f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(
+                                color = Color(0xFF25D366),
+                                strokeWidth = 3.dp,
+                                modifier = Modifier.size(36.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Connecting video feed…",
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
                 }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.25f))
-                )
 
                 // Self view mini picture-in-picture in top corner
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(top = 70.dp, end = 16.dp)
-                        .size(width = 100.dp, height = 140.dp),
+                        .size(width = 110.dp, height = 150.dp),
                     shape = RoundedCornerShape(12.dp),
                     color = Color.Black,
                     shadowElevation = 6.dp
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color(0xFF2A3942)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Person,
-                            contentDescription = "Self Preview",
-                            tint = Color.White.copy(alpha = 0.7f),
-                            modifier = Modifier.size(36.dp)
-                        )
-                        Text(
-                            text = if (session.isFrontCamera) "Front" else "Rear",
-                            color = Color.White.copy(alpha = 0.6f),
-                            fontSize = 10.sp,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(bottom = 6.dp)
-                        )
-                    }
+                    AndroidView(
+                        factory = { ctx ->
+                            SurfaceView(ctx).apply {
+                                setZOrderMediaOverlay(true)
+                                AppServiceContainer.agoraRtcEngineManager.setupLocalVideo(this)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
         }
@@ -167,6 +189,33 @@ fun ChatCallingOverlay(
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium
             )
+
+            if (session.isPoorConnection) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFE53935).copy(alpha = 0.85f)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Warning,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Unstable network connection",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
 
             // Large Avatar when in Audio Call mode
             if (!isVideo) {

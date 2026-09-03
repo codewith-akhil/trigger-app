@@ -31,11 +31,12 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.model.UserRepository
 
-private val WhatsAppDarkBg = Color(0xFF0B141B)
-private val WhatsAppDarkSurface = Color(0xFF111B21)
-private val WhatsAppGreenAccent = Color(0xFF25D366)
-private val WhatsAppTextPrimary = Color(0xFFE9EDEF)
-private val WhatsAppTextSecondary = Color(0xFF8696A0)
+private val TriggerLightBg = Color(0xFFFFFFFF)
+private val TriggerGreenHeader = Color(0xFF008069)
+private val TriggerGreenAccent = Color(0xFF00A884)
+private val TriggerTextPrimary = Color(0xFF111B21)
+private val TriggerTextSecondary = Color(0xFF667781)
+private val TriggerDivider = Color(0xFFF0F2F5)
 
 data class SelectContactItem(
     val id: String,
@@ -140,7 +141,7 @@ fun SelectContactScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("select_contact_screen"),
-        containerColor = WhatsAppDarkBg,
+        containerColor = TriggerLightBg,
         topBar = {
             TopAppBar(
                 title = {
@@ -152,13 +153,13 @@ fun SelectContactScreen(
                                 color = Color.White,
                                 fontSize = 16.sp
                             ),
-                            cursorBrush = SolidColor(WhatsAppGreenAccent),
+                            cursorBrush = SolidColor(Color.White),
                             singleLine = true,
                             decorationBox = { innerTextField ->
                                 if (searchQuery.isEmpty()) {
                                     Text(
                                         text = "Search contacts...",
-                                        color = WhatsAppTextSecondary,
+                                        color = Color.White.copy(alpha = 0.7f),
                                         fontSize = 16.sp
                                     )
                                 }
@@ -178,7 +179,7 @@ fun SelectContactScreen(
                             )
                             Text(
                                 text = "4042 contacts",
-                                color = WhatsAppTextSecondary,
+                                color = Color.White.copy(alpha = 0.8f),
                                 fontSize = 12.sp
                             )
                         }
@@ -219,29 +220,29 @@ fun SelectContactScreen(
                         DropdownMenu(
                             expanded = showMenu,
                             onDismissRequest = { showMenu = false },
-                            modifier = Modifier.background(WhatsAppDarkSurface)
+                            modifier = Modifier.background(Color.White)
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Invite a friend", color = Color.White) },
+                                text = { Text("Invite a friend", color = TriggerTextPrimary) },
                                 onClick = { showMenu = false }
                             )
                             DropdownMenuItem(
-                                text = { Text("Contacts", color = Color.White) },
+                                text = { Text("Contacts", color = TriggerTextPrimary) },
                                 onClick = { showMenu = false }
                             )
                             DropdownMenuItem(
-                                text = { Text("Refresh", color = Color.White) },
+                                text = { Text("Refresh", color = TriggerTextPrimary) },
                                 onClick = { showMenu = false }
                             )
                             DropdownMenuItem(
-                                text = { Text("Help", color = Color.White) },
+                                text = { Text("Help", color = TriggerTextPrimary) },
                                 onClick = { showMenu = false }
                             )
                         }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = WhatsAppDarkBg
+                    containerColor = TriggerGreenHeader
                 )
             )
         }
@@ -286,7 +287,7 @@ fun SelectContactScreen(
                         // Section header: "Contacts on Trigger App"
                         Text(
                             text = "Contacts on Trigger App",
-                            color = WhatsAppTextSecondary,
+                            color = TriggerTextSecondary,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
@@ -327,7 +328,7 @@ fun SelectContactActionItem(
             modifier = Modifier
                 .size(42.dp)
                 .clip(CircleShape)
-                .background(WhatsAppGreenAccent),
+                .background(TriggerGreenAccent),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -344,7 +345,7 @@ fun SelectContactActionItem(
             text = title,
             fontSize = 16.sp,
             fontWeight = FontWeight.Medium,
-            color = Color.White,
+            color = TriggerTextPrimary,
             modifier = Modifier.weight(1f)
         )
 
@@ -352,7 +353,7 @@ fun SelectContactActionItem(
             Icon(
                 imageVector = trailingIcon,
                 contentDescription = null,
-                tint = WhatsAppTextSecondary,
+                tint = TriggerTextSecondary,
                 modifier = Modifier.size(24.dp)
             )
         }
@@ -411,14 +412,14 @@ fun SelectContactListItem(
                 text = contact.name,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = Color.White
+                color = TriggerTextPrimary
             )
             if (contact.subtitle != null) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = contact.subtitle,
                     fontSize = 13.sp,
-                    color = WhatsAppTextSecondary
+                    color = TriggerTextSecondary
                 )
             }
         }

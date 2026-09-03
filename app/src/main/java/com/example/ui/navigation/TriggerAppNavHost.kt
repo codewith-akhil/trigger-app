@@ -27,6 +27,17 @@ object TriggerDestinations {
     const val PROFILE = "profile"
     const val SELECT_CONTACT = "select_contact"
     const val HOME = "home"
+    const val SETTINGS = "settings"
+    const val SETTINGS_ACCOUNT = "settings_account"
+    const val SETTINGS_PRIVACY = "settings_privacy"
+    const val SETTINGS_CHATS = "settings_chats"
+    const val SETTINGS_NOTIFICATIONS = "settings_notifications"
+    const val SETTINGS_STORAGE = "settings_storage"
+    const val SETTINGS_HELP = "settings_help"
+    const val SCHEDULE_STREAM = "schedule_stream"
+    const val STREAM_HISTORY = "stream_history"
+    const val WALLET = "wallet"
+    const val SECRET_VAULT = "secret_vault"
 }
 
 @Composable
@@ -214,6 +225,15 @@ fun TriggerAppNavHost(
                 onOpenProfile = {
                     navController.navigate(TriggerDestinations.PROFILE)
                 },
+                onOpenSettings = {
+                    navController.navigate(TriggerDestinations.SETTINGS)
+                },
+                onNavigateToScheduleStream = {
+                    navController.navigate(TriggerDestinations.SCHEDULE_STREAM)
+                },
+                onNavigateToStreamHistory = {
+                    navController.navigate(TriggerDestinations.STREAM_HISTORY)
+                },
                 onRestartFlow = {
                     navController.navigate(TriggerDestinations.LANDING) {
                         popUpTo(0) { inclusive = true }
@@ -226,7 +246,99 @@ fun TriggerAppNavHost(
             ProfileScreen(
                 onBack = {
                     navController.popBackStack()
+                },
+                onLogout = {
+                    navController.navigate(TriggerDestinations.LANDING) {
+                        popUpTo(0) { inclusive = true }
+                    }
                 }
+            )
+        }
+
+        composable(TriggerDestinations.SETTINGS) {
+            SettingsScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToProfile = { navController.navigate(TriggerDestinations.PROFILE) },
+                onNavigateToAccount = { navController.navigate(TriggerDestinations.SETTINGS_ACCOUNT) },
+                onNavigateToPrivacy = { navController.navigate(TriggerDestinations.SETTINGS_PRIVACY) },
+                onNavigateToChats = { navController.navigate(TriggerDestinations.SETTINGS_CHATS) },
+                onNavigateToNotifications = { navController.navigate(TriggerDestinations.SETTINGS_NOTIFICATIONS) },
+                onNavigateToStorage = { navController.navigate(TriggerDestinations.SETTINGS_STORAGE) },
+                onNavigateToHelp = { navController.navigate(TriggerDestinations.SETTINGS_HELP) },
+                onNavigateToLanguage = { navController.navigate(TriggerDestinations.LANGUAGE_SELECTION) },
+                onNavigateToWallet = { navController.navigate(TriggerDestinations.WALLET) },
+                onNavigateToSecretVault = { navController.navigate(TriggerDestinations.SECRET_VAULT) }
+            )
+        }
+
+        composable(TriggerDestinations.SCHEDULE_STREAM) {
+            ScheduleStreamScreen(
+                onBack = { navController.popBackStack() },
+                onStreamScheduled = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(TriggerDestinations.STREAM_HISTORY) {
+            StreamHistoryScreen(
+                onBack = { navController.popBackStack() },
+                onScheduleNew = {
+                    navController.navigate(TriggerDestinations.SCHEDULE_STREAM)
+                }
+            )
+        }
+
+        composable(TriggerDestinations.WALLET) {
+            WalletScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(TriggerDestinations.SECRET_VAULT) {
+            SecretVaultScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(TriggerDestinations.SETTINGS_ACCOUNT) {
+            AccountSettingsScreen(
+                onBack = { navController.popBackStack() },
+                onDeleteAccountConfirmed = {
+                    navController.navigate(TriggerDestinations.LANDING) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        composable(TriggerDestinations.SETTINGS_PRIVACY) {
+            PrivacySettingsScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(TriggerDestinations.SETTINGS_CHATS) {
+            ChatsSettingsScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(TriggerDestinations.SETTINGS_NOTIFICATIONS) {
+            NotificationsSettingsScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(TriggerDestinations.SETTINGS_STORAGE) {
+            StorageSettingsScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(TriggerDestinations.SETTINGS_HELP) {
+            HelpSettingsScreen(
+                onBack = { navController.popBackStack() }
             )
         }
 

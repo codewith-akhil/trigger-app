@@ -49,6 +49,9 @@ fun WhatsAppDashboardScreen(
     onOpenChat: (contactId: String, contactName: String, avatarRes: Int?) -> Unit,
     onOpenSelectContact: () -> Unit = {},
     onOpenProfile: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
+    onNavigateToScheduleStream: () -> Unit = {},
+    onNavigateToStreamHistory: () -> Unit = {},
     onRestartFlow: () -> Unit
 ) {
     val viewModel: com.example.ui.viewmodel.DashboardViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
@@ -58,6 +61,7 @@ fun WhatsAppDashboardScreen(
     val selectedFilter by viewModel.selectedFilter.collectAsState()
 
     val agoraCallState by com.example.di.AppServiceContainer.agoraService.callState.collectAsState()
+    val agoraState by com.example.di.AppServiceContainer.agoraService.agoraState.collectAsState()
 
     var selectedTab by remember { mutableStateOf(DashboardTab.CHATS) }
     var showTopMenu by remember { mutableStateOf(false) }
@@ -108,6 +112,7 @@ fun WhatsAppDashboardScreen(
                         showMenu = showTopMenu,
                         onDismissMenu = { showTopMenu = false },
                         onOpenProfile = { selectedTab = DashboardTab.PROFILE },
+                        onOpenSettings = onOpenSettings,
                         onRestartOnboarding = onRestartFlow,
                         onToggleNetwork = { viewModel.toggleNetworkConnection() }
                     )
@@ -200,7 +205,7 @@ fun WhatsAppDashboardScreen(
                         modifier = Modifier.testTag("new_call_fab")
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.AddCall,
+                            imageVector = Icons.Filled.AddIcCall,
                             contentDescription = "New Call",
                             modifier = Modifier.size(24.dp)
                         )
@@ -267,7 +272,9 @@ fun WhatsAppDashboardScreen(
 
                 DashboardTab.STREAM -> {
                     StreamTabContent(
-                        onGoLive = { showGoLiveDialog = true }
+                        onGoLive = { showGoLiveDialog = true },
+                        onNavigateToScheduleStream = onNavigateToScheduleStream,
+                        onNavigateToStreamHistory = onNavigateToStreamHistory
                     )
                 }
 
@@ -290,7 +297,8 @@ fun WhatsAppDashboardScreen(
 
                 DashboardTab.PROFILE -> {
                     ProfileScreen(
-                        onBack = { selectedTab = DashboardTab.CHATS }
+                        onBack = { selectedTab = DashboardTab.CHATS },
+                        onLogout = onRestartFlow
                     )
                 }
             }
@@ -305,6 +313,16 @@ fun WhatsAppDashboardScreen(
             onDismiss = {
                 com.example.di.AppServiceContainer.agoraService.endCall()
                 showActiveCallDialog = false
+            }
+        )
+    }
+
+    // Live Stream Player Overlay
+    if (agoraState.mode == com.example.service.webrtc.AgoraCallMode.LIVE_STREAM &&
+        agoraState.status == com.example.service.webrtc.AgoraCallStatus.CONNECTED) {
+        LiveStreamPlayerScreen(
+            onDismiss = {
+                com.example.di.AppServiceContainer.agoraService.endCall()
             }
         )
     }
@@ -393,11 +411,12 @@ fun WhatsAppDashboardScreen(
     if (showStatusStoryDialog != null) {
         AlertDialog(
             onDismissRequest = { showStatusStoryDialog = null },
-            containerColor = Color(0xFF111B21),
+            containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
             title = {
                 Text(
                     text = "${showStatusStoryDialog}'s Status",
-                    color = Color.White,
+                    color = GeometricTextDark,
                     fontWeight = FontWeight.Bold
                 )
             },
@@ -430,14 +449,14 @@ fun WhatsAppDashboardScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = "Posted 42 minutes ago",
-                        color = Color(0xFF8696A0),
+                        color = GeometricTextSecondary,
                         fontSize = 13.sp
                     )
                 }
             },
             confirmButton = {
                 TextButton(onClick = { showStatusStoryDialog = null }) {
-                    Text("Close", color = WhatsAppFabGreen)
+                    Text("Close", color = WhatsAppHeaderGreen, fontWeight = FontWeight.Bold)
                 }
             }
         )
@@ -447,9 +466,10 @@ fun WhatsAppDashboardScreen(
     if (showCameraDialog) {
         AlertDialog(
             onDismissRequest = { showCameraDialog = false },
-            containerColor = Color(0xFF1F2C34),
+            containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
             title = {
-                Text("Camera", color = Color.White, fontWeight = FontWeight.Bold)
+                Text("Camera", color = GeometricTextDark, fontWeight = FontWeight.Bold)
             },
             text = {
                 Box(
@@ -457,13 +477,13 @@ fun WhatsAppDashboardScreen(
                         .fillMaxWidth()
                         .height(180.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color.Black),
+                        .background(Color(0xFFF0F2F5)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Filled.CameraAlt,
                         contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.6f),
+                        tint = WhatsAppHeaderGreen,
                         modifier = Modifier.size(54.dp)
                     )
                 }
@@ -474,6 +494,11 @@ fun WhatsAppDashboardScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = WhatsAppFabGreen)
                 ) {
                     Text("Take Photo", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCameraDialog = false }) {
+                    Text("Cancel", color = GeometricTextSecondary)
                 }
             }
         )
@@ -487,6 +512,7 @@ fun WhatsAppTopHeader(
     showMenu: Boolean,
     onDismissMenu: () -> Unit,
     onOpenProfile: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     onRestartOnboarding: () -> Unit,
     onToggleNetwork: () -> Unit = {}
 ) {
@@ -554,29 +580,10 @@ fun WhatsAppTopHeader(
                         onClick = onDismissMenu
                     )
                     DropdownMenuItem(
-                        text = { Text("New broadcast", color = GeometricTextDark) },
-                        onClick = onDismissMenu
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Linked devices", color = GeometricTextDark) },
-                        onClick = onDismissMenu
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Simulate Network (Online / Offline)", color = GeometricTextDark) },
-                        onClick = {
-                            onDismissMenu()
-                            onToggleNetwork()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Starred messages", color = GeometricTextDark) },
-                        onClick = onDismissMenu
-                    )
-                    DropdownMenuItem(
                         text = { Text("Settings", color = GeometricTextDark) },
                         onClick = {
                             onDismissMenu()
-                            onOpenProfile()
+                            onOpenSettings()
                         }
                     )
                     HorizontalDivider(color = GeometricBorderLight)
@@ -1227,7 +1234,10 @@ fun CommunitiesTabContent() {
 }
 
 @Composable
-fun CallsTabContent(onCallContact: (String) -> Unit) {
+fun CallsTabContent(
+    onCallContact: (String) -> Unit,
+    onVideoCallContact: (String) -> Unit = onCallContact
+) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -1289,7 +1299,7 @@ fun CallsTabContent(onCallContact: (String) -> Unit) {
                 isVideo = true,
                 isIncoming = true,
                 avatarRes = R.drawable.img_darling_avatar,
-                onCall = { onCallContact("darling") }
+                onCall = { onVideoCallContact("darling") }
             )
         }
 
@@ -1378,6 +1388,882 @@ fun CallLogItem(
                 tint = WhatsAppHeaderGreen,
                 modifier = Modifier.size(22.dp)
             )
+        }
+    }
+}
+
+@Composable
+fun StreamTabContent(
+    onGoLive: () -> Unit,
+    onNavigateToScheduleStream: () -> Unit = {},
+    onNavigateToStreamHistory: () -> Unit = {}
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val agoraState by com.example.di.AppServiceContainer.agoraService.agoraState.collectAsState()
+    val scheduledStreams by com.example.di.AppServiceContainer.streamScheduleService.scheduledStreams.collectAsState()
+    val streamHistory by com.example.di.AppServiceContainer.streamScheduleService.streamHistory.collectAsState()
+
+    var selectedSection by remember { mutableStateOf("Scheduled") }
+    var selectedStreamForBooking by remember { mutableStateOf<com.example.service.ScheduledStream?>(null) }
+    var actionToastMessage by remember { mutableStateOf<String?>(null) }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("stream_tab_content"),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Go Live Now & Schedule Hero
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = TriggerHeaderGreen
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFFF5252))
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "LIVE & SCHEDULED BROADCASTS",
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.sp
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Interactive Streams",
+                                color = Color.White,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Go live instantly, schedule future talks with audience limits, or monetize with paid ticket slots.",
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Action Buttons Row: Go Live Now & Schedule Stream
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = onGoLive,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.White,
+                                contentColor = TriggerHeaderGreen
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                                .testTag("go_live_now_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Videocam,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Go Live Now",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+
+                        Button(
+                            onClick = onNavigateToScheduleStream,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF00A884),
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                                .testTag("schedule_stream_nav_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.CalendarMonth,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Schedule",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section Tabs Row (Scheduled, Live Channels, History)
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = selectedSection == "Scheduled",
+                        onClick = { selectedSection = "Scheduled" },
+                        label = { Text("Scheduled (${scheduledStreams.size})") },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Color(0xFFE8F5E9),
+                            selectedLabelColor = TriggerHeaderGreen
+                        )
+                    )
+                    FilterChip(
+                        selected = selectedSection == "Live",
+                        onClick = { selectedSection = "Live" },
+                        label = { Text("Live Now (${agoraState.activeStreams.size})") },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Color(0xFFE8F5E9),
+                            selectedLabelColor = TriggerHeaderGreen
+                        )
+                    )
+                    FilterChip(
+                        selected = selectedSection == "History",
+                        onClick = { selectedSection = "History" },
+                        label = { Text("History (${streamHistory.size})") },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Color(0xFFE8F5E9),
+                            selectedLabelColor = TriggerHeaderGreen
+                        )
+                    )
+                }
+
+                if (selectedSection == "History") {
+                    TextButton(onClick = onNavigateToStreamHistory) {
+                        Text("View All", color = TriggerHeaderGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // Section Content
+        when (selectedSection) {
+            "Scheduled" -> {
+                if (scheduledStreams.isEmpty()) {
+                    item {
+                        Card(
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(Icons.Filled.EventAvailable, contentDescription = null, tint = Color(0xFF667781), modifier = Modifier.size(40.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("No Scheduled Streams", fontWeight = FontWeight.Bold, color = GeometricTextDark)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text("Schedule your first interactive event with slots & pricing.", fontSize = 12.sp, color = Color(0xFF667781))
+                            }
+                        }
+                    }
+                } else {
+                    items(scheduledStreams, key = { it.id }) { stream ->
+                        ScheduledStreamCardItem(
+                            stream = stream,
+                            onBookClick = { selectedStreamForBooking = stream },
+                            onShareClick = {
+                                val sendIntent = android.content.Intent().apply {
+                                    action = android.content.Intent.ACTION_SEND
+                                    putExtra(
+                                        android.content.Intent.EXTRA_TEXT,
+                                        "Join my live stream on Trigger App!\n📌 Title: ${stream.title}\n📅 Date: ${stream.date} at ${stream.time}\n🔗 Link: ${stream.shareLink}"
+                                    )
+                                    type = "text/plain"
+                                }
+                                context.startActivity(android.content.Intent.createChooser(sendIntent, "Share Stream Invite"))
+                            }
+                        )
+                    }
+                }
+            }
+
+            "Live" -> {
+                if (agoraState.activeStreams.isEmpty()) {
+                    item {
+                        Card(
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(Icons.Filled.Podcasts, contentDescription = null, tint = Color(0xFF667781), modifier = Modifier.size(40.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("No Active Live Streams", fontWeight = FontWeight.Bold, color = GeometricTextDark)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text("Tap 'Go Live Now' above to broadcast to the community.", fontSize = 12.sp, color = Color(0xFF667781))
+                            }
+                        }
+                    }
+                } else {
+                    items(agoraState.activeStreams, key = { it.id }) { stream ->
+                        LiveStreamCard(
+                            stream = stream,
+                            onJoin = {
+                                com.example.di.AppServiceContainer.agoraService.joinLiveStream(stream)
+                            }
+                        )
+                    }
+                }
+            }
+
+            "History" -> {
+                items(streamHistory, key = { it.id }) { item ->
+                    StreamHistoryCard(item)
+                }
+            }
+        }
+    }
+
+    // Stream Booking & Slot Verification Dialog
+    selectedStreamForBooking?.let { stream ->
+        StreamBookingDialog(
+            stream = stream,
+            onDismiss = { selectedStreamForBooking = null },
+            onBookingSuccess = {
+                selectedStreamForBooking = null
+            }
+        )
+    }
+}
+
+@Composable
+fun ScheduledStreamCardItem(
+    stream: com.example.service.ScheduledStream,
+    onBookClick: () -> Unit,
+    onShareClick: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color(0xFFE8F5E9)
+                ) {
+                    Text(
+                        text = stream.category,
+                        color = Color(0xFF2E7D32),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = if (stream.type == com.example.service.StreamPricingType.PAID) Color(0xFFFFF3E0) else Color(0xFFE3F2FD)
+                ) {
+                    Text(
+                        text = if (stream.type == com.example.service.StreamPricingType.PAID) "PAID (${stream.priceDisplay})" else "FREE",
+                        color = if (stream.type == com.example.service.StreamPricingType.PAID) Color(0xFFE65100) else Color(0xFF1565C0),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                // Capacity status
+                val slotText = if (stream.isUnlimitedSlots) {
+                    "Unlimited Slots"
+                } else {
+                    "${stream.slotsBooked} / ${stream.maxSlots} Booked"
+                }
+                Text(
+                    text = slotText,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (stream.isFull) Color(0xFFD32F2F) else Color(0xFF008069)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
+                text = stream.title,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = GeometricTextDark
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = "Hosted by ${stream.hostName}",
+                fontSize = 13.sp,
+                color = Color(0xFF667781)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.CalendarToday, contentDescription = null, tint = Color(0xFF00A884), modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(stream.date, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = GeometricTextDark)
+                Spacer(modifier = Modifier.width(12.dp))
+                Icon(Icons.Filled.Schedule, contentDescription = null, tint = Color(0xFF00A884), modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(stream.time, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = GeometricTextDark)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = Color(0xFFF1F5F9))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Share link button
+                OutlinedButton(
+                    onClick = onShareClick,
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF008069))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Share Link", fontSize = 12.sp, color = Color(0xFF008069))
+                }
+
+                // Booking / Join action
+                Button(
+                    onClick = onBookClick,
+                    enabled = !stream.isFull,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (stream.isJoined) Color(0xFF4CAF50) else Color(0xFF008069)
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = when {
+                            stream.isFull -> "Sold Out"
+                            stream.isJoined -> "Slot Booked ✓"
+                            stream.type == com.example.service.StreamPricingType.PAID -> "Pay ${stream.priceDisplay} & Book"
+                            else -> "Reserve Free Slot"
+                        },
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LiveStreamCard(
+    stream: com.example.service.webrtc.AgoraLiveStream,
+    onJoin: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onJoin)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color(0xFFE8F5E9)
+                ) {
+                    Text(
+                        text = stream.category,
+                        color = Color(0xFF2E7D32),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFFFEBEE)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFD32F2F))
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${stream.viewerCount} watching",
+                            color = Color(0xFFD32F2F),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
+                text = stream.title,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = GeometricTextDark,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(TriggerChatTeal),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stream.streamerName.take(1),
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Text(
+                    text = stream.streamerName,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = GeometricTextDark,
+                    modifier = Modifier.weight(1f)
+                )
+
+                Button(
+                    onClick = onJoin,
+                    colors = ButtonDefaults.buttonColors(containerColor = TriggerFabGreen),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text("Join", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AgoraActiveCallDialog(
+    contactName: String,
+    isVideo: Boolean,
+    onDismiss: () -> Unit
+) {
+    val agoraState by com.example.di.AppServiceContainer.agoraService.agoraState.collectAsState()
+    val minutes = agoraState.durationSeconds / 60
+    val seconds = agoraState.durationSeconds % 60
+    val durationFormatted = String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds)
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = TriggerChatTeal
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                if (isVideo && agoraState.isVideoEnabled) {
+                    val engineState by com.example.di.AppServiceContainer.agoraRtcEngineManager.engineState.collectAsState()
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(0xFF1E2830)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (engineState.remoteUid != null) {
+                            androidx.compose.ui.viewinterop.AndroidView(
+                                factory = { ctx ->
+                                    android.view.SurfaceView(ctx).apply {
+                                        com.example.di.AppServiceContainer.agoraRtcEngineManager.setupRemoteVideo(this, engineState.remoteUid!!)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(color = TriggerFabGreen, strokeWidth = 3.dp)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "Connecting Agora Video Feed…",
+                                    color = Color.White.copy(alpha = 0.9f),
+                                    fontSize = 14.sp
+                                )
+                                Text(
+                                    text = "Channel: ${agoraState.channelName.ifEmpty { "call_channel" }}",
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+
+                        // Local camera PiP in corner
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 90.dp, end = 16.dp)
+                                .size(width = 100.dp, height = 140.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color.Black,
+                            shadowElevation = 6.dp
+                        ) {
+                            androidx.compose.ui.viewinterop.AndroidView(
+                                factory = { ctx ->
+                                    android.view.SurfaceView(ctx).apply {
+                                        setZOrderMediaOverlay(true)
+                                        com.example.di.AppServiceContainer.agoraRtcEngineManager.setupLocalVideo(this)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(TriggerHeaderGreen, TriggerChatTeal)
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(110.dp)
+                                    .clip(CircleShape)
+                                    .background(TriggerChatTeal),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = (if (agoraState.remoteUserName.isNotEmpty()) agoraState.remoteUserName else contactName).take(1),
+                                    color = Color.White,
+                                    fontSize = 44.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Top bar info
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 48.dp, start = 24.dp, end = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = if (agoraState.remoteUserName.isNotEmpty()) agoraState.remoteUserName else contactName,
+                        color = Color.White,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = when (agoraState.status) {
+                            com.example.service.webrtc.AgoraCallStatus.DIALING -> "Dialing…"
+                            com.example.service.webrtc.AgoraCallStatus.RINGING -> "Ringing…"
+                            com.example.service.webrtc.AgoraCallStatus.CONNECTED -> "Connected • $durationFormatted"
+                            com.example.service.webrtc.AgoraCallStatus.DISCONNECTED -> "Call Ended"
+                            com.example.service.webrtc.AgoraCallStatus.FAILED -> "Call Failed"
+                            else -> "Connecting…"
+                        },
+                        color = if (agoraState.status == com.example.service.webrtc.AgoraCallStatus.CONNECTED) TriggerFabGreen else Color.White.copy(alpha = 0.7f),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                // Bottom Call Controls
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 48.dp, start = 24.dp, end = 24.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Mute button
+                    IconButton(
+                        onClick = { com.example.di.AppServiceContainer.agoraService.toggleMute() },
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(if (agoraState.isMuted) Color.White else Color(0x33FFFFFF))
+                    ) {
+                        Icon(
+                            imageVector = if (agoraState.isMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
+                            contentDescription = "Mute",
+                            tint = if (agoraState.isMuted) Color.Black else Color.White,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+
+                    if (isVideo) {
+                        IconButton(
+                            onClick = { com.example.di.AppServiceContainer.agoraService.toggleVideo() },
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(if (!agoraState.isVideoEnabled) Color.White else Color(0x33FFFFFF))
+                        ) {
+                            Icon(
+                                imageVector = if (agoraState.isVideoEnabled) Icons.Filled.Videocam else Icons.Filled.VideocamOff,
+                                contentDescription = "Video",
+                                tint = if (!agoraState.isVideoEnabled) Color.Black else Color.White,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { com.example.di.AppServiceContainer.agoraService.switchCamera() },
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x33FFFFFF))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.FlipCameraAndroid,
+                                contentDescription = "Switch Camera",
+                                tint = Color.White,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                    } else {
+                        IconButton(
+                            onClick = { com.example.di.AppServiceContainer.agoraService.toggleSpeaker() },
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(if (agoraState.isSpeakerOn) Color.White else Color(0x33FFFFFF))
+                        ) {
+                            Icon(
+                                imageVector = if (agoraState.isSpeakerOn) Icons.Filled.VolumeUp else Icons.Filled.VolumeDown,
+                                contentDescription = "Speaker",
+                                tint = if (agoraState.isSpeakerOn) Color.Black else Color.White,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                    }
+
+                    // End Call button
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFE53935))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CallEnd,
+                            contentDescription = "End Call",
+                            tint = Color.White,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AgoraGoLiveDialog(
+    onDismiss: () -> Unit
+) {
+    var streamTitle by remember { mutableStateOf("") }
+    var streamCategory by remember { mutableStateOf("Tech & Dev") }
+    val categories = listOf("Tech & Dev", "Live Talk", "Gaming", "Music", "Q&A")
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+        ) {
+            Text(
+                text = "Start Live Broadcast",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = GeometricTextDark
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Stream real-time video with Agora WebRTC Engine",
+                fontSize = 13.sp,
+                color = GeometricTextSecondary
+            )
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            Text(
+                text = "Stream Title",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = GeometricTextDark
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            OutlinedTextField(
+                value = streamTitle,
+                onValueChange = { streamTitle = it },
+                placeholder = { Text("e.g. My First Live Stream") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Text(
+                text = "Category",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = GeometricTextDark
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                categories.take(3).forEach { cat ->
+                    val isSelected = streamCategory == cat
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (isSelected) TriggerFabGreen else Color(0xFFF0F2F5),
+                        modifier = Modifier.clickable { streamCategory = cat }
+                    ) {
+                        Text(
+                            text = cat,
+                            color = if (isSelected) Color.White else GeometricTextDark,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Button(
+                onClick = {
+                    val finalTitle = streamTitle.ifBlank { "Live Broadcast" }
+                    val channel = "stream_" + System.currentTimeMillis()
+                    com.example.di.AppServiceContainer.agoraService.startLiveStream(finalTitle, channel)
+                    onDismiss()
+                },
+                shape = RoundedCornerShape(24.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = TriggerFabGreen),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+            ) {
+                Icon(Icons.Filled.LiveTv, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Go Live Now",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }

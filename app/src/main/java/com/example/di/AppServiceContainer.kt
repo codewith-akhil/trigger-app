@@ -39,14 +39,30 @@ object AppServiceContainer {
         private set
     lateinit var supabaseClient: SupabaseClient
         private set
+    lateinit var agoraTokenService: com.example.service.agora.AgoraTokenService
+        private set
+    lateinit var agoraRtcEngineManager: com.example.service.agora.AgoraRtcEngineManager
+        private set
+    lateinit var liveStreamService: com.example.service.LiveStreamService
+        private set
     lateinit var agoraWebRtcService: AgoraWebRtcService
         private set
+    lateinit var streamScheduleService: com.example.service.StreamScheduleService
+        private set
+    lateinit var walletService: com.example.service.WalletService
+        private set
+    lateinit var secretVaultService: com.example.service.SecretVaultService
+        private set
+
+    val agoraService: AgoraWebRtcService
+        get() = agoraWebRtcService
 
     fun initialize(context: Context) {
         if (initialized) return
 
         supabaseClient = SupabaseClient()
-        agoraWebRtcService = AgoraWebRtcService(appScope)
+        agoraTokenService = com.example.service.agora.SupabaseEdgeFunctionTokenService(supabaseClient)
+        agoraRtcEngineManager = com.example.service.agora.AgoraRtcEngineManager(context, agoraTokenService)
 
         database = ChatDatabase.getInstance(context)
         chatRepository = ChatRepositoryImpl(database, appScope)
@@ -61,7 +77,11 @@ object AppServiceContainer {
             messageService.updateMessageStatus(completedTask.messageId, com.example.model.MessageStatus.SENT)
         }
 
-        callService = CallServiceImpl(appScope) { contactId, type, durationSec, isMissed ->
+        callService = com.example.service.agora.AgoraCallService(
+            rtcManager = agoraRtcEngineManager,
+            supabaseClient = supabaseClient,
+            scope = appScope
+        ) { contactId, type, durationSec, isMissed ->
             // Insert call log message into chat
             val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
             val callText = if (isMissed) {
@@ -87,6 +107,22 @@ object AppServiceContainer {
             )
             chatRepository.sendMessage(callLogMsg, isOnline = true)
         }
+
+        liveStreamService = com.example.service.agora.AgoraLiveStreamService(
+            rtcManager = agoraRtcEngineManager,
+            supabaseClient = supabaseClient,
+            scope = appScope
+        )
+
+        agoraWebRtcService = AgoraWebRtcService(
+            scope = appScope,
+            callService = callService,
+            liveStreamService = liveStreamService
+        )
+
+        streamScheduleService = com.example.service.StreamScheduleService(appScope)
+        walletService = com.example.service.WalletService(context)
+        secretVaultService = com.example.service.SecretVaultService(context)
 
         initialized = true
     }
