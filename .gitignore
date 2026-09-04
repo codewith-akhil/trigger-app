@@ -47,3 +47,8 @@ upload-key.jks
 debug.keystore
 local.properties
 .gradle/
+
+# Strong signing keystore + credentials (never commit)
+trigger-upload-key.jks
+keystore.properties
+keystore-credentials.txt
