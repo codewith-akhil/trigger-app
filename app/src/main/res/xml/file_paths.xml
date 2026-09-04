@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Allows FileProvider to share files from the app's internal cache dir
+         (used by ProfileScreen camera capture to write a temp avatar JPEG). -->
+    <cache-path name="cache_images" path="." />
+    <files-path name="files_images" path="." />
+    <external-cache-path name="external_cache_images" path="." />
+    <external-files-path name="external_files_images" path="." />
+</paths>
