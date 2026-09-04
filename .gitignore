@@ -46,5 +46,4 @@ build/
 upload-key.jks
 debug.keystore
 local.properties
-app/google-services.json
 .gradle/
