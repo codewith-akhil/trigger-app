@@ -15,6 +15,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.example.di.AppServiceContainer.initialize(this)
+
+        // Create FCM notification channels + auto-register the FCM token with
+        // the Supabase register-push-token edge function on every app launch.
+        // The token refresh is also handled by TriggerFirebaseMessagingService.onNewToken.
+        com.example.service.TriggerFirebaseMessagingService.createNotificationChannels(this)
+        com.example.service.TriggerFirebaseMessagingService.registerToken(this)
+
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
