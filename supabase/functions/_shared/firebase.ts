@@ -159,6 +159,10 @@ export async function sendFcm(payload: FcmPayload): Promise<FcmResult> {
   if (!privateKey.includes("BEGIN PRIVATE KEY")) {
     return { error: "FIREBASE_PRIVATE_KEY is not a valid PEM" };
   }
+  // Reject obvious placeholder values so we don't leak parser internals.
+  if (privateKey.includes("PLACEHOLDER") || privateKey.includes("MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDPLACEHOLDER")) {
+    return { error: "Firebase service account is not configured (placeholder key detected)" };
+  }
 
   let accessToken: string;
   try {
@@ -168,7 +172,13 @@ export async function sendFcm(payload: FcmPayload): Promise<FcmResult> {
       "https://www.googleapis.com/auth/firebase.messaging",
     );
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "Failed to mint access token" };
+    // Never leak internal parser errors (e.g. "Offset is outside the bounds of
+    // the DataView") — return a clean, actionable message instead.
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/offset|bounds|length|parse|invalid/i.test(msg)) {
+      return { error: "Firebase private key is malformed — check FIREBASE_PRIVATE_KEY" };
+    }
+    return { error: "Failed to mint FCM access token" };
   }
 
   const message: Record<string, unknown> = {
