@@ -103,12 +103,17 @@ function pkcs8ToJwk(der: Uint8Array): JsonWebKey {
 
 async function mintAccessToken(clientEmail: string, privateKeyPem: string, scope: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  const jwk = pemToDer(privateKeyPem);
+  // Use WebCrypto's NATIVE PKCS#8 parser (much more reliable than a custom
+  // ASN.1 parser — handles all valid RSA keys including 4096-bit + variable
+  // structure). Strip the PEM headers + decode base64 → DER bytes.
+  const pemBody = privateKeyPem
+    .replace(/-----BEGIN PRIVATE KEY-----/, "")
+    .replace(/-----END PRIVATE KEY-----/, "")
+    .replace(/\s+/g, "");
+  const derBytes = Uint8Array.from(atob(pemBody), (ch) => ch.charCodeAt(0));
   const key = await crypto.subtle.importKey(
     "pkcs8",
-    // Re-encode JWK→DER is complex; instead import via jwk form using "jwk" format.
-    // WebCrypto can import JWK directly for RSASSA-PKCS1-v1_5.
-    { ...jwk, alg: "RS256" } as JsonWebKey,
+    derBytes,
     { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
     false,
     ["sign"],
@@ -216,10 +221,10 @@ export async function sendFcm(payload: FcmPayload): Promise<FcmResult> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const errDetail = data?.error?.details?.[0];
-    if (
-      (typeof data?.error?.message === "string" && /registration-token|not valid|UNREGISTERED/i.test(data.error.message)) ||
-      (errDetail && /UNREGISTERED/i.test(errDetail.reason ?? ""))
-    ) {
+    const errMsg = (typeof data?.error?.message === "string" ? data.error.message : "") +
+      " " + (errDetail?.reason ?? "");
+    // FCM returns various messages for invalid/unregistered tokens — match them all.
+    if (/registration.?token|not.*valid.*token|UNREGISTERED|INVALID_ARGUMENT.*token/i.test(errMsg)) {
       return { error: "Invalid or unregistered FCM token", invalidToken: true };
     }
     return { error: data?.error?.message ?? `FCM HTTP ${res.status}` };
