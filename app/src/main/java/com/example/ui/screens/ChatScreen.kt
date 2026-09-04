@@ -64,9 +64,9 @@ import java.io.File
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
-    contactId: String = "darling",
-    contactName: String = "darling",
-    contactAvatarRes: Int? = R.drawable.img_darling_avatar,
+    contactId: String = "",
+    contactName: String = "",
+    contactAvatarRes: Int? = null,
     onBack: () -> Unit
 ) {
     val viewModel = remember(contactId) {
@@ -573,7 +573,6 @@ fun ChatScreen(
                 },
                 onContactSelected = {
                     showAttachmentSheet = false
-                    viewModel.shareContact("Dr. Robert Vance", "+1 (555) 912-3841")
                 }
             )
         }
@@ -888,26 +887,11 @@ fun ChatScreen(
             title = { Text("Forward to...", color = Color(0xFF111B21), fontWeight = FontWeight.Bold) },
             text = {
                 Column {
-                    listOf("besties", "jonathan", "maya").forEach { targetId ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    viewModel.forwardSelectedTo(listOf(targetId))
-                                    showForwardDialog = false
-                                }
-                                .padding(vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Filled.Person, contentDescription = null, tint = WhatsAppFabGreen)
-                            Spacer(Modifier.width(12.dp))
-                            Text(
-                                text = targetId.replaceFirstChar { it.uppercase() },
-                                fontSize = 16.sp,
-                                color = Color(0xFF111B21)
-                            )
-                        }
-                    }
+                    Text(
+                        text = "No other conversations available",
+                        color = Color(0xFF667781),
+                        fontSize = 14.sp
+                    )
                 }
             },
             confirmButton = {

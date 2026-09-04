@@ -28,6 +28,5 @@ object ChatRepository {
     // Empty by default; populated dynamically from Supabase database & local Room persistence
     val initialChats = emptyList<ChatItem>()
 
-    val defaultDarlingMessages = emptyList<ChatMessage>()
 }
 

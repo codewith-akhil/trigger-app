@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.*
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,7 +20,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -494,11 +492,11 @@ fun DomainChatBubble(
                                     modifier = Modifier.fillMaxSize()
                                 )
                             } else {
-                                Image(
-                                    painter = painterResource(id = R.drawable.img_media_sample),
-                                    contentDescription = "Media",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
+                                Icon(
+                                    imageVector = Icons.Outlined.BrokenImage,
+                                    contentDescription = "Media unavailable",
+                                    tint = Color.White.copy(alpha = 0.7f),
+                                    modifier = Modifier.align(Alignment.Center)
                                 )
                             }
 

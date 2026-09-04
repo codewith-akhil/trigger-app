@@ -31,6 +31,7 @@ import com.example.model.DisappearingDuration
 import com.example.model.DomainConversation
 import com.example.model.DomainMessage
 import com.example.ui.theme.*
+import coil.compose.AsyncImage
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -143,7 +144,7 @@ fun ChatContactInfoSheet(
                             Spacer(modifier = Modifier.height(4.dp))
 
                             Text(
-                                text = "+1 (555) 382-9014",
+                                text = "Contact details",
                                 fontSize = 15.sp,
                                 color = Color(0xFF667781)
                             )
@@ -315,8 +316,8 @@ fun ChatContactInfoSheet(
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         mediaMessages.take(4).forEach {
-                                            Image(
-                                                painter = painterResource(id = R.drawable.img_media_sample),
+                                            AsyncImage(
+                                                model = it.mediaThumbnail ?: it.mediaUrl,
                                                 contentDescription = "Shared media",
                                                 contentScale = ContentScale.Crop,
                                                 modifier = Modifier

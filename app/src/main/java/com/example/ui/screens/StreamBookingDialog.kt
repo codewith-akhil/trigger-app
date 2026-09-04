@@ -39,8 +39,8 @@ fun StreamBookingDialog(
     val userProfile by UserRepository.profile.collectAsState()
     val walletBalance by AppServiceContainer.walletService.availableBalance.collectAsState()
 
-    val userName = userProfile.name.ifEmpty { "Akhil Canara Bank" }
-    val userEmail = userProfile.email.ifEmpty { "patteriakhil94@gmail.com" }
+    val userName = userProfile.name
+    val userEmail = userProfile.email
 
     var isProcessing by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }

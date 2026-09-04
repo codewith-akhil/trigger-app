@@ -9,7 +9,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -48,7 +47,6 @@ fun OtpVerificationScreen(
     var isVerifying by remember { mutableStateOf(false) }
     var isSuccess by remember { mutableStateOf(false) }
     var showResendDialog by remember { mutableStateOf(false) }
-    var simulatedSmsReceived by remember { mutableStateOf(false) }
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -70,12 +68,6 @@ fun OtpVerificationScreen(
             isVerifying = false
             isSuccess = true
         }
-    }
-
-    // Auto-detect SMS simulation after 3 seconds for smooth delightful UX
-    LaunchedEffect(Unit) {
-        delay(2500)
-        simulatedSmsReceived = true
     }
 
     Box(
@@ -184,49 +176,6 @@ fun OtpVerificationScreen(
                 )
 
                 Spacer(modifier = Modifier.height(36.dp))
-
-                // Simulated SMS auto-detect banner
-                AnimatedVisibility(
-                    visible = simulatedSmsReceived && otpCode.length < 6,
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut() + shrinkVertically()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFFF0FDF4))
-                            .border(1.dp, GeometricGreenPrimary.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                            .clickable {
-                                otpCode = "582914"
-                            }
-                            .padding(horizontal = 16.dp, vertical = 10.dp)
-                            .testTag("auto_detect_sms_banner")
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Filled.Sms,
-                                contentDescription = null,
-                                tint = GeometricGreenPrimary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "SMS Received: <#> 582-914",
-                                    color = GeometricTextDark,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = "Tap to auto-fill code into Trigger App",
-                                    color = GeometricGreenDark,
-                                    fontSize = 11.5.sp
-                                )
-                            }
-                        }
-                    }
-                }
 
                 Spacer(modifier = Modifier.height(28.dp))
 
@@ -391,7 +340,6 @@ fun OtpVerificationScreen(
                                     coroutineScope.launch {
                                         delay(1200)
                                         isSendingCode = false
-                                        simulatedSmsReceived = true
                                     }
                                 }
                                 .padding(vertical = 10.dp),

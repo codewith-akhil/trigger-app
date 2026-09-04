@@ -86,101 +86,6 @@ class StreamScheduleService(
     private val _streamHistory = MutableStateFlow<List<StreamHistoryItem>>(emptyList())
     val streamHistory: StateFlow<List<StreamHistoryItem>> = _streamHistory.asStateFlow()
 
-    init {
-        // Initial sample streams & history to provide rich initial data
-        _scheduledStreams.value = listOf(
-            ScheduledStream(
-                id = "sch_101",
-                title = "Live Q&A: Next-Gen WebRTC & Distributed Architecture",
-                category = "Tech & Dev",
-                hostName = "Akhil Canara Bank",
-                hostEmail = "patteriakhil94@gmail.com",
-                date = "Sep 6, 2026",
-                time = "06:00 PM",
-                timestampMillis = System.currentTimeMillis() + 86400000L * 2,
-                slotLimit = "50",
-                slotsBooked = 38,
-                type = StreamPricingType.FREE,
-                shareLink = "https://triggerapp.com/stream/sch_101",
-                isHost = true
-            ),
-            ScheduledStream(
-                id = "sch_102",
-                title = "Exclusive Masterclass: Building Mobile Apps with Compose & Agora",
-                category = "Education",
-                hostName = "Sarah Jenkins",
-                hostEmail = "sarah.jenkins@techleads.io",
-                date = "Sep 8, 2026",
-                time = "07:30 PM",
-                timestampMillis = System.currentTimeMillis() + 86400000L * 4,
-                slotLimit = "150",
-                slotsBooked = 142,
-                type = StreamPricingType.PAID,
-                amount = 14.99,
-                currency = "USD ($)",
-                shareLink = "https://triggerapp.com/stream/sch_102",
-                isHost = false
-            ),
-            ScheduledStream(
-                id = "sch_103",
-                title = "Open Stage Lofi Jam & Beatmaking Session",
-                category = "Music",
-                hostName = "Alex Rivera",
-                hostEmail = "alex.music@soundflow.fm",
-                date = "Sep 9, 2026",
-                time = "09:00 PM",
-                timestampMillis = System.currentTimeMillis() + 86400000L * 5,
-                slotLimit = "ANY",
-                slotsBooked = 310,
-                type = StreamPricingType.FREE,
-                shareLink = "https://triggerapp.com/stream/sch_103",
-                isHost = false
-            )
-        )
-
-        _streamHistory.value = listOf(
-            StreamHistoryItem(
-                id = "hist_201",
-                title = "Trigger App Architecture Deep Dive",
-                hostName = "Akhil Canara Bank",
-                date = "Sep 1, 2026 • 07:00 PM",
-                duration = "1h 14m",
-                peakViewers = 428,
-                type = "PAID",
-                revenue = 285.00,
-                currency = "USD ($)",
-                attendeesCount = 38,
-                status = "Recorded & Saved"
-            ),
-            StreamHistoryItem(
-                id = "hist_202",
-                title = "Realtime Video Engineering with WebRTC 4.x",
-                hostName = "Akhil Canara Bank",
-                date = "Aug 28, 2026 • 05:30 PM",
-                duration = "48m 20s",
-                peakViewers = 612,
-                type = "FREE",
-                revenue = 0.0,
-                currency = "USD ($)",
-                attendeesCount = 189,
-                status = "Completed"
-            ),
-            StreamHistoryItem(
-                id = "hist_203",
-                title = "Weekend Tech Hangout & Community Chill",
-                hostName = "Sarah Jenkins",
-                date = "Aug 24, 2026 • 08:00 PM",
-                duration = "2h 05m",
-                peakViewers = 890,
-                type = "PAID",
-                revenue = 520.00,
-                currency = "USD ($)",
-                attendeesCount = 104,
-                status = "Completed"
-            )
-        )
-    }
-
     /**
      * Schedules a new stream and dispatches both Push and Email notifications.
      */
@@ -198,8 +103,8 @@ class StreamScheduleService(
         sendPush: Boolean = true
     ): ScheduledStream {
         val userProfile = UserRepository.profile.value
-        val hostName = userProfile.name.ifEmpty { "Akhil" }
-        val hostEmail = userProfile.email.ifEmpty { "patteriakhil94@gmail.com" }
+        val hostName = userProfile.name
+        val hostEmail = userProfile.email
 
         val streamId = "sch_${System.currentTimeMillis()}"
         val shareLink = "https://triggerapp.com/stream/$streamId"

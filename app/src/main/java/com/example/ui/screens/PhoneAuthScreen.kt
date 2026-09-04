@@ -44,7 +44,7 @@ fun PhoneAuthScreen(
     onVerificationSuccess: (phoneNumber: String, countryCode: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var rawPhoneNumber by remember { mutableStateOf("9656839298") }
+    var rawPhoneNumber by remember { mutableStateOf("") }
     var showMenu by remember { mutableStateOf(false) }
     var showHelpSheet by remember { mutableStateOf(false) }
     var showNotificationDialog by remember { mutableStateOf(false) }

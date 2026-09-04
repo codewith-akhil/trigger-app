@@ -94,7 +94,7 @@ fun ScheduleStreamScreen(
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
     var isSubmitting by remember { mutableStateOf(false) }
 
-    val registeredEmail = userProfile.email.ifEmpty { "patteriakhil94@gmail.com" }
+    val registeredEmail = userProfile.email
 
     Scaffold(
         modifier = modifier

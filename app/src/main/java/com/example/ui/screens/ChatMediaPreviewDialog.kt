@@ -88,9 +88,9 @@ fun ChatMediaPreviewDialog(
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize()
                 )
-            } else {
+            } else if (pending.previewRes != null) {
                 Image(
-                    painter = painterResource(id = pending.previewRes ?: R.drawable.img_media_sample),
+                    painter = painterResource(id = pending.previewRes),
                     contentDescription = "Preview",
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize()

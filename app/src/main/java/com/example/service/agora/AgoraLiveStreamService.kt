@@ -43,47 +43,8 @@ class AgoraLiveStreamService(
 
     override suspend fun fetchActiveStreams(): List<LiveStreamItem> = withContext(Dispatchers.IO) {
         if (!BackendConfig.isSupabaseConfigured) {
-            // Provide curated default broadcast channels when database is fresh
-            val defaults = listOf(
-                LiveStreamItem(
-                    id = "stream_default_1",
-                    hostId = "host_1",
-                    channelName = "trigger_tech_qa",
-                    title = "⚡ Trigger App Dev & Architecture Q&A",
-                    description = "Real-time WebRTC and Supabase backend architecture discussion.",
-                    category = "Tech & Dev",
-                    streamerName = "Akhil Canara Bank",
-                    viewerCount = 142,
-                    totalLikes = 890,
-                    isLive = true
-                ),
-                LiveStreamItem(
-                    id = "stream_default_2",
-                    hostId = "host_2",
-                    channelName = "trigger_music_chill",
-                    title = "🎧 Coding Lofi Radio & Chill Vibes",
-                    description = "Focus music for developers coding all night.",
-                    category = "Music",
-                    streamerName = "Sarah Jenkins",
-                    viewerCount = 89,
-                    totalLikes = 430,
-                    isLive = true
-                ),
-                LiveStreamItem(
-                    id = "stream_default_3",
-                    hostId = "host_3",
-                    channelName = "trigger_global_talk",
-                    title = "🚀 Global Tech Talk: Realtime WebRTC & Supabase",
-                    description = "Interactive livestream with video broadcasting.",
-                    category = "Live Talk",
-                    streamerName = "Alex Rivera",
-                    viewerCount = 310,
-                    totalLikes = 1200,
-                    isLive = true
-                )
-            )
-            _activeStreams.value = defaults
-            return@withContext defaults
+            _activeStreams.value = emptyList()
+            return@withContext emptyList()
         }
 
         try {

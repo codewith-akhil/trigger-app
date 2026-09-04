@@ -55,10 +55,7 @@ class SupabaseClient(
     suspend fun signUp(email: String, password: String, fullName: String): SupabaseResult<SupabaseUser> =
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
-                // Mock fallback when keys are not configured yet
-                val mockUser = SupabaseUser(id = "user_" + System.currentTimeMillis(), email = email, fullName = fullName)
-                currentSession = SupabaseSession(accessToken = "mock_token", refreshToken = "mock_refresh", user = mockUser)
-                return@withContext SupabaseResult.Success(mockUser)
+                return@withContext SupabaseResult.Error("Supabase is not configured")
             }
 
             try {
@@ -104,10 +101,7 @@ class SupabaseClient(
     suspend fun signInWithPassword(email: String, password: String): SupabaseResult<SupabaseSession> =
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
-                val mockUser = SupabaseUser(id = "user_me", email = email, fullName = email.substringBefore("@"))
-                val session = SupabaseSession(accessToken = "mock_session_token", refreshToken = "mock_refresh", user = mockUser)
-                currentSession = session
-                return@withContext SupabaseResult.Success(session)
+                return@withContext SupabaseResult.Error("Supabase is not configured")
             }
 
             try {
@@ -149,10 +143,7 @@ class SupabaseClient(
     suspend fun verifyOtp(email: String, token: String, type: String = "signup"): SupabaseResult<SupabaseSession> =
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
-                val mockUser = SupabaseUser(id = "verified_user", email = email)
-                val session = SupabaseSession(accessToken = "mock_token", refreshToken = "mock_refresh", user = mockUser)
-                currentSession = session
-                return@withContext SupabaseResult.Success(session)
+                return@withContext SupabaseResult.Error("Supabase is not configured")
             }
 
             try {
@@ -398,8 +389,7 @@ class SupabaseClient(
         mimeType: String = "application/octet-stream"
     ): SupabaseResult<String> = withContext(Dispatchers.IO) {
         if (!BackendConfig.isSupabaseConfigured) {
-            // Return a simulated media URL
-            return@withContext SupabaseResult.Success("https://trigger-app.mock/storage/$bucketName/$fileName")
+            return@withContext SupabaseResult.Error("Supabase is not configured")
         }
 
         try {
@@ -438,7 +428,7 @@ class SupabaseClient(
         payload: JSONObject = JSONObject()
     ): SupabaseResult<JSONObject> = withContext(Dispatchers.IO) {
         if (!BackendConfig.isSupabaseConfigured) {
-            return@withContext SupabaseResult.Success(JSONObject().put("status", "ok").put("mock", true))
+            return@withContext SupabaseResult.Error("Supabase is not configured")
         }
 
         try {

@@ -146,58 +146,7 @@ fun SendLocationScreen(
     var isMapExpanded by remember { mutableStateOf(false) }
     var showLiveLocationSheet by remember { mutableStateOf(false) }
 
-    val defaultPlaces = remember {
-        listOf(
-            PlaceLocationItem(
-                id = "p1",
-                name = "SURYA MANAS Holiday homes",
-                address = "Taliparamba, KL, IN",
-                latitude = 12.0442,
-                longitude = 75.3592,
-                distanceMeters = 85
-            ),
-            PlaceLocationItem(
-                id = "p2",
-                name = "Manoor palam newr",
-                address = "Taliparamba, KL, IN",
-                latitude = 12.0425,
-                longitude = 75.3610,
-                distanceMeters = 160
-            ),
-            PlaceLocationItem(
-                id = "p3",
-                name = "Al Madeena Stores",
-                address = "Taliparamba, KL, IN",
-                latitude = 12.0450,
-                longitude = 75.3575,
-                distanceMeters = 210
-            ),
-            PlaceLocationItem(
-                id = "p4",
-                name = "City Central Shopping Mall",
-                address = "Taliparamba, KL, IN",
-                latitude = 12.0468,
-                longitude = 75.3560,
-                distanceMeters = 340
-            ),
-            PlaceLocationItem(
-                id = "p5",
-                name = "Green Valley Garden Resort",
-                address = "Taliparamba, KL, IN",
-                latitude = 12.0410,
-                longitude = 75.3630,
-                distanceMeters = 450
-            ),
-            PlaceLocationItem(
-                id = "p6",
-                name = "Town Grand Plaza & Cafe",
-                address = "Taliparamba, KL, IN",
-                latitude = 12.0475,
-                longitude = 75.3540,
-                distanceMeters = 520
-            )
-        )
-    }
+    val defaultPlaces = emptyList<PlaceLocationItem>()
 
     val filteredPlaces = remember(searchQuery, defaultPlaces) {
         if (searchQuery.isBlank()) defaultPlaces

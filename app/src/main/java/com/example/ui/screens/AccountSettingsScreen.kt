@@ -154,7 +154,7 @@ fun AccountSettingsScreen(
                     AccountActionRow(
                         icon = Icons.Outlined.Email,
                         title = "Change email address",
-                        subtitle = userProfile.email.ifEmpty { "akhil@example.com" },
+                        subtitle = userProfile.email.ifEmpty { "Add an email address" },
                         onClick = { showChangeEmailDialog = true }
                     )
 

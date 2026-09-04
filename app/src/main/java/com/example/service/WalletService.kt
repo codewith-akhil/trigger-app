@@ -9,18 +9,18 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 data class BankDetails(
-    val accountHolderName: String = "Akhil Canara Bank",
-    val bankName: String = "Canara Bank Ltd",
-    val accountNumber: String = "•••• •••• •••• 4892",
-    val rawAccountNumber: String = "0428101094892",
-    val ifscOrRouting: String = "CNRB0000428",
-    val swiftCode: String = "CNRBINBB"
+    val accountHolderName: String = "",
+    val bankName: String = "",
+    val accountNumber: String = "",
+    val rawAccountNumber: String = "",
+    val ifscOrRouting: String = "",
+    val swiftCode: String = ""
 )
 
 data class PayoutDetails(
-    val primaryMethod: String = "Bank Transfer", // "Bank Transfer", "UPI", "PayPal"
-    val upiId: String = "akhil.canara@okaxis",
-    val paypalEmail: String = "patteriakhil94@gmail.com"
+    val primaryMethod: String = "",
+    val upiId: String = "",
+    val paypalEmail: String = ""
 )
 
 data class WalletTransaction(
@@ -37,13 +37,13 @@ data class WalletTransaction(
 class WalletService(private val context: Context? = null) {
     private val TAG = "WalletService"
 
-    private val _availableBalance = MutableStateFlow(348.50)
+    private val _availableBalance = MutableStateFlow(0.0)
     val availableBalance: StateFlow<Double> = _availableBalance.asStateFlow()
 
-    private val _pendingBalance = MutableStateFlow(45.00)
+    private val _pendingBalance = MutableStateFlow(0.0)
     val pendingBalance: StateFlow<Double> = _pendingBalance.asStateFlow()
 
-    private val _totalEarned = MutableStateFlow(1240.00)
+    private val _totalEarned = MutableStateFlow(0.0)
     val totalEarned: StateFlow<Double> = _totalEarned.asStateFlow()
 
     private val _bankDetails = MutableStateFlow(BankDetails())
@@ -54,42 +54,6 @@ class WalletService(private val context: Context? = null) {
 
     private val _transactions = MutableStateFlow<List<WalletTransaction>>(emptyList())
     val transactions: StateFlow<List<WalletTransaction>> = _transactions.asStateFlow()
-
-    init {
-        val dateFormat = SimpleDateFormat("MMM dd, yyyy • h:mm a", Locale.getDefault())
-        _transactions.value = listOf(
-            WalletTransaction(
-                id = "tx_1",
-                title = "Live Stream Ticket Sales (38 slots)",
-                amount = 285.00,
-                isCredit = true,
-                currency = "USD ($)",
-                date = dateFormat.format(Date(System.currentTimeMillis() - 86400000L * 2)),
-                status = "Completed",
-                referenceId = "STRM-948291"
-            ),
-            WalletTransaction(
-                id = "tx_2",
-                title = "Withdrawal to Canara Bank (•••• 4892)",
-                amount = 200.00,
-                isCredit = false,
-                currency = "USD ($)",
-                date = dateFormat.format(Date(System.currentTimeMillis() - 86400000L * 5)),
-                status = "Completed",
-                referenceId = "WTHD-102934"
-            ),
-            WalletTransaction(
-                id = "tx_3",
-                title = "Live Masterclass Early Bird Pass",
-                amount = 120.00,
-                isCredit = true,
-                currency = "USD ($)",
-                date = dateFormat.format(Date(System.currentTimeMillis() - 86400000L * 9)),
-                status = "Completed",
-                referenceId = "STRM-771239"
-            )
-        )
-    }
 
     fun updateBankDetails(
         accountHolderName: String,

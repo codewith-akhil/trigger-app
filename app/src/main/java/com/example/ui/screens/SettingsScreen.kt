@@ -159,7 +159,7 @@ fun SettingsScreen(
 
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = userProfile.name.ifEmpty { "Akhil" },
+                                text = userProfile.name.ifEmpty { "Your profile" },
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = SettingsTextPrimary

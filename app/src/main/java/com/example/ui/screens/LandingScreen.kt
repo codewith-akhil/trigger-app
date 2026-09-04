@@ -133,7 +133,7 @@ fun LandingScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Image(
-                    painter = painterResource(id = R.drawable.img_welcome_art),
+                    painter = painterResource(id = R.drawable.logo),
                     contentDescription = "Welcome illustration",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier

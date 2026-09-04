@@ -20,9 +20,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
 import com.example.model.DomainMessage
 import com.example.model.MessageType
+import coil.compose.AsyncImage
 
 @Composable
 fun ChatMediaViewer(
@@ -107,12 +107,14 @@ fun ChatMediaViewer(
                         .background(Color(0xFF1F2C34)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.img_media_sample),
-                        contentDescription = "Video Thumbnail",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    if (!message.mediaUrl.isNullOrEmpty()) {
+                        AsyncImage(
+                            model = message.mediaThumbnail ?: message.mediaUrl,
+                            contentDescription = "Video Thumbnail",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
 
                     // Play / Pause central button
                     Box(
@@ -166,12 +168,21 @@ fun ChatMediaViewer(
                 }
             } else {
                 // Image viewer
-                Image(
-                    painter = painterResource(id = R.drawable.img_media_sample),
-                    contentDescription = "Photo",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize()
-                )
+                if (!message.mediaUrl.isNullOrEmpty()) {
+                    AsyncImage(
+                        model = message.mediaUrl,
+                        contentDescription = "Photo",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Filled.BrokenImage,
+                        contentDescription = "Media unavailable",
+                        tint = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier.size(64.dp)
+                    )
+                }
             }
         }
 

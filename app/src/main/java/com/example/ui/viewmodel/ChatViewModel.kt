@@ -23,8 +23,8 @@ data class PendingAttachment(
 )
 
 class ChatViewModel(
-    val contactId: String = "darling",
-    val contactName: String = "darling",
+    val contactId: String = "",
+    val contactName: String = "",
     val contactAvatarRes: Int? = null
 ) : ViewModel() {
 

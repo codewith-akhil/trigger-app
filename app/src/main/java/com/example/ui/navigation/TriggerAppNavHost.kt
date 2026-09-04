@@ -61,13 +61,13 @@ fun TriggerAppNavHost(
         mutableStateOf(false)
     }
     var activeChatContactId by remember {
-        mutableStateOf("darling")
+        mutableStateOf("")
     }
     var activeChatContactName by remember {
-        mutableStateOf("darling")
+        mutableStateOf("")
     }
     var activeChatAvatarRes by remember {
-        mutableStateOf<Int?>(com.example.R.drawable.img_darling_avatar)
+        mutableStateOf<Int?>(null)
     }
 
     NavHost(

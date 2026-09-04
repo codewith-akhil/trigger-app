@@ -1114,22 +1114,11 @@ fun UpdatesTabContent(
         }
 
         item {
-            // Status item 1: Jonathan Miller
-            StatusItemRow(
-                name = "Jonathan Miller",
-                time = "32 minutes ago",
-                color = 0xFF43A047,
-                onClick = { onViewStatus("Jonathan Miller") }
-            )
-        }
-
-        item {
-            // Status item 2: Lillian Evaro
-            StatusItemRow(
-                name = "Lillian Evaro",
-                time = "Today, 8:03 AM",
-                color = 0xFF00ACC1,
-                onClick = { onViewStatus("Lillian Evaro") }
+            Text(
+                text = "No recent updates",
+                fontSize = 14.sp,
+                color = GeometricTextSecondary,
+                modifier = Modifier.padding(vertical = 8.dp)
             )
         }
     }
@@ -1285,32 +1274,10 @@ fun CallsTabContent(
 
         item {
             Text(
-                text = "Recent",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                color = GeometricTextDark
-            )
-        }
-
-        item {
-            CallLogItem(
-                name = "darling",
-                time = "Today, 10:20 AM",
-                isVideo = true,
-                isIncoming = true,
-                avatarRes = R.drawable.img_darling_avatar,
-                onCall = { onVideoCallContact("darling") }
-            )
-        }
-
-        item {
-            CallLogItem(
-                name = "Maya Townsend",
-                time = "Yesterday, 6:45 PM",
-                isVideo = false,
-                isIncoming = false,
-                avatarRes = null,
-                onCall = { onCallContact("Maya Townsend") }
+                text = "No recent calls",
+                fontSize = 14.sp,
+                color = GeometricTextSecondary,
+                modifier = Modifier.padding(vertical = 8.dp)
             )
         }
     }

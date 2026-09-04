@@ -59,69 +59,14 @@ fun SelectContactScreen(
     var searchQuery by remember { mutableStateOf("") }
     var showMenu by remember { mutableStateOf(false) }
 
-    // Authentic contacts list matching user's uploaded screenshot & active chat list
     val contacts = remember(currentUserProfile) {
         listOf(
             SelectContactItem(
                 id = "me_chat",
-                name = "${currentUserProfile.name.ifEmpty { "Akhil" }} Canara Bank (You)",
+                name = currentUserProfile.name.ifEmpty { "You" },
                 subtitle = "Message yourself",
                 initialColor = 0xFF1FA855,
                 isSelf = true
-            ),
-            SelectContactItem(
-                id = "akash",
-                name = "___akash",
-                subtitle = "Available",
-                avatarRes = R.drawable.img_media_sample
-            ),
-            SelectContactItem(
-                id = "question_marks",
-                name = "?????",
-                subtitle = "Busy",
-                avatarRes = R.drawable.img_darling_avatar
-            ),
-            SelectContactItem(
-                id = "shahul",
-                name = "+971 56 217 8394",
-                subtitle = "~ shahul",
-                avatarRes = R.drawable.img_media_sample
-            ),
-            SelectContactItem(
-                id = "shahazuramuvasir",
-                name = "~Shahazuramuvasir",
-                subtitle = "At work",
-                avatarRes = R.drawable.img_darling_avatar
-            ),
-            SelectContactItem(
-                id = "stars_snowflake",
-                name = "***❄️",
-                subtitle = "Sleeping",
-                initialColor = 0xFF00796B
-            ),
-            SelectContactItem(
-                id = "darling",
-                name = "darling",
-                subtitle = "Hey there! I am using Trigger App",
-                avatarRes = R.drawable.img_darling_avatar
-            ),
-            SelectContactItem(
-                id = "jonathan",
-                name = "Jonathan Doe",
-                subtitle = "Living in the moment 🌟",
-                avatarRes = R.drawable.img_media_sample
-            ),
-            SelectContactItem(
-                id = "maya",
-                name = "Maya Lin",
-                subtitle = "In meetings today",
-                avatarRes = R.drawable.img_darling_avatar
-            ),
-            SelectContactItem(
-                id = "robert",
-                name = "Dr. Robert Vance",
-                subtitle = "Urgent calls only",
-                avatarRes = R.drawable.img_media_sample
             )
         )
     }
@@ -256,33 +201,7 @@ fun SelectContactScreen(
             if (!isSearchActive || searchQuery.isEmpty()) {
                 item {
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        SelectContactActionItem(
-                            icon = Icons.Filled.GroupAdd,
-                            title = "New group",
-                            onClick = {
-                                // Default or quick group chat
-                                onSelectContact("group_friends", "New Group", R.drawable.img_media_sample)
-                            }
-                        )
-
-                        SelectContactActionItem(
-                            icon = Icons.Filled.PersonAdd,
-                            title = "New contact",
-                            trailingIcon = Icons.Filled.QrCode,
-                            onClick = {
-                                onSelectContact("new_contact", "New Contact", null)
-                            }
-                        )
-
-                        SelectContactActionItem(
-                            icon = Icons.Filled.Groups,
-                            title = "New community",
-                            onClick = {
-                                onSelectContact("community_general", "Trigger Community", null)
-                            }
-                        )
-
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         // Section header: "Contacts on Trigger App"
                         Text(
