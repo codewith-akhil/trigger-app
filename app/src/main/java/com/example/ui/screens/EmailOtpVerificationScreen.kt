@@ -45,17 +45,16 @@ fun EmailOtpVerificationScreen(
     modifier: Modifier = Modifier
 ) {
     var otpCode by remember { mutableStateOf("") }
-    var currentExpectedOtp by remember { mutableStateOf(expectedOtp) }
     var isVerifying by remember { mutableStateOf(false) }
     var isSuccess by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var resendCountdown by remember { mutableIntStateOf(50) }
+    var resendCountdown by remember { mutableIntStateOf(60) }
     var canResend by remember { mutableStateOf(false) }
-    var showEmailBanner by remember { mutableStateOf(true) }
+    var isResending by remember { mutableStateOf(false) }
 
     val coroutineScope = rememberCoroutineScope()
 
-    // Resend countdown timer
+    // Resend countdown timer — 60 seconds per the spec.
     LaunchedEffect(resendCountdown) {
         if (resendCountdown > 0) {
             delay(1000)
@@ -65,23 +64,31 @@ fun EmailOtpVerificationScreen(
         }
     }
 
-    // Auto-verify when 6 digits are reached
+    // Auto-verify when 6 digits are reached — calls the verify-email-otp edge
+    // function (server-side salted-hash comparison, never client-side).
     LaunchedEffect(otpCode) {
         if (otpCode.length == 6) {
             isVerifying = true
             errorMessage = null
             coroutineScope.launch {
-                val otpType = if (purpose == OtpPurpose.SIGN_UP) "signup" else "recovery"
-                val supabaseResult = AppServiceContainer.supabaseClient.verifyOtp(email, otpCode, type = otpType)
-                if (supabaseResult is SupabaseResult.Success) {
+                val otpPurpose = if (purpose == OtpPurpose.SIGN_UP) "signup" else "recovery"
+                val payload = org.json.JSONObject().apply {
+                    put("email", email)
+                    put("code", otpCode)
+                    put("purpose", otpPurpose)
+                }
+                val result = AppServiceContainer.supabaseClient.invokeFunction("verify-email-otp", payload)
+                if (result is SupabaseResult.Success) {
                     isVerifying = false
                     isSuccess = true
                     delay(500)
                     onVerificationSuccess()
                 } else {
                     isVerifying = false
-                    val err = (supabaseResult as? SupabaseResult.Error)?.message
+                    val err = (result as? SupabaseResult.Error)?.message
                     errorMessage = err ?: "Invalid code. Please enter the 6-digit code sent to your email."
+                    // Clear the OTP so the user can re-enter
+                    otpCode = ""
                 }
             }
         }
@@ -102,13 +109,25 @@ fun EmailOtpVerificationScreen(
     }
 
     fun resendCode() {
-        val newCode = (100000..999999).random().toString()
-        currentExpectedOtp = newCode
-        otpCode = ""
+        if (!canResend || isResending) return
+        isResending = true
         errorMessage = null
-        resendCountdown = 60
-        canResend = false
-        showEmailBanner = true
+        otpCode = ""
+        coroutineScope.launch {
+            val otpPurpose = if (purpose == OtpPurpose.SIGN_UP) "signup" else "recovery"
+            val payload = org.json.JSONObject().apply {
+                put("email", email)
+                put("purpose", otpPurpose)
+            }
+            val result = AppServiceContainer.supabaseClient.invokeFunction("send-email-otp", payload)
+            isResending = false
+            if (result is SupabaseResult.Success) {
+                resendCountdown = 60
+                canResend = false
+            } else {
+                errorMessage = (result as? SupabaseResult.Error)?.message ?: "Failed to resend code"
+            }
+        }
     }
 
     Scaffold(
@@ -170,51 +189,46 @@ fun EmailOtpVerificationScreen(
                         .padding(4.dp)
                 )
 
-                // Simulated Email Push Notification Banner for effortless verification
-                if (showEmailBanner) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Surface(
-                        color = Color(0xFFE8F5E9),
-                        shape = RoundedCornerShape(12.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFA5D6A7)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                otpCode = currentExpectedOtp
-                            }
+                // Info card — tells the user to check their email (NO OTP displayed,
+                // NO auto-fill — the code is only known to the server + the user's inbox).
+                Spacer(modifier = Modifier.height(16.dp))
+                Surface(
+                    color = Color(0xFFE8F5E9),
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFA5D6A7)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(TriggerFabGreen),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(TriggerFabGreen),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Email,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Trigger App Code: $currentExpectedOtp",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF1B5E20)
-                                )
-                                Text(
-                                    text = "Tap here to auto-fill",
-                                    fontSize = 12.sp,
-                                    color = Color(0xFF2E7D32)
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Filled.Email,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Check your email",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1B5E20)
+                            )
+                            Text(
+                                text = "Enter the 6-digit code we sent to $email",
+                                fontSize = 12.sp,
+                                color = Color(0xFF2E7D32)
+                            )
                         }
                     }
                 }

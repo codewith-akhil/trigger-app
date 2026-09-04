@@ -47,6 +47,7 @@ fun OtpVerificationScreen(
     var isVerifying by remember { mutableStateOf(false) }
     var isSuccess by remember { mutableStateOf(false) }
     var showResendDialog by remember { mutableStateOf(false) }
+    var errorMessage: String? by remember { mutableStateOf(null) }
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -64,9 +65,12 @@ fun OtpVerificationScreen(
     LaunchedEffect(otpCode) {
         if (otpCode.length == 6) {
             isVerifying = true
-            delay(1200)
+            delay(800)
             isVerifying = false
-            isSuccess = true
+            // Phone auth is not wired to Supabase yet — show an error instead
+            // of auto-succeeding on any 6-digit code (which was a security bypass).
+            errorMessage = "Phone (SMS) verification is not yet connected to the backend. Please sign up with email instead."
+            otpCode = ""
         }
     }
 
@@ -358,12 +362,9 @@ fun OtpVerificationScreen(
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable {
                                     showResendDialog = false
-                                    isSendingCode = true
-                                    coroutineScope.launch {
-                                        delay(1200)
-                                        isSendingCode = false
-                                        otpCode = "773612"
-                                    }
+                                    // "Call Me" — phone auth is not wired to Supabase yet.
+                                    // Show a message instead of auto-filling a fake code.
+                                    errorMessage = "Phone call verification is not available yet. Please use SMS resend."
                                 }
                                 .padding(vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically

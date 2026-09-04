@@ -84,12 +84,33 @@ fun SignUpScreen(
 
         isSubmitting = true
         coroutineScope.launch {
+            // Step 1: Sign up the user via Supabase Auth.
             when (val result = AppServiceContainer.supabaseClient.signUp(trimmedEmail, password, trimmedName)) {
                 is SupabaseResult.Success -> {
-                    isSubmitting = false
-                    val generatedOtp = (100000..999999).random().toString()
-                    UserRepository.setUser(name = trimmedName, email = trimmedEmail, id = result.data.id)
-                    onNavigateToOtp(trimmedName, trimmedEmail, generatedOtp)
+                    // Step 2: Request the server to send a 6-digit OTP email via the
+                    // send-email-otp edge function (Resend SMTP). The OTP is generated
+                    // + stored server-side as a salted hash — NEVER on the client.
+                    val otpPayload = org.json.JSONObject().apply {
+                        put("email", trimmedEmail)
+                        put("purpose", "signup")
+                    }
+                    when (val otpResult = AppServiceContainer.supabaseClient.invokeFunction("send-email-otp", otpPayload)) {
+                        is SupabaseResult.Success -> {
+                            isSubmitting = false
+                            UserRepository.setUser(name = trimmedName, email = trimmedEmail, id = result.data.id)
+                            // Pass empty string for generatedOtp — the OTP is now server-side.
+                            // EmailOtpVerificationScreen verifies via the verify-email-otp edge function.
+                            onNavigateToOtp(trimmedName, trimmedEmail, "")
+                        }
+                        is SupabaseResult.Error -> {
+                            isSubmitting = false
+                            // OTP send failed — but the user was created. Show the error
+                            // but still navigate to OTP screen so they can request resend.
+                            errorMessage = "Account created but OTP email could not be sent: ${otpResult.message}"
+                            UserRepository.setUser(name = trimmedName, email = trimmedEmail, id = result.data.id)
+                            onNavigateToOtp(trimmedName, trimmedEmail, "")
+                        }
+                    }
                 }
                 is SupabaseResult.Error -> {
                     isSubmitting = false
