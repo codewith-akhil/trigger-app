@@ -247,11 +247,11 @@ otp_expiry = 600
 # subject = "You have been invited"
 # content_path = "./supabase/templates/invite.html"
 
-# Uncomment to customize notification email template
-# [auth.email.notification.password_changed]
-# enabled = true
-# subject = "Your password has been changed"
-# content_path = "./supabase/templates/password_changed_notification.html"
+# Notification email sent when a user changes their password.
+[auth.email.notification.password_changed]
+enabled = true
+subject = "Trigger App — Your password was changed"
+content_path = "./supabase/templates/password_changed_notification.html"
 
 # ---- Trigger App custom templates (6-digit {{ .Token }}, NEVER link-based) ----
 [auth.email.template.invite]

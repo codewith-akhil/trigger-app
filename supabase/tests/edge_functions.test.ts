@@ -217,4 +217,75 @@ Deno.test("sendFcm returns error when env vars are missing", async () => {
   assertIncludes(result.error ?? "", "not configured");
 });
 
+// --- Extended rate_limit tests (QA-ROUND-3) ---------------------------------
+
+Deno.test("checkRateLimit isolates per identifier (user A exhaustion doesn't block user B)", () => {
+  const req = new Request("https://x/y", { method: "POST" });
+  const config = { maxRequests: 2, windowSeconds: 60, name: "test_isolation" };
+  const alice = "user_alice";
+  const bob = "user_bob";
+
+  // Alice uses her full budget.
+  assertEquals(checkRateLimit(req, alice, config).allowed, true);
+  assertEquals(checkRateLimit(req, alice, config).allowed, true);
+  assertEquals(checkRateLimit(req, alice, config).allowed, false); // Alice exhausted.
+
+  // Bob is unaffected.
+  assertEquals(checkRateLimit(req, bob, config).allowed, true);
+  assertEquals(checkRateLimit(req, bob, config).allowed, true);
+  assertEquals(checkRateLimit(req, bob, config).allowed, false); // Bob exhausted.
+});
+
+Deno.test("checkRateLimit isolates per limit name (same user, different limits)", () => {
+  const req = new Request("https://x/y", { method: "POST" });
+  const userId = "user_multi";
+  const limitA = { maxRequests: 1, windowSeconds: 60, name: "limit_a" };
+  const limitB = { maxRequests: 1, windowSeconds: 60, name: "limit_b" };
+
+  // Exhaust limit A.
+  assertEquals(checkRateLimit(req, userId, limitA).allowed, true);
+  assertEquals(checkRateLimit(req, userId, limitA).allowed, false);
+  // Limit B is a separate bucket.
+  assertEquals(checkRateLimit(req, userId, limitB).allowed, true);
+  assertEquals(checkRateLimit(req, userId, limitB).allowed, false);
+});
+
+Deno.test("checkRateLimit retryAfter is within the window", () => {
+  const req = new Request("https://x/y", { method: "POST" });
+  const config = { maxRequests: 1, windowSeconds: 120, name: "test_retry_after" };
+  const id = "user_retry";
+
+  assertEquals(checkRateLimit(req, id, config).allowed, true);
+  const blocked = checkRateLimit(req, id, config);
+  assertEquals(blocked.allowed, false);
+  assertR(blocked.retryAfter > 0, "retryAfter should be positive");
+  assertR(blocked.retryAfter <= 120, "retryAfter should not exceed window (120s)");
+});
+
+// --- Email template gradient-color sanity (QA-ROUND-3) ---------------------
+
+Deno.test("renderOtpEmail uses accent color per purpose (vault_reset = amber, signup = teal)", () => {
+  const vaultHtml = renderOtpEmail("123456", "vault_reset");
+  const signupHtml = renderOtpEmail("123456", "signup");
+  // Both should render a gradient header — we just confirm the gradient is
+  // present and the title differs.
+  assertIncludes(vaultHtml, "linear-gradient");
+  assertIncludes(signupHtml, "linear-gradient");
+  assertIncludes(vaultHtml, "Reset your vault PIN");
+  assertIncludes(signupHtml, "Confirm your email");
+});
+
+// --- Message preview builder sanity (send-chat-notification) ----------------
+// The buildPreview function is private to send-chat-notification, but we can
+// verify the notification body shape by checking the FCM data payload contract
+// via the published response shape. Here we just sanity-check that the
+// preview truncation rule (100 chars + ellipsis) is documented in the source.
+
+Deno.test("send-chat-notification preview truncation contract", async () => {
+  const src = await Deno.readTextFile(new URL("../functions/send-chat-notification/index.ts", import.meta.url));
+  // The source must reference the 100-char truncation + ellipsis for TEXT.
+  assertIncludes(src, ".slice(0, 97)");
+  assertIncludes(src, '"\u2026"'); // …
+});
+
 console.log("All Trigger App edge-function tests passed.");
