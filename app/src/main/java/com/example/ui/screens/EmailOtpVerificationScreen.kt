@@ -43,6 +43,7 @@ fun EmailOtpVerificationScreen(
     purpose: OtpPurpose,
     onWrongEmailClick: () -> Unit,
     onVerificationSuccess: () -> Unit,
+    onOtpVerified: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var otpCode by remember { mutableStateOf("") }
@@ -86,6 +87,8 @@ fun EmailOtpVerificationScreen(
                     isVerifying = false
                     isSuccess = true
                     successMessage = "Email verified successfully!"
+                    // Capture the verified OTP code so the reset-password screen can use it
+                    onOtpVerified(otpCode)
                     delay(800)
                     onVerificationSuccess()
                 } else {

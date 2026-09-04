@@ -55,6 +55,9 @@ fun TriggerAppNavHost(
     var currentOtp by remember {
         mutableStateOf("")
     }
+    var currentVerifiedOtpCode by remember {
+        mutableStateOf("")
+    }
     var otpPurpose by remember {
         mutableStateOf(OtpPurpose.SIGN_UP)
     }
@@ -194,6 +197,9 @@ fun TriggerAppNavHost(
                     } else {
                         navController.navigate(TriggerDestinations.RESET_PASSWORD)
                     }
+                },
+                onOtpVerified = { code ->
+                    currentVerifiedOtpCode = code
                 }
             )
         }
@@ -201,6 +207,7 @@ fun TriggerAppNavHost(
         composable(TriggerDestinations.RESET_PASSWORD) {
             ResetPasswordScreen(
                 email = currentEmail,
+                verifiedOtpCode = currentVerifiedOtpCode,
                 onResetSuccess = {
                     navController.navigate(TriggerDestinations.EMAIL_AUTH) {
                         popUpTo(TriggerDestinations.EMAIL_AUTH) { inclusive = true }

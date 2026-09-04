@@ -251,13 +251,12 @@ fun ProfileScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("profile_screen"),
-        // Green containerColor so the area behind the status bar (and the
-        // rest of the screen background) is the same WhatsApp-style green.
-        containerColor = TriggerGreenAccent,
+        // White/light-gray background for the content area (NOT green — green
+        // is only for the TopAppBar + status bar, set globally in MainActivity).
+        containerColor = TriggerLightBg,
         topBar = {
             TopAppBar(
                 modifier = Modifier
-                    .statusBarsPadding()
                     .height(48.dp),
                 title = {
                     Text(
@@ -412,33 +411,6 @@ fun ProfileScreen(
                         isValueGreen = profile.email.isEmpty(),
                         onClick = null,
                         testTag = "profile_email_item"
-                    )
-
-                    HorizontalDivider(color = TriggerDivider, thickness = 1.dp)
-
-                    // 5) Links — show a summary of the stored JSON array
-                    val linksDisplay = remember(profile.links) {
-                        if (profile.links.isBlank()) "Add links"
-                        else try {
-                            val arr = JSONArray(profile.links)
-                            when (arr.length()) {
-                                0 -> "Add links"
-                                1 -> arr.getJSONObject(0).optString("name")
-                                    .ifBlank { arr.getJSONObject(0).optString("url") }
-                                    .ifBlank { "1 link" }
-                                else -> "${arr.length()} links"
-                            }
-                        } catch (_: Exception) {
-                            "Add links"
-                        }
-                    }
-                    ProfileDetailItem(
-                        icon = Icons.Outlined.Link,
-                        label = "Links",
-                        value = linksDisplay,
-                        isValueGreen = profile.links.isBlank(),
-                        onClick = { showEditLinksDialog = true },
-                        testTag = "profile_links_item"
                     )
                 }
             }

@@ -132,11 +132,30 @@ async function handler(req: Request): Promise<Response> {
     );
   }
 
-  // --- Success: mark consumed ----------------------------------------------
+  // --- Success: mark consumed + confirm email in auth.users ----------------
   await supabase
     .from("otp_codes")
     .update({ consumed_at: new Date().toISOString(), attempts: (otp.attempts ?? 0) + 1 })
     .eq("id", otp.id);
+
+  // CRITICAL: If this is a signup OTP, confirm the user's email in auth.users.
+  // Without this, email_confirmed_at stays NULL → login fails with "Email not confirmed".
+  if (purpose === "signup") {
+    // Look up the user by email + confirm their email.
+    const { data: users } = await supabase.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
+    const user = users?.users?.find((u: any) => u.email?.toLowerCase() === email);
+    if (user) {
+      const { error: confirmError } = await supabase.auth.admin.updateUserById(user.id, {
+        email_confirm: true,
+      });
+      if (confirmError) {
+        console.error("Failed to confirm email:", confirmError);
+      }
+    }
+  }
 
   return json({ verified: true });
 }

@@ -37,6 +37,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun ResetPasswordScreen(
     email: String,
+    verifiedOtpCode: String = "",
     onResetSuccess: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
@@ -54,23 +55,53 @@ fun ResetPasswordScreen(
 
     fun handleReset() {
         errorMessage = null
+        if (newPassword.isEmpty()) {
+            errorMessage = "Please enter a new password"
+            return
+        }
         if (newPassword.length < 6) {
-            errorMessage = "New password must be at least 6 characters"
+            errorMessage = "Password must be at least 6 characters"
             return
         }
         if (newPassword != confirmPassword) {
             errorMessage = "Passwords do not match"
             return
         }
+        if (verifiedOtpCode.isBlank()) {
+            errorMessage = "Verification code is missing. Please go back and verify your email first."
+            return
+        }
 
         isSubmitting = true
         coroutineScope.launch {
-            val result = AppServiceContainer.supabaseClient.updatePassword(newPassword)
+            // Call the reset-password edge function (server-side password update —
+            // no session JWT needed, unlike the old updatePassword() which caused
+            // "Invalid claim: missing sub claim").
+            val payload = org.json.JSONObject().apply {
+                put("email", email)
+                put("code", verifiedOtpCode)
+                put("newPassword", newPassword)
+            }
+            val result = AppServiceContainer.supabaseClient.invokeFunction("reset-password", payload)
             isSubmitting = false
             if (result is SupabaseResult.Success) {
                 onResetSuccess()
             } else if (result is SupabaseResult.Error) {
-                errorMessage = result.message
+                val msg = result.message ?: "Failed to reset password"
+                // Show human-readable error messages
+                errorMessage = when {
+                    msg.contains("missing sub", ignoreCase = true) ->
+                        "Your session expired. Please request a new reset code."
+                    msg.contains("expired", ignoreCase = true) ->
+                        "Your reset session has expired. Please request a new code."
+                    msg.contains("Incorrect verification", ignoreCase = true) ->
+                        "The verification code is incorrect. Please go back and try again."
+                    msg.contains("No account", ignoreCase = true) ->
+                        "No account found with this email."
+                    msg.contains("rate limit", ignoreCase = true) ->
+                        "Too many reset attempts. Please wait a moment and try again."
+                    else -> msg
+                }
             }
         }
     }
