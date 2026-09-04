@@ -13,6 +13,7 @@ export interface EmailPayload {
   to: string | string[];
   subject: string;
   html: string;
+  text?: string;  // plain-text fallback (reduces spam score — spam filters penalize HTML-only emails)
   from?: string;
   replyTo?: string;
   tags?: { name: string; value: string }[];
@@ -33,10 +34,24 @@ export async function sendEmail(payload: EmailPayload): Promise<{ id?: string; e
     subject: payload.subject,
     html: payload.html,
   };
+  // Plain-text fallback — critical for deliverability (spam filters penalize
+  // HTML-only emails). Auto-generate from the subject if not provided.
+  if (payload.text) {
+    body.text = payload.text;
+  } else {
+    body.text = `${payload.subject}\n\nEnter this 6-digit code in the Trigger App to continue. The code expires in 10 minutes.\n\nNever share this code with anyone — Trigger App will never ask for it.\n\nIf you didn't request this, you can safely ignore this email.`;
+  }
   if (payload.replyTo ?? defaultReplyTo) {
     body.reply_to = payload.replyTo ?? defaultReplyTo;
   }
   if (payload.tags?.length) body.tags = payload.tags;
+
+  // Set headers to improve deliverability (reduce spam score).
+  body.headers = {
+    "X-Entity-Ref-ID": crypto.randomUUID(),
+    "X-Priority": "1",
+    "X-MSMail-Priority": "High",
+  };
 
   try {
     const res = await fetch("https://api.resend.com/emails", {
@@ -49,8 +64,6 @@ export async function sendEmail(payload: EmailPayload): Promise<{ id?: string; e
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      // Surface the full Resend error so callers can debug (domain not
-      // verified, test-mode restriction, invalid recipient, etc.).
       const errMsg = (data && (data.message || data.error)) || `Resend HTTP ${res.status}`;
       const errName = (data && data.name) || "";
       return { error: errName ? `${errName}: ${errMsg}` : errMsg };

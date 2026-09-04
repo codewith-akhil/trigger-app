@@ -63,14 +63,29 @@ fun SignUpScreen(
     fun handleSignUp() {
         errorMessage = null
         val trimmedName = fullName.trim()
-        val trimmedEmail = email.trim()
+        val trimmedEmail = email.trim().lowercase()
 
-        if (trimmedName.length < 2) {
+        // --- Input validation ---
+        if (trimmedName.isEmpty()) {
             errorMessage = "Please enter your full name"
             return
         }
-        if (trimmedEmail.isEmpty() || !trimmedEmail.contains("@") || !trimmedEmail.contains(".")) {
+        if (trimmedName.length < 2) {
+            errorMessage = "Name must be at least 2 characters"
+            return
+        }
+        if (trimmedEmail.isEmpty()) {
+            errorMessage = "Email is required"
+            return
+        }
+        // Strict email regex
+        val emailRegex = Regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")
+        if (!emailRegex.matches(trimmedEmail)) {
             errorMessage = "Please enter a valid email address"
+            return
+        }
+        if (password.isEmpty()) {
+            errorMessage = "Password is required"
             return
         }
         if (password.length < 6) {
@@ -98,15 +113,18 @@ fun SignUpScreen(
                         is SupabaseResult.Success -> {
                             isSubmitting = false
                             UserRepository.setUser(name = trimmedName, email = trimmedEmail, id = result.data.id)
-                            // Pass empty string for generatedOtp — the OTP is now server-side.
-                            // EmailOtpVerificationScreen verifies via the verify-email-otp edge function.
                             onNavigateToOtp(trimmedName, trimmedEmail, "")
                         }
                         is SupabaseResult.Error -> {
                             isSubmitting = false
-                            // OTP send failed — but the user was created. Show the error
-                            // but still navigate to OTP screen so they can request resend.
-                            errorMessage = "Account created but OTP email could not be sent: ${otpResult.message}"
+                            // OTP send failed — but the user was created. Show a friendly
+                            // error + still navigate to OTP screen so they can request resend.
+                            val msg = otpResult.message ?: ""
+                            errorMessage = if (msg.contains("rate limit", ignoreCase = true)) {
+                                "Too many OTP requests. Please wait 60 seconds and try again."
+                            } else {
+                                "Account created, but we couldn't send the verification email. Tap resend on the next screen."
+                            }
                             UserRepository.setUser(name = trimmedName, email = trimmedEmail, id = result.data.id)
                             onNavigateToOtp(trimmedName, trimmedEmail, "")
                         }
@@ -114,7 +132,19 @@ fun SignUpScreen(
                 }
                 is SupabaseResult.Error -> {
                     isSubmitting = false
-                    errorMessage = result.message
+                    val msg = result.message ?: "Sign up failed"
+                    // Detect duplicate email — Supabase returns "User already registered"
+                    errorMessage = when {
+                        msg.contains("already registered", ignoreCase = true) ||
+                        msg.contains("already been registered", ignoreCase = true) ||
+                        msg.contains("user already exists", ignoreCase = true) ->
+                            "This email is already registered. Please log in or use a different email."
+                        msg.contains("rate limit", ignoreCase = true) ->
+                            "Too many sign-up attempts. Please wait a minute and try again."
+                        msg.contains("password", ignoreCase = true) && msg.contains("weak", ignoreCase = true) ->
+                            "Password is too weak. Use at least 6 characters with a mix of letters and numbers."
+                        else -> msg
+                    }
                 }
             }
         }

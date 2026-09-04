@@ -3,30 +3,31 @@
 // Generates a 6-digit OTP server-side, stores a SHA-256 hash in `public.otp_codes`
 // (10-minute expiry, 60-second resend cooldown), and emails the code via Resend.
 //
-// This is the RECOMMENDED server-side OTP flow (the Android client currently
-// generates OTP locally — see SETUP_NOTES.md for the wiring change).
+// IMPORTANT: This function does NOT require a JWT — it's called by users who
+// haven't signed up / logged in yet (so they have no session). Rate limiting
+// is enforced per-IP to prevent abuse. Deploy with --no-verify-jwt.
 //
 // Env vars:
 //   RESEND_API_KEY, FROM_EMAIL, REPLY_TO_EMAIL
-//
-// Auth: requires a valid Supabase JWT (so we can attribute OTP requests).
 //
 // Request body:
 //   { "email": string, "purpose": "signup" | "recovery" | "magic_link"
 //            | "email_change" | "phone_verify" | "vault_reset" }
 //
 // Response 200: { "sent": true, "resendAvailableIn": 60, "expiresIn": 600 }
-// Response 4xx: { "error": string, "resendAvailableIn"?: number }
+// Response 4xx: { "error": string, "code": string, "resendAvailableIn"?: number }
 // ----------------------------------------------------------------------------
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { handleOptions, json, errorResponse } from "../_shared/cors.ts";
-import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
+import { handleOptions, json, errorResponse, ErrorCode } from "../_shared/cors.ts";
+import { createAdminClient } from "../_shared/supabase.ts";
+import { checkRateLimit } from "../_shared/rate_limit.ts";
 import { sendEmail, renderOtpEmail } from "../_shared/resend.ts";
 
 const RESEND_COOLDOWN_SECONDS = 60;
 const OTP_EXPIRY_SECONDS = 600;       // 10 minutes
 const OTP_MAX_ATTEMPTS = 5;
+const SEND_OTP_LIMIT = { maxRequests: 5, windowSeconds: 300, name: "send_email_otp" }; // 5 per 5 min per IP
 
 interface SendOtpBody {
   email?: string;
@@ -53,26 +54,34 @@ async function sha256Hex(value: string): Promise<string> {
 async function handler(req: Request): Promise<Response> {
   const preflight = handleOptions(req);
   if (preflight) return preflight;
-  if (req.method !== "POST") return errorResponse("Method not allowed", 405);
+  if (req.method !== "POST") return errorResponse("Method not allowed", 405, ErrorCode.METHOD_NOT_ALLOWED);
 
-  const authHeader = req.headers.get("Authorization");
-  const userId = await resolveUserId(authHeader);
-  if (!userId) return errorResponse("Unauthorized", 401);
+  // --- Rate limit per IP (no JWT needed — unauthenticated users call this) ---
+  const ip = (req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "anonymous")
+    .split(",")[0].trim();
+  const rl = checkRateLimit(req, ip, SEND_OTP_LIMIT);
+  if (!rl.allowed) {
+    return json(
+      { error: `Too many OTP requests. Try again in ${rl.retryAfter}s.`, code: ErrorCode.RATE_LIMITED, retryAfter: rl.retryAfter },
+      429,
+    );
+  }
 
   let body: SendOtpBody;
   try {
     body = await req.json();
   } catch {
-    return errorResponse("Invalid JSON body", 400);
+    return json({ error: "Invalid request body", code: ErrorCode.VALIDATION_FAILED }, 400);
   }
 
   const email = (body.email ?? "").trim().toLowerCase();
-  if (!isValidEmail(email)) return errorResponse("Please enter a valid email address", 422);
+  if (!email) return json({ error: "Email is required", code: ErrorCode.VALIDATION_FAILED }, 422);
+  if (!isValidEmail(email)) return json({ error: "Please enter a valid email address", code: ErrorCode.VALIDATION_FAILED }, 422);
 
   const purpose = body.purpose ?? "signup";
   const allowedPurposes = ["signup", "recovery", "magic_link", "email_change", "phone_verify", "vault_reset"];
   if (!allowedPurposes.includes(purpose)) {
-    return errorResponse("Invalid OTP purpose", 422);
+    return json({ error: "Invalid OTP purpose", code: ErrorCode.VALIDATION_FAILED }, 422);
   }
 
   const supabase = createAdminClient();

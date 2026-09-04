@@ -4,9 +4,11 @@
 // `public.otp_codes` for the given (identifier, purpose). Enforces attempt
 // limiting and marks the OTP consumed on success.
 //
-// Env vars: none (uses service role to read otp_codes).
+// IMPORTANT: This function does NOT require a JWT — it's called by users who
+// haven't confirmed their email yet (so they have no session). Rate limiting
+// is enforced per-IP to prevent brute-force. Deploy with --no-verify-jwt.
 //
-// Auth: requires a valid Supabase JWT.
+// Env vars: none (uses service role to read/update otp_codes).
 //
 // Request body:
 //   { "email": string, "code": string, "purpose": string }
@@ -16,11 +18,12 @@
 // ----------------------------------------------------------------------------
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { handleOptions, json, errorResponse } from "../_shared/cors.ts";
-import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
+import { handleOptions, json, errorResponse, ErrorCode } from "../_shared/cors.ts";
+import { createAdminClient } from "../_shared/supabase.ts";
+import { checkRateLimit } from "../_shared/rate_limit.ts";
 
-const OTP_EXPIRY_SECONDS = 600;
 const OTP_MAX_ATTEMPTS = 5;
+const VERIFY_LIMIT = { maxRequests: 20, windowSeconds: 300, name: "verify_email_otp" }; // 20 per 5 min per IP
 
 interface VerifyOtpBody {
   email?: string;
@@ -33,45 +36,57 @@ function isValidEmail(v: string): boolean {
 }
 
 async function verifyCode(code: string, storedCombo: string): Promise<boolean> {
-  // storedCombo may be "salt:hash" (current) or a bare hash (legacy).
   const parts = storedCombo.split(":");
-  let candidate: string;
   if (parts.length === 2) {
     const [salt, hash] = parts;
     const data = new TextEncoder().encode(`${code}:${salt}`);
     const digest = await crypto.subtle.digest("SHA-256", data);
-    candidate = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    const candidate = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
     return candidate === hash;
   }
-  // Bare hash fallback (no salt) — not ideal but kept for safety.
+  // Bare hash fallback (no salt).
   const data = new TextEncoder().encode(code);
   const digest = await crypto.subtle.digest("SHA-256", data);
-  candidate = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const candidate = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
   return candidate === storedCombo;
 }
 
 async function handler(req: Request): Promise<Response> {
   const preflight = handleOptions(req);
   if (preflight) return preflight;
-  if (req.method !== "POST") return errorResponse("Method not allowed", 405);
+  if (req.method !== "POST") return errorResponse("Method not allowed", 405, ErrorCode.METHOD_NOT_ALLOWED);
 
-  const authHeader = req.headers.get("Authorization");
-  const userId = await resolveUserId(authHeader);
-  if (!userId) return errorResponse("Unauthorized", 401);
+  // --- Rate limit per IP (no JWT needed — unauthenticated users call this) ---
+  const ip = (req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "anonymous")
+    .split(",")[0].trim();
+  const rl = checkRateLimit(req, ip, VERIFY_LIMIT);
+  if (!rl.allowed) {
+    return json(
+      { verified: false, error: `Too many verification attempts. Try again in ${rl.retryAfter}s.`, code: ErrorCode.RATE_LIMITED, retryAfter: rl.retryAfter },
+      429,
+    );
+  }
 
   let body: VerifyOtpBody;
   try {
     body = await req.json();
   } catch {
-    return errorResponse("Invalid JSON body", 400);
+    return json({ verified: false, error: "Invalid request body", code: ErrorCode.VALIDATION_FAILED }, 400);
   }
 
   const email = (body.email ?? "").trim().toLowerCase();
   const code = (body.code ?? "").trim();
   const purpose = body.purpose ?? "signup";
 
-  if (!isValidEmail(email)) return errorResponse("Invalid email", 422);
-  if (!/^\d{6}$/.test(code)) return errorResponse("Code must be 6 digits", 422);
+  // --- Input validation ---
+  if (!email) return json({ verified: false, error: "Email is required", code: ErrorCode.VALIDATION_FAILED }, 422);
+  if (!isValidEmail(email)) return json({ verified: false, error: "Please enter a valid email address", code: ErrorCode.VALIDATION_FAILED }, 422);
+  if (!code) return json({ verified: false, error: "Verification code is required", code: ErrorCode.VALIDATION_FAILED }, 422);
+  if (!/^\d{6}$/.test(code)) return json({ verified: false, error: "Code must be exactly 6 digits", code: ErrorCode.VALIDATION_FAILED }, 422);
+  const validPurposes = ["signup", "recovery", "magic_link", "email_change", "phone_verify", "vault_reset"];
+  if (!validPurposes.includes(purpose)) {
+    return json({ verified: false, error: "Invalid verification purpose", code: ErrorCode.VALIDATION_FAILED }, 422);
+  }
 
   const supabase = createAdminClient();
 
@@ -85,21 +100,21 @@ async function handler(req: Request): Promise<Response> {
 
   if (error) {
     console.error("OTP lookup failed", error);
-    return errorResponse("Verification failed", 500);
+    return json({ verified: false, error: "Verification failed. Please try again.", code: ErrorCode.INTERNAL_ERROR }, 500);
   }
 
   const otp = rows?.[0];
   if (!otp) {
-    return json({ verified: false, error: "No code was issued for this email. Please request a new one." }, 404);
+    return json({ verified: false, error: "No verification code was found for this email. Please request a new code.", code: ErrorCode.NOT_FOUND }, 404);
   }
   if (otp.consumed_at) {
-    return json({ verified: false, error: "This code has already been used. Please request a new one." }, 410);
+    return json({ verified: false, error: "This code has already been used. Please request a new one.", code: ErrorCode.CONSUMED }, 410);
   }
   if (new Date(otp.expires_at).getTime() < Date.now()) {
-    return json({ verified: false, error: "This code has expired. Please request a new one." }, 410);
+    return json({ verified: false, error: "This code has expired. Please request a new one.", code: ErrorCode.EXPIRED }, 410);
   }
   if (otp.attempts >= (otp.max_attempts ?? OTP_MAX_ATTEMPTS)) {
-    return json({ verified: false, error: "Too many incorrect attempts. Please request a new code." }, 429);
+    return json({ verified: false, error: "Too many incorrect attempts. Please request a new code.", code: ErrorCode.LOCKED_OUT }, 429);
   }
 
   const matched = await verifyCode(code, otp.code_hash);
@@ -112,7 +127,7 @@ async function handler(req: Request): Promise<Response> {
       .eq("id", otp.id);
     const remaining = Math.max((otp.max_attempts ?? OTP_MAX_ATTEMPTS) - newAttempts, 0);
     return json(
-      { verified: false, error: "Incorrect code. Please try again.", attemptsRemaining: remaining },
+      { verified: false, error: remaining > 0 ? `Incorrect code. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining.` : "Too many incorrect attempts. Please request a new code.", code: ErrorCode.VALIDATION_FAILED, attemptsRemaining: remaining },
       400,
     );
   }

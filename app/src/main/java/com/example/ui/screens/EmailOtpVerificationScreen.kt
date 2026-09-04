@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -48,6 +49,7 @@ fun EmailOtpVerificationScreen(
     var isVerifying by remember { mutableStateOf(false) }
     var isSuccess by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var successMessage by remember { mutableStateOf<String?>(null) }
     var resendCountdown by remember { mutableIntStateOf(60) }
     var canResend by remember { mutableStateOf(false) }
     var isResending by remember { mutableStateOf(false) }
@@ -66,10 +68,12 @@ fun EmailOtpVerificationScreen(
 
     // Auto-verify when 6 digits are reached — calls the verify-email-otp edge
     // function (server-side salted-hash comparison, never client-side).
+    // This function is unauthenticated (no JWT needed) so it works during signup.
     LaunchedEffect(otpCode) {
-        if (otpCode.length == 6) {
+        if (otpCode.length == 6 && !isVerifying && !isSuccess) {
             isVerifying = true
             errorMessage = null
+            successMessage = null
             coroutineScope.launch {
                 val otpPurpose = if (purpose == OtpPurpose.SIGN_UP) "signup" else "recovery"
                 val payload = org.json.JSONObject().apply {
@@ -81,12 +85,29 @@ fun EmailOtpVerificationScreen(
                 if (result is SupabaseResult.Success) {
                     isVerifying = false
                     isSuccess = true
-                    delay(500)
+                    successMessage = "Email verified successfully!"
+                    delay(800)
                     onVerificationSuccess()
                 } else {
                     isVerifying = false
                     val err = (result as? SupabaseResult.Error)?.message
-                    errorMessage = err ?: "Invalid code. Please enter the 6-digit code sent to your email."
+                    // Parse the error message from the edge function response
+                    errorMessage = when {
+                        err == null -> "Verification failed. Please try again."
+                        err.contains("expired", ignoreCase = true) ->
+                            "This code has expired. Tap resend to get a new one."
+                        err.contains("already been used", ignoreCase = true) ->
+                            "This code has already been used. Tap resend to get a new one."
+                        err.contains("Too many incorrect", ignoreCase = true) ->
+                            "Too many wrong attempts. Tap resend to get a new code."
+                        err.contains("No verification code", ignoreCase = true) ->
+                            "No code was sent to this email. Tap resend to get one."
+                        err.contains("Incorrect", ignoreCase = true) ->
+                            err // Already has attempt count from the server
+                        err.contains("rate limit", ignoreCase = true) ->
+                            "Too many attempts. Please wait a moment and try again."
+                        else -> err
+                    }
                     // Clear the OTP so the user can re-enter
                     otpCode = ""
                 }
@@ -112,6 +133,7 @@ fun EmailOtpVerificationScreen(
         if (!canResend || isResending) return
         isResending = true
         errorMessage = null
+        successMessage = null
         otpCode = ""
         coroutineScope.launch {
             val otpPurpose = if (purpose == OtpPurpose.SIGN_UP) "signup" else "recovery"
@@ -124,8 +146,16 @@ fun EmailOtpVerificationScreen(
             if (result is SupabaseResult.Success) {
                 resendCountdown = 60
                 canResend = false
+                successMessage = "A new code has been sent to $email"
             } else {
-                errorMessage = (result as? SupabaseResult.Error)?.message ?: "Failed to resend code"
+                val err = (result as? SupabaseResult.Error)?.message ?: "Failed to resend code"
+                errorMessage = when {
+                    err.contains("rate limit", ignoreCase = true) || err.contains("Too many", ignoreCase = true) ->
+                        "Please wait 60 seconds before requesting another code."
+                    err.contains("not configured", ignoreCase = true) ->
+                        "Email service is not configured. Please contact support."
+                    else -> "Failed to resend code: $err"
+                }
             }
         }
     }
@@ -276,12 +306,61 @@ fun EmailOtpVerificationScreen(
                 // Error message
                 if (errorMessage != null) {
                     Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = errorMessage!!,
-                        color = Color(0xFFD32F2F),
-                        fontSize = 13.sp,
-                        textAlign = TextAlign.Center
-                    )
+                    Surface(
+                        color = Color(0xFFFFEBEE),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Info,
+                                contentDescription = null,
+                                tint = Color(0xFFD32F2F),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = errorMessage!!,
+                                color = Color(0xFFD32F2F),
+                                fontSize = 13.sp,
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+
+                // Success message (e.g. "A new code has been sent")
+                if (successMessage != null && !isVerifying) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        color = Color(0xFFE8F5E9),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                tint = TriggerFabGreen,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = successMessage!!,
+                                color = Color(0xFF1B5E20),
+                                fontSize = 13.sp,
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
                 }
 
                 // Verifying or Success indicator

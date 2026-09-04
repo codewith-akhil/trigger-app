@@ -47,9 +47,16 @@ fun ForgotPasswordScreen(
 
     fun handleSubmit() {
         errorMessage = null
-        val trimmedEmail = email.trim()
-        if (trimmedEmail.isEmpty() || !trimmedEmail.contains("@") || !trimmedEmail.contains(".")) {
-            errorMessage = "Please enter a valid registered email address"
+        val trimmedEmail = email.trim().lowercase()
+
+        // --- Input validation ---
+        if (trimmedEmail.isEmpty()) {
+            errorMessage = "Email is required"
+            return
+        }
+        val emailRegex = Regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")
+        if (!emailRegex.matches(trimmedEmail)) {
+            errorMessage = "Please enter a valid email address"
             return
         }
 
@@ -65,11 +72,16 @@ fun ForgotPasswordScreen(
             val result = AppServiceContainer.supabaseClient.invokeFunction("send-email-otp", otpPayload)
             isSubmitting = false
             if (result is SupabaseResult.Success) {
-                // Pass empty string for generatedOtp — the OTP is now server-side.
-                // EmailOtpVerificationScreen verifies via the verify-email-otp edge function.
                 onNavigateToOtp(trimmedEmail, "")
             } else if (result is SupabaseResult.Error) {
-                errorMessage = result.message
+                val msg = result.message ?: "Failed to send reset code"
+                errorMessage = when {
+                    msg.contains("rate limit", ignoreCase = true) || msg.contains("Too many", ignoreCase = true) ->
+                        "Too many reset attempts. Please wait 60 seconds and try again."
+                    msg.contains("not configured", ignoreCase = true) ->
+                        "Email service is not configured. Please contact support."
+                    else -> msg
+                }
             }
         }
     }
