@@ -282,32 +282,113 @@ app/src/main/java/com/example/
 
 ---
 
-## ⚡ Backend & Agora Setup (.env Configuration)
+## ⚡ Backend & Agora Setup
 
-Trigger App seamlessly connects to **Supabase** for backend operations and **Agora RTC** for media communications. All sensitive keys are managed securely via `.env` (or the AI Studio Secrets panel) and injected through `BuildConfig`:
+Trigger App connects to **Supabase** (Postgres + Auth + Storage + Edge Functions),
+**Agora RTC 4.x** (audio/video calls + live streaming), **Firebase Cloud Messaging**
+(push notifications), **Resend** (transactional email / OTP), and **Razorpay**
+(paid stream bookings + wallet top-ups).
+
+### 🔐 Security model — all secrets server-side
+
+The Android client `.env` (project root) only ever holds **non-sensitive** values:
 
 ```ini
-# .env file at project root
-
-# --- Supabase Configuration ---
+# .env file at project root (read by secrets-gradle-plugin → BuildConfig)
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_anon_public_key
-
-# --- Agora RTC Configuration ---
 AGORA_APP_ID=your_agora_app_id
-
-# Optional: Agora Primary Certificate (for token generation on backend edge functions)
-AGORA_PRIMARY_CERTIFICATE=your_agora_primary_certificate
+AGORA_TOKEN=your_agora_static_fallback_token   # only used when the edge function is unreachable
 ```
 
-### Supabase Database Schema
-The app automatically synchronizes with the following PostgreSQL tables in Supabase:
-- `call_sessions`: Stores `caller_id`, `receiver_id`, `call_type` (audio/video), `status` (ringing, accepted, ended), and `channel_name`.
-- `live_streams`: Stores `stream_id`, `host_id`, `host_name`, `channel_name`, `title`, `viewer_count`, and `status`.
-- `live_stream_comments`: Real-time chat messages submitted by viewers during live stream broadcasts.
+The **Agora Primary Certificate**, **Supabase Service Role Key**, **Resend API key**,
+**Razorpay key secret**, and **Firebase service-account private key** live ONLY on the
+Supabase Edge Functions, set via `supabase secrets set`. They are **never** shipped to
+the Android APK. See `supabase/.env.example` for the full server-side secret list.
 
-### Supabase Edge Function (`generate-agora-token`)
-A dedicated Deno TypeScript Edge Function generates secure HMAC-SHA256 tokens for Agora RTC channels without bundling credentials into the client APK. In offline or development modes, safe mock tokens are generated as a seamless fallback.
+### 📦 Supabase backend layout (`supabase/`)
+
+```
+supabase/
+├── config.toml                              # project config (auth OTP=6-digit, 60s cooldown, templates)
+├── .env.example                             # template for server-side secrets (gitignored .env is real)
+├── SETUP_NOTES.md                           # ⚠️ READ THIS — dashboard checklist (Supabase/Agora/Firebase)
+├── migrations/
+│   ├── 20260903_call_and_live_stream_schema.sql   # calls + live streams (5 tables)
+│   └── 20260904_full_app_schema.sql               # profiles, chat, streams, wallet, vault, settings, OTP, push (19 tables + RLS + triggers + storage + realtime)
+├── seed.sql                                 # 15 languages + 48 countries reference data
+├── templates/                               # 6-digit OTP email templates ({{ .Token }}, NEVER links)
+│   ├── confirmation.html  recovery.html  magic_link.html  email_change.html  invite.html
+└── functions/
+    ├── _shared/                             # cors, supabase client, resend, firebase helpers
+    ├── generate-agora-token/                # REAL Agora AccessToken2 (primary cert server-side)
+    ├── send-email-otp/                      # 6-digit OTP via Resend (60s cooldown, 10min expiry, hashed)
+    ├── verify-email-otp/                    # verify + attempt limiting
+    ├── send-stream-scheduled-email/         # host confirmation email
+    ├── send-booking-confirmation-email/     # attendee + host booking emails
+    ├── send-push-notification/              # Firebase FCM HTTP v1
+    ├── create-razorpay-order/               # Razorpay order (key secret server-side)
+    ├── verify-razorpay-payment/             # HMAC verify + host wallet credit
+    ├── delete-user-account/                 # service-role account deletion
+    ├── register-push-token/                 # FCM token upsert
+    ├── upsert-vault-pin/                    # hashed vault PIN (never plaintext)
+    ├── verify-vault-pin/                    # brute-force lockout (5 attempts)
+    └── sync-user-profile/                   # profile upsert (replaces in-memory UserRepository)
+```
+
+### 🗄️ Database schema (24 public tables)
+
+`profiles`, `conversations`, `messages`, `message_reactions`, `call_sessions`,
+`call_events`, `live_streams`, `live_stream_comments`, `live_stream_reactions`,
+`scheduled_streams`, `stream_bookings`, `wallet_transactions`, `bank_details`,
+`payout_details`, `vault_pins`, `vault_media`, `user_settings`, `blocked_contacts`,
+`support_tickets`, `otp_codes`, `push_tokens`, `user_presences`, `languages`,
+`countries` — every UI input in the app is represented. All tables have RLS enabled;
+`otp_codes` is denied to all clients (edge-function-only). 6 storage buckets
+(`avatars`, `chat_media`, `voice_notes`, `documents`, `vault_media`,
+`stream_thumbnails`) with owner-scoped policies. 13 tables published to
+`supabase_realtime`. Auto-create-profile + auto-create-settings triggers on
+`auth.users`.
+
+### 🚀 Deploy
+
+```bash
+export SUPABASE_ACCESS_TOKEN=<your access token>
+supabase link --project-ref uazkcainrajcgxecomly
+supabase db push                                   # apply both migrations
+supabase secrets set --env-file supabase/.env      # set server-side secrets
+# deploy all 13 edge functions:
+for fn in generate-agora-token send-email-otp verify-email-otp \
+          send-stream-scheduled-email send-booking-confirmation-email \
+          send-push-notification create-razorpay-order verify-razorpay-payment \
+          delete-user-account register-push-token upsert-vault-pin \
+          verify-vault-pin sync-user-profile; do
+  supabase functions deploy "$fn"
+done
+```
+
+> 📋 **Before going live, read [`supabase/SETUP_NOTES.md`](supabase/SETUP_NOTES.md)** —
+> it lists exactly what you must configure on the Supabase, Agora, Firebase, Resend,
+> and Razorpay dashboards (verified sending domains, FCM service-account JSON,
+> Razorpay test keys, auth OTP templates, etc.).
+
+### 🔌 Edge function endpoints
+
+| Function | Purpose | Auth |
+|---|---|---|
+| `generate-agora-token` | Real AccessToken2 for calls + live streams | JWT |
+| `send-email-otp` | 6-digit OTP via Resend (60s cooldown) | JWT |
+| `verify-email-otp` | Verify OTP (5 attempts, 10min expiry) | JWT |
+| `send-stream-scheduled-email` | Host stream-scheduled email | JWT |
+| `send-booking-confirmation-email` | Attendee + host booking emails | JWT |
+| `send-push-notification` | FCM HTTP v1 push | JWT |
+| `create-razorpay-order` | Razorpay order creation | JWT |
+| `verify-razorpay-payment` | HMAC verify + wallet credit | JWT |
+| `delete-user-account` | Service-role account deletion | JWT |
+| `register-push-token` | FCM token upsert | JWT |
+| `upsert-vault-pin` | Set/reset hashed vault PIN | JWT |
+| `verify-vault-pin` | Verify PIN (brute-force lockout) | JWT |
+| `sync-user-profile` | Profile upsert | JWT |
 
 ---
 

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trigger App — Confirm Email Change</title>
+</head>
+<body style="margin:0;padding:0;background:#0b141a;font-family:'Segoe UI',Roboto,Arial,sans-serif;color:#e9edef;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0b141a;min-height:100%;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="480" cellspacing="0" cellpadding="0" style="background:#111b21;border-radius:14px;overflow:hidden;max-width:480px;width:100%;">
+          <tr>
+            <td style="padding:28px 32px 8px 32px;text-align:center;">
+              <div style="font-size:22px;font-weight:700;color:#00a884;letter-spacing:.5px;">&#9889; Trigger App</div>
+              <h1 style="margin:18px 0 6px 0;font-size:22px;color:#e9edef;">Confirm your new email</h1>
+              <p style="margin:0;color:#8696a0;font-size:14px;line-height:1.5;">Enter this 6-digit code in the app to confirm your new email address. Expires in 10 minutes.</p>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:8px 32px 4px 32px;">
+              <div style="display:inline-block;background:#0b141a;border:1px dashed #2a3942;border-radius:12px;padding:18px 28px;">
+                <span style="font-size:34px;font-weight:700;letter-spacing:10px;color:#00a884;">{{ .Token }}</span>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:18px 32px 28px 32px;">
+              <p style="margin:0 0 10px 0;color:#8696a0;font-size:13px;line-height:1.55;">
+                If you didn't change your email, secure your account and ignore this email.
+              </p>
+              <p style="margin:0;color:#8696a0;font-size:12px;line-height:1.5;border-top:1px solid #2a3942;padding-top:14px;">
+                &copy; Trigger App. Never share this code with anyone.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

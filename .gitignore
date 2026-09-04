@@ -1,3 +1,4 @@
+# ---- Android / Gradle (original) ----
 *.iml
 .gradle
 .kotlin
@@ -18,3 +19,21 @@ local.properties
 debug.keystore
 debug.keystore.base64
 .build-outputs/
+
+# ---- Supabase secrets — NEVER commit. ----
+# Set via `supabase secrets set --env-file supabase/.env`.
+supabase/.env
+supabase/.env.*
+!supabase/.env.example
+
+# Supabase CLI local working dirs.
+supabase/.branches
+supabase/.temp
+.supabase/
+
+# Deno / Node caches.
+.deno/
+node_modules/
+
+# Local test artifacts.
+*.log

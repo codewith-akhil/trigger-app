@@ -1,160 +1,151 @@
-// ============================================================================
-// SUPABASE EDGE FUNCTION: generate-agora-token
-// Generates short-lived Agora RTC AccessToken2 for 1-to-1 Calls and Live Streaming
-// ============================================================================
+// Edge function: generate-agora-token
+// ----------------------------------------------------------------------------
+// Generates a REAL Agora AccessToken2 (RTC) for 1-to-1 calls and live streams.
+//
+// Replaces the previous FAKE implementation that produced a non-standard
+// "007eJxTY<base64-json>" string which Agora servers reject when a primary
+// certificate is enabled. This version uses the official `agora-access-token`
+// npm package (AccessToken2 builder) loaded via esm.sh.
+//
+// SECURITY: The Agora Primary Certificate is read ONLY from the server-side
+// env var `AGORA_PRIMARY_CERTIFICATE`. It is NEVER shipped to the client.
+//
+// Env vars (set via `supabase secrets set`):
+//   AGORA_APP_ID              — Agora project App ID
+//   AGORA_PRIMARY_CERTIFICATE — Agora primary certificate (server-only secret)
+//
+// Auth: requires a valid Supabase JWT in the Authorization header.
+//
+// Request body:
+//   { "channelName": string, "uid": number | string,
+//     "role": "publisher" | "subscriber" | "host" | "audience",
+//     "expirationSeconds": number  // default 3600
+//   }
+//
+// Response 200:
+//   { "token": string, "appId": string, "channelName": string,
+//     "uid": number, "role": string, "expiresAt": number }
+//
+// Response 4xx/5xx: { "error": string }
+// ----------------------------------------------------------------------------
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { RtcTokenBuilder, RtcRole } from "https://esm.sh/agora-access-token@2.0.4";
+import { corsHeaders, handleOptions, json, errorResponse } from "../_shared/cors.ts";
+import { createUserClient } from "../_shared/supabase.ts";
 
 interface TokenRequestBody {
-  channelName: string;
-  uid: number | string;
+  channelName?: string;
+  uid?: number | string;
   role?: "publisher" | "subscriber" | "host" | "audience";
   expirationSeconds?: number;
 }
 
-// Minimal Agora RTC Token Builder (AccessToken2 compliant via WebCrypto)
-async function generateAgoraRtcToken(
-  appId: string,
-  appCertificate: string,
-  channelName: string,
-  uid: number,
-  isPublisher: boolean,
-  expirationSeconds: number = 3600
-): Promise<string> {
-  const currentTimestamp = Math.floor(Date.now() / 1000);
-  const privilegeExpiredTs = currentTimestamp + expirationSeconds;
+function sanitizeChannelName(raw: string): string {
+  // Match AgoraConfig.sanitizeChannelName on the client: alphanumeric, 1-64 chars.
+  const sanitized = (raw ?? "").replace(/[^A-Za-z0-9]/g, "");
+  return sanitized.length > 0
+    ? sanitized.substring(0, 64)
+    : `channel_${Date.now()}`;
+}
 
-  // Header and signature generation using HMAC-SHA256
-  const issueTs = currentTimestamp;
-  const salt = Math.floor(Math.random() * 99999999);
+function resolveRole(role: string | undefined): number {
+  // AccessToken2 uses a single Role enum. Publisher/Host → PUBLISHER (1),
+  // Subscriber/Audience → SUBSCRIBER (2).
+  switch (role) {
+    case "publisher":
+    case "host":
+      return RtcRole.PUBLISHER;
+    case "subscriber":
+    case "audience":
+      return RtcRole.SUBSCRIBER;
+    default:
+      return RtcRole.PUBLISHER;
+  }
+}
 
-  // Pack basic signing message: appId + channelName + uid + salt + issueTs + expireTs
-  const encoder = new TextEncoder();
-  const rawMessage = `${appId}:${channelName}:${uid}:${salt}:${issueTs}:${privilegeExpiredTs}:${isPublisher ? "1" : "0"}`;
+async function handler(req: Request): Promise<Response> {
+  const preflight = handleOptions(req);
+  if (preflight) return preflight;
+  if (req.method !== "POST") return errorResponse("Method not allowed", 405);
 
-  const keyData = encoder.encode(appCertificate);
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    keyData,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
+  // --- Authenticate the caller ---------------------------------------------
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader) return errorResponse("Missing Authorization header", 401);
+  const userClient = createUserClient(authHeader);
+  const { data: userData, error: authError } = await userClient.auth.getUser();
+  if (authError || !userData?.user) {
+    return errorResponse("Unauthorized", 401);
+  }
+
+  // --- Parse + validate body -----------------------------------------------
+  let body: TokenRequestBody;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse("Invalid JSON body", 400);
+  }
+
+  const channelName = sanitizeChannelName(body.channelName ?? "");
+  if (!body.channelName || !body.channelName.trim()) {
+    return errorResponse("channelName is required", 400);
+  }
+
+  let uid: number;
+  if (typeof body.uid === "number") {
+    uid = Math.floor(body.uid);
+  } else if (typeof body.uid === "string" && body.uid.trim() !== "") {
+    const parsed = parseInt(body.uid, 10);
+    uid = Number.isFinite(parsed) && parsed > 0 ? parsed : Math.floor(Math.random() * 1_000_000) + 1;
+  } else {
+    uid = Math.floor(Math.random() * 1_000_000) + 1;
+  }
+  if (uid <= 0 || uid > 4294967295) {
+    return errorResponse("uid must be between 1 and 4294967295", 400);
+  }
+
+  const roleEnum = resolveRole(body.role);
+  const expirationSeconds = Math.min(
+    Math.max(body.expirationSeconds ?? 3600, 60),
+    86400, // cap at 24h
   );
 
-  const signatureBuffer = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(rawMessage));
-  const signatureArray = Array.from(new Uint8Array(signatureBuffer));
-  const signatureHex = signatureArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  // --- Load server-only secrets --------------------------------------------
+  const appId = Deno.env.get("AGORA_APP_ID");
+  const appCertificate = Deno.env.get("AGORA_PRIMARY_CERTIFICATE");
+  if (!appId) {
+    return errorResponse("AGORA_APP_ID is not configured on the server", 500);
+  }
+  if (!appCertificate) {
+    return errorResponse("AGORA_PRIMARY_CERTIFICATE is not configured on the server", 500);
+  }
 
-  // Construct Access Token V2 format representation
-  const tokenPayload = {
+  // --- Build the real AccessToken2 -----------------------------------------
+  let token: string;
+  try {
+    const currentTs = Math.floor(Date.now() / 1000);
+    const privilegeExpiredTs = currentTs + expirationSeconds;
+    token = RtcTokenBuilder.buildTokenWithUid(
+      appId,
+      appCertificate,
+      channelName,
+      uid,
+      roleEnum,
+      privilegeExpiredTs,
+    );
+  } catch (e) {
+    console.error("Token generation failed", e);
+    return errorResponse("Failed to generate Agora token", 500);
+  }
+
+  return json({
+    token,
     appId,
     channelName,
     uid,
-    salt,
-    issueTs,
-    expireTs: privilegeExpiredTs,
-    role: isPublisher ? 1 : 2,
-    sig: signatureHex,
-  };
-
-  const base64Payload = btoa(JSON.stringify(tokenPayload));
-  return `007eJxTY${base64Payload}`;
+    role: body.role ?? "publisher",
+    expiresAt: Math.floor(Date.now() / 1000) + expirationSeconds,
+  });
 }
 
-serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
-  try {
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: "Missing Authorization header" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    // Authenticate user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized: Invalid JWT" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const body: TokenRequestBody = await req.json();
-    const { channelName, uid, role = "publisher", expirationSeconds = 3600 } = body;
-
-    if (!channelName || channelName.trim() === "") {
-      return new Response(JSON.stringify({ error: "channelName is required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const numericUid = typeof uid === "number" ? uid : parseInt(uid, 10) || Math.floor(Math.random() * 1000000) + 1;
-    const isPublisher = role === "publisher" || role === "host";
-
-    const agoraAppId = Deno.env.get("AGORA_APP_ID") || "";
-    const agoraPrimaryCert = Deno.env.get("AGORA_PRIMARY_CERTIFICATE") || "";
-
-    if (!agoraAppId) {
-      return new Response(JSON.stringify({ error: "Server misconfiguration: AGORA_APP_ID missing" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // If Primary Certificate is set, generate signed RTC token
-    let rtcToken = "";
-    if (agoraPrimaryCert && agoraPrimaryCert.trim().length > 0) {
-      rtcToken = await generateAgoraRtcToken(
-        agoraAppId,
-        agoraPrimaryCert,
-        channelName,
-        numericUid,
-        isPublisher,
-        expirationSeconds
-      );
-    } else {
-      // If project has App ID only (testing mode on Agora console), empty token is accepted by Agora
-      rtcToken = "";
-    }
-
-    const expiresAt = Math.floor(Date.now() / 1000) + expirationSeconds;
-
-    return new Response(
-      JSON.stringify({
-        token: rtcToken,
-        appId: agoraAppId,
-        channelName,
-        uid: numericUid,
-        role,
-        expiresAt,
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
-  } catch (err: any) {
-    return new Response(JSON.stringify({ error: err.message || "Internal server error" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-});
+serve(handler, { port: 9000 });
