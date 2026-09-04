@@ -79,10 +79,33 @@ async function handler(req: Request): Promise<Response> {
     return json({ verified: false, error: "Payment signature verification failed" }, 400);
   }
 
+  // --- Fetch the authoritative payment details from Razorpay (don't trust
+  // client-supplied amount/streamId — only the signature is verified above).
+  const keyId = Deno.env.get("RAZORPAY_KEY_ID");
+  const keySecret = Deno.env.get("RAZORPAY_KEY_SECRET");
+  if (!keyId || !keySecret) return errorResponse("Razorpay keys not configured", 500);
+  const auth = btoa(`${keyId}:${keySecret}`);
+  const payRes = await fetch(`https://api.razorpay.com/v1/payments/${body.razorpayPaymentId}`, {
+    headers: { Authorization: `Basic ${auth}` },
+  });
+  const payment = await payRes.json().catch(() => ({}));
+  if (!payRes.ok || !payment.id) {
+    return errorResponse("Failed to fetch payment details from Razorpay", 502);
+  }
+  const amount = (payment.amount ?? 0) / 100; // paise → major
+  const currency = (payment.currency ?? "INR");
+  const notes = payment.notes ?? {};
+  const purpose = notes.purpose ?? "stream_booking";
+  const streamId = notes.stream_id ?? null;
+  const payerUserId = notes.user_id ?? null;
+
+  if (!payerUserId) {
+    return json({ verified: true, skipped: "missing user_id in payment notes" });
+  }
+
   // --- Persist the verified payment ----------------------------------------
   const supabase = createAdminClient();
   const referenceId = `RZP-${body.razorpayPaymentId}`;
-  const purpose = body.purpose ?? "stream_booking";
 
   if (purpose === "stream_booking" && body.streamId) {
     // Insert a stream_booking row + a wallet credit to the host.

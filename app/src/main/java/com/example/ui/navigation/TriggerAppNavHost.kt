@@ -10,6 +10,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.launch
 import com.example.model.LanguageRepository
 import com.example.ui.components.NotificationPermissionDialog
 import com.example.ui.screens.*
@@ -72,7 +73,7 @@ fun TriggerAppNavHost(
 
     NavHost(
         navController = navController,
-        startDestination = TriggerDestinations.DASHBOARD,
+        startDestination = TriggerDestinations.LANDING,
         modifier = modifier,
         enterTransition = {
             slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(280)) + fadeIn(tween(280))
@@ -248,6 +249,12 @@ fun TriggerAppNavHost(
                     navController.popBackStack()
                 },
                 onLogout = {
+                    // SECURITY FIX: actually revoke the Supabase session + clear
+                    // local user data (previously a no-op — JWT stayed valid).
+                    kotlinx.coroutines.MainScope().launch {
+                        com.example.di.AppServiceContainer.supabaseClient.signOut()
+                        com.example.model.UserRepository.clear()
+                    }
                     navController.navigate(TriggerDestinations.LANDING) {
                         popUpTo(0) { inclusive = true }
                     }

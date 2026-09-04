@@ -116,7 +116,7 @@ URL: https://console.agora.io/ · Project App ID: `b17004d7060b4ee0bf6e50cb931e1
 ### 2.1 Project → Configuration
 - [ ] Open the project → *Project Management* → your project.
 - [ ] Confirm **App ID** = `b17004d7060b4ee0bf6e50cb931e1bbd` (already in env).
-- [ ] Confirm **Primary Certificate** = `1695667e407d4900bd13c5333df86934`
+- [ ] Confirm **Primary Certificate** = `YOUR_AGORA_PRIMARY_CERTIFICATE`
       (already in `AGORA_PRIMARY_CERTIFICATE` server-side env — **never** put
       this in the Android `.env`).
 - [ ] Ensure **"App ID + Token"** authentication mode is ON (NOT "App ID only"
@@ -199,8 +199,8 @@ a service-account JWT. To get the service-account credentials:
 
 ```bash
 # 1. Set the access token once (the one you pasted in chat):
-export SUPABASE_ACCESS_TOKEN=sbp_544aa09d24df746f252a31871a1f0381652935da
-export SUPABASE_DB_PASSWORD='Gizudio4.3@mfs'
+export SUPABASE_ACCESS_TOKEN=sbp_YOUR_ACCESS_TOKEN
+export SUPABASE_DB_PASSWORD='YOUR_DB_PASSWORD'
 
 # 2. Apply migrations to the remote database:
 supabase db push

@@ -73,7 +73,7 @@ fun EmailOtpVerificationScreen(
             coroutineScope.launch {
                 val otpType = if (purpose == OtpPurpose.SIGN_UP) "signup" else "recovery"
                 val supabaseResult = AppServiceContainer.supabaseClient.verifyOtp(email, otpCode, type = otpType)
-                if (supabaseResult is SupabaseResult.Success || otpCode == currentExpectedOtp || otpCode == "123456") {
+                if (supabaseResult is SupabaseResult.Success) {
                     isVerifying = false
                     isSuccess = true
                     delay(500)

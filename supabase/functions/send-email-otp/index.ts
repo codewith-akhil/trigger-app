@@ -143,7 +143,16 @@ async function handler(req: Request): Promise<Response> {
 
   if (sendResult.error) {
     console.error("Resend send failed", sendResult.error);
-    return errorResponse("Failed to send verification email. Please try again.", 502);
+    // Surface the actual Resend error so the client can show a useful message
+    // (e.g. "domain not verified", "test-mode restriction", "invalid recipient").
+    return json(
+      {
+        error: "Failed to send verification email",
+        code: "EMAIL_SEND_FAILED",
+        detail: sendResult.error,
+      },
+      502,
+    );
   }
 
   return json({

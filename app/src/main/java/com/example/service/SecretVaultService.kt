@@ -61,22 +61,38 @@ class SecretVaultService(private val context: Context) {
         }
 
     init {
-        val savedPin = prefs.getString("vault_6digit_pin", null)
-        _isPinSet.value = !savedPin.isNullOrEmpty()
+        val savedPinHash = prefs.getString("vault_pin_hash", null)
+        _isPinSet.value = !savedPinHash.isNullOrEmpty()
         loadVaultItems()
+    }
+
+    /**
+     * Hash a 6-digit PIN with a device-specific salt using SHA-256.
+     * The PIN is NEVER stored in plaintext — only the salted hash.
+     */
+    private fun hashPin(pin: String): String {
+        val salt = prefs.getString("vault_pin_salt", null) ?: run {
+            val newSalt = java.util.UUID.randomUUID().toString()
+            prefs.edit().putString("vault_pin_salt", newSalt).apply()
+            newSalt
+        }
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val input = "$pin:$salt".toByteArray(Charsets.UTF_8)
+        return md.digest(input).joinToString("") { "%02x".format(it) }
     }
 
     fun setPin(pin: String): Boolean {
         if (pin.length != 6 || !pin.all { it.isDigit() }) return false
-        prefs.edit().putString("vault_6digit_pin", pin).apply()
+        // SECURITY FIX: store salted SHA-256 hash, never the plaintext PIN.
+        prefs.edit().putString("vault_pin_hash", hashPin(pin)).apply()
         _isPinSet.value = true
         _isUnlocked.value = true
         return true
     }
 
     fun verifyPin(pin: String): Boolean {
-        val savedPin = prefs.getString("vault_6digit_pin", null)
-        val matches = savedPin != null && savedPin == pin
+        val savedHash = prefs.getString("vault_pin_hash", null) ?: return false
+        val matches = hashPin(pin) == savedHash
         if (matches) {
             _isUnlocked.value = true
             loadVaultItems()

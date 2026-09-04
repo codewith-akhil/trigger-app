@@ -199,10 +199,19 @@ async function handler(req: Request): Promise<Response> {
   }
 
   if (eventType === "payment.refunded") {
-    await supabase
+    // Mark the original transaction as failed (refunded). Use a two-step
+    // update since supabase-js doesn't support raw SQL expressions.
+    const { data: origTx } = await supabase
       .from("wallet_transactions")
-      .update({ status: "failed", description: supabase.raw("description || ' [REFUNDED]'") })
-      .eq("reference_id", referenceId);
+      .select("description")
+      .eq("reference_id", referenceId)
+      .maybeSingle();
+    if (origTx) {
+      await supabase
+        .from("wallet_transactions")
+        .update({ status: "failed", description: (origTx.description ?? "") + " [REFUNDED]" })
+        .eq("reference_id", referenceId);
+    }
     return json({ ok: true, refunded: true, referenceId });
   }
 

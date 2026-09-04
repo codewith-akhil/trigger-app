@@ -96,9 +96,10 @@ async function handler(req: Request): Promise<Response> {
 
   const supabase = createAdminClient();
 
-  // --- Resolve the recipient ----------------------------------------------
-  let recipientId = body.recipientId?.trim();
-  if (!recipientId) {
+  // --- Resolve the recipient (always from the conversation — never trust
+  // client-supplied recipientId to prevent cross-user notification spam) ---
+  let recipientId: string | undefined;
+  {
     // Look up the conversation, find the peer (the participant that isn't the sender).
     const { data: conv, error: convError } = await supabase
       .from("conversations")

@@ -45,7 +45,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { handleOptions, json, errorResponse, ErrorCode } from "../_shared/cors.ts";
-import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
+import { createAdminClient, createUserClient, resolveUserId } from "../_shared/supabase.ts";
 import { checkRateLimit, RATE_LIMITS } from "../_shared/rate_limit.ts";
 
 // Extend RATE_LIMITS at runtime (the const is frozen, so we add a new key).
@@ -111,7 +111,10 @@ async function handler(req: Request): Promise<Response> {
   catch { return errorResponse("Invalid JSON body", 400, ErrorCode.VALIDATION_FAILED); }
 
   const action = (body.action ?? "").toLowerCase();
-  const supabase = createAdminClient();
+  // Use the USER's JWT (not service role) so RLS enforces:
+  //   - push: sender_id must = auth.uid() (can't write to others' conversations)
+  //   - pull: only conversations where caller is owner or peer
+  const userClient = createUserClient(authHeader);
 
   if (action === "push") {
     if (!Array.isArray(body.messages)) {
@@ -161,7 +164,7 @@ async function handler(req: Request): Promise<Response> {
       return json({ synced: 0, skipped });
     }
 
-    const { error: upsertError } = await supabase
+    const { error: upsertError } = await userClient
       .from("messages")
       .upsert(rows, { onConflict: "id" });
 
@@ -175,7 +178,7 @@ async function handler(req: Request): Promise<Response> {
 
   if (action === "pull") {
     const sinceTs = typeof body.sinceTs === "number" ? body.sinceTs : 0;
-    let query = supabase
+    let query = userClient
       .from("messages")
       .select("*")
       .gt("timestamp_millis", sinceTs)

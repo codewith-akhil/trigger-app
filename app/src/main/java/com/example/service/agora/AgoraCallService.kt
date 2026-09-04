@@ -246,9 +246,9 @@ class AgoraCallService(
                     put("id", callId)
                     put("status", status)
                     if (status == "connected") {
-                        put("answered_at", "NOW()")
+                        put("answered_at", java.time.Instant.now().toString())
                     } else if (status == "ended") {
-                        put("ended_at", "NOW()")
+                        put("ended_at", java.time.Instant.now().toString())
                         put("duration_seconds", duration)
                     }
                 }

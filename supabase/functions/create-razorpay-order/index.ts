@@ -77,11 +77,12 @@ async function handler(req: Request): Promise<Response> {
   // cents for USD/EUR/GBP). Multiply by 100.
   const amountMinor = Math.round(amount * 100);
 
+  // Server-controlled notes — client cannot override user_id (prevents
+  // attacker from crediting a victim's wallet by passing their user_id).
   const notes: Record<string, string> = {
     user_id: userId,
     purpose: body.purpose ?? "stream_booking",
     ...(body.streamId ? { stream_id: body.streamId } : {}),
-    ...(body.notes ?? {}),
   };
 
   const auth = btoa(`${keyId}:${keySecret}`);

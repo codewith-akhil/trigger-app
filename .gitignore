@@ -37,3 +37,14 @@ node_modules/
 
 # Local test artifacts.
 *.log
+
+# Build artifacts + signing keys (never commit)
+app/build/
+build/
+*.jks
+*.keystore
+upload-key.jks
+debug.keystore
+local.properties
+app/google-services.json
+.gradle/

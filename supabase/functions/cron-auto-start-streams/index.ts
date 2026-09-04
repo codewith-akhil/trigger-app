@@ -53,19 +53,29 @@ function buildChannelName(streamId: string): string {
 async function handler(req: Request): Promise<Response> {
   const preflight = handleOptions(req);
   if (preflight) return preflight;
-  if (req.method !== "POST" && req.method !== "GET") return errorResponse("Method not allowed", 405);
+  if (req.method !== "POST") return errorResponse("Method not allowed", 405);
+
+  // Auth: require a CRON_SECRET header to prevent external abuse.
+  // The pg_cron job sets this via the Authorization header; only the
+  // scheduler + Supabase admins know the secret.
+  const cronSecret = Deno.env.get("CRON_SECRET");
+  const providedSecret = req.headers.get("x-cron-secret") ?? "";
+  if (!cronSecret || providedSecret !== cronSecret) {
+    return errorResponse("Unauthorized", 401);
+  }
 
   const supabase = createAdminClient();
 
-  // Find scheduled streams due to start.
-  // We compare scheduled_date + scheduled_time <= now() in the DB (timezone-
-  // aware). PostgreSQL can do this with a single query using NOW().
+  // Find scheduled streams due to start — now timezone-aware via the
+  // streams_due_to_start view (added in migration 20260908). The view computes
+  // scheduled_local_ts = scheduled_date + scheduled_time + host_timezone as a
+  // timestamptz, so streams start at the correct wall-clock moment in the
+  // host's local timezone (not UTC). Falls back to UTC if host_timezone is
+  // NULL (the column defaults to 'UTC').
   const { data: dueStreams, error: fetchError } = await supabase
-    .from("scheduled_streams")
-    .select("id, host_id, title, description, category, scheduled_date, scheduled_time, channel_name, slot_limit, pricing_type, amount, currency, slots_booked, status")
-    .eq("status", "scheduled")
-    .lte("scheduled_date", new Date().toISOString().slice(0, 10))
-    .order("scheduled_date", { ascending: true })
+    .from("streams_due_to_start")
+    .select("id, host_id, title, description, category, scheduled_date, scheduled_time, channel_name, slot_limit, pricing_type, amount, currency, slots_booked, status, scheduled_local_ts, host_name, host_avatar_url")
+    .order("scheduled_local_ts", { ascending: true })
     .limit(50);
 
   if (fetchError) {
@@ -77,24 +87,12 @@ async function handler(req: Request): Promise<Response> {
     return json({ started: 0, message: "No streams due" });
   }
 
-  const now = new Date();
   const started: string[] = [];
   const skipped: string[] = [];
 
-  for (const stream of dueStreams as ScheduledStream[]) {
-    // Build the scheduled timestamp: combine date + time, interpret as UTC
-    // (the Android app sends local strings; we treat them as UTC for simplicity —
-    // a future improvement would store the host's timezone).
-    const scheduledTs = new Date(`${stream.scheduled_date}T${stream.scheduled_time}:00Z`);
-    if (isNaN(scheduledTs.getTime())) {
-      skipped.push(stream.id);
-      continue;
-    }
-    if (scheduledTs > now) {
-      // Not yet due (date matched but time hasn't passed).
-      continue;
-    }
-
+  for (const stream of dueStreams as any[]) {
+    // The streams_due_to_start view already filtered to streams whose
+    // scheduled_local_ts <= now(), so no further time comparison needed here.
     const channelName = stream.channel_name ?? buildChannelName(stream.id);
 
     // --- Create a live_streams row if one doesn't already exist --------------

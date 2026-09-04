@@ -52,7 +52,13 @@ async function handler(req: Request): Promise<Response> {
     return errorResponse("Invalid JSON body", 400);
   }
 
-  const targetUserId = body.userId ?? callerId;
+  // SECURITY: callers can only send push notifications to THEMSELVES.
+  // Server-triggered notifications (stream-start to attendees) go through the
+  // cron-auto-start-streams function which uses the service role directly.
+  const targetUserId = callerId;
+  if (body.userId && body.userId !== callerId) {
+    return json({ error: "Cannot send push notifications to other users", code: "FORBIDDEN" }, 403);
+  }
   if (!body.title?.trim() || !body.body?.trim()) {
     return errorResponse("title and body are required", 422);
   }

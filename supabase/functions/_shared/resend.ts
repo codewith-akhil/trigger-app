@@ -49,7 +49,11 @@ export async function sendEmail(payload: EmailPayload): Promise<{ id?: string; e
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      return { error: (data && (data.message || data.error)) || `Resend HTTP ${res.status}` };
+      // Surface the full Resend error so callers can debug (domain not
+      // verified, test-mode restriction, invalid recipient, etc.).
+      const errMsg = (data && (data.message || data.error)) || `Resend HTTP ${res.status}`;
+      const errName = (data && data.name) || "";
+      return { error: errName ? `${errName}: ${errMsg}` : errMsg };
     }
     return { id: data?.id };
   } catch (e) {
@@ -57,6 +61,15 @@ export async function sendEmail(payload: EmailPayload): Promise<{ id?: string; e
   }
 }
 
+
+function escapeHtml(s: string): string {
+  return (s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 // --- Email templates -------------------------------------------------------
 
 /**
@@ -200,14 +213,14 @@ export function renderStreamScheduledEmail(opts: {
   shareLink: string;
 }): string {
   const body = `
-    <p style="margin:0 0 10px 0;color:#e9edef;font-size:15px;">Hi ${opts.hostName},</p>
+    <p style="margin:0 0 10px 0;color:#e9edef;font-size:15px;">Hi ${escapeHtml(opts.hostName)},</p>
     <p style="margin:0 0 14px 0;color:#8696a0;font-size:14px;line-height:1.6;">Your stream has been scheduled.</p>
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0b141a;border-radius:10px;">
-      <tr><td style="padding:14px 16px;color:#8696a0;font-size:13px;">Title</td><td style="padding:14px 16px;color:#e9edef;font-size:14px;font-weight:600;">${opts.streamTitle}</td></tr>
-      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">Category</td><td style="padding:10px 16px;color:#e9edef;font-size:14px;">${opts.category}</td></tr>
-      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">When</td><td style="padding:10px 16px;color:#e9edef;font-size:14px;">${opts.scheduledDateTime}</td></tr>
-      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">Slots</td><td style="padding:10px 16px;color:#e9edef;font-size:14px;">${opts.slotInfo}</td></tr>
-      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">Pricing</td><td style="padding:10px 16px;color:#00a884;font-size:14px;font-weight:600;">${opts.pricingBadge}</td></tr>
+      <tr><td style="padding:14px 16px;color:#8696a0;font-size:13px;">Title</td><td style="padding:14px 16px;color:#e9edef;font-size:14px;font-weight:600;">${escapeHtml(opts.streamTitle)}</td></tr>
+      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">Category</td><td style="padding:10px 16px;color:#e9edef;font-size:14px;">${escapeHtml(opts.category)}</td></tr>
+      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">When</td><td style="padding:10px 16px;color:#e9edef;font-size:14px;">${escapeHtml(opts.scheduledDateTime)}</td></tr>
+      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">Slots</td><td style="padding:10px 16px;color:#e9edef;font-size:14px;">${escapeHtml(opts.slotInfo)}</td></tr>
+      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">Pricing</td><td style="padding:10px 16px;color:#00a884;font-size:14px;font-weight:600;">${escapeHtml(opts.pricingBadge)}</td></tr>
     </table>
     <p style="margin:16px 0 6px 0;"><a href="${opts.shareLink}" style="display:inline-block;background:#00a884;color:#0b141a;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:24px;font-size:14px;">Share stream link</a></p>`;
   return brandShell("Stream scheduled", body);
@@ -222,13 +235,13 @@ export function renderBookingConfirmationEmail(opts: {
   shareLink: string;
 }): string {
   const body = `
-    <p style="margin:0 0 10px 0;color:#e9edef;font-size:15px;">Hi ${opts.attendeeName},</p>
+    <p style="margin:0 0 10px 0;color:#e9edef;font-size:15px;">Hi ${escapeHtml(opts.attendeeName)},</p>
     <p style="margin:0 0 14px 0;color:#8696a0;font-size:14px;line-height:1.6;">Your slot is confirmed. Here are the details:</p>
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0b141a;border-radius:10px;">
-      <tr><td style="padding:14px 16px;color:#8696a0;font-size:13px;">Stream</td><td style="padding:14px 16px;color:#e9edef;font-size:14px;font-weight:600;">${opts.streamTitle}</td></tr>
-      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">Host</td><td style="padding:10px 16px;color:#e9edef;font-size:14px;">${opts.hostName}</td></tr>
-      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">When</td><td style="padding:10px 16px;color:#e9edef;font-size:14px;">${opts.scheduledDateTime}</td></tr>
-      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">Paid</td><td style="padding:10px 16px;color:#00a884;font-size:14px;font-weight:600;">${opts.pricingBadge}</td></tr>
+      <tr><td style="padding:14px 16px;color:#8696a0;font-size:13px;">Stream</td><td style="padding:14px 16px;color:#e9edef;font-size:14px;font-weight:600;">${escapeHtml(opts.streamTitle)}</td></tr>
+      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">Host</td><td style="padding:10px 16px;color:#e9edef;font-size:14px;">${escapeHtml(opts.hostName)}</td></tr>
+      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">When</td><td style="padding:10px 16px;color:#e9edef;font-size:14px;">${escapeHtml(opts.scheduledDateTime)}</td></tr>
+      <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">Paid</td><td style="padding:10px 16px;color:#00a884;font-size:14px;font-weight:600;">${escapeHtml(opts.pricingBadge)}</td></tr>
     </table>
     <p style="margin:16px 0 6px 0;"><a href="${opts.shareLink}" style="display:inline-block;background:#00a884;color:#0b141a;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:24px;font-size:14px;">Join stream</a></p>`;
   return brandShell("Slot confirmed", body);

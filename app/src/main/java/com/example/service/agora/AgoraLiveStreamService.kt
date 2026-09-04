@@ -214,7 +214,7 @@ class AgoraLiveStreamService(
                         val update = JSONObject().apply {
                             put("id", stream.id)
                             put("status", "ended")
-                            put("ended_at", "NOW()")
+                            put("ended_at", java.time.Instant.now().toString())
                         }
                         supabaseClient.upsertRecord("live_streams", update)
                     } else {
