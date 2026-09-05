@@ -65,12 +65,15 @@ fun ChatCallingOverlay(
                     .background(Color(0xFF1E2830)),
                 contentAlignment = Alignment.Center
             ) {
-                if (engineState.remoteUid != null) {
-                    // Real Remote Video Feed from Agora
+                val remoteUid = engineState.remoteUid
+                if (remoteUid != null) {
+                    // Real Remote Video Feed from Agora — keyed on remoteUid so
+                    // the AndroidView is recreated when the remote user changes.
                     AndroidView(
+                        key = { remoteUid },
                         factory = { ctx ->
                             SurfaceView(ctx).apply {
-                                AppServiceContainer.agoraRtcEngineManager.setupRemoteVideo(this, engineState.remoteUid!!)
+                                AppServiceContainer.agoraRtcEngineManager.setupRemoteVideo(this, remoteUid)
                             }
                         },
                         modifier = Modifier.fillMaxSize()

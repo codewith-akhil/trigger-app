@@ -195,6 +195,12 @@ class AgoraCallService(
                     updateSupabaseCallStatus(current.callId, "connected")
                 }
 
+                // Remote user left (hung up) -> auto-end the call
+                if (status.remoteUid == null && current.state == CallState.CONNECTED) {
+                    Log.i(TAG, "Remote user left the call, auto-ending")
+                    endCall()
+                }
+
                 // Poor connection update
                 if (current.isPoorConnection != status.isPoorConnection) {
                     _currentCall.update { it?.copy(isPoorConnection = status.isPoorConnection) }
