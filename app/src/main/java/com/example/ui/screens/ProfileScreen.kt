@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -100,6 +101,7 @@ import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.example.di.AppServiceContainer
 import com.example.model.UserRepository
+import com.example.service.ProfileService
 import com.example.service.supabase.SupabaseResult
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -138,9 +140,74 @@ private val RESERVED_USERNAMES = setOf(
 // ============================================================================
 // About / Links limits
 // ============================================================================
+private const val MIN_NAME = 2
+private const val MAX_NAME = 50
 private const val MAX_ABOUT = 350
 private const val MAX_LINK_NAME = 25
+private const val MAX_LINK_URL = 2048
 private const val MAX_LINKS = 3
+private const val MIN_DOB_AGE = 13
+private const val MAX_DOB_AGE = 120
+
+/**
+ * Validates a full name: 2-50 chars, allows letters (any script), spaces,
+ * hyphens, apostrophes, dots. Blocks emoji and control characters.
+ * Returns null if valid, or an error message string.
+ */
+private fun validateName(name: String): String? {
+    val trimmed = name.trim()
+    if (trimmed.isEmpty()) return "Name is required"
+    if (trimmed.length < MIN_NAME) return "Name must be at least $MIN_NAME characters"
+    if (trimmed.length > MAX_NAME) return "Name must be $MAX_NAME characters or fewer"
+    // Allow letters (Unicode \p{L}), spaces, hyphens, apostrophes, dots, commas.
+    // This already blocks digits, emoji (which are Symbol category, not Letter),
+    // and control characters.
+    if (!Regex("^[\\p{L}][\\p{L}\\s'\\-.,]*$").matches(trimmed)) {
+        return "Name can only contain letters, spaces, hyphens, and apostrophes"
+    }
+    return null
+}
+
+/**
+ * Validates a URL: must start with http:// or https://, max 2048 chars,
+ * must have a valid hostname.
+ */
+private fun validateUrl(url: String): String? {
+    val trimmed = url.trim()
+    if (trimmed.isEmpty()) return "URL is required"
+    if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+        return "URL must start with http:// or https://"
+    }
+    if (trimmed.length > MAX_LINK_URL) return "URL is too long (max $MAX_LINK_URL chars)"
+    try {
+        val u = java.net.URI(trimmed)
+        if (u.host.isNullOrBlank()) return "URL is missing a domain"
+    } catch (_: Exception) {
+        return "Invalid URL format"
+    }
+    return null
+}
+
+/**
+ * Validates a DOB string (YYYY-MM-DD): must be a real date, age >= 13, <= 120.
+ */
+private fun validateDob(dobStr: String): String? {
+    if (dobStr.isEmpty()) return "Date of birth is required"
+    return try {
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        sdf.isLenient = false
+        val dob = sdf.parse(dobStr) ?: return "Invalid date"
+        val now = java.util.Date()
+        if (dob.after(now)) return "Date of birth can't be in the future"
+        val ageMs = now.time - dob.time
+        val ageYears = ageMs / (1000.0 * 60 * 60 * 24 * 365.25)
+        if (ageYears < MIN_DOB_AGE) return "You must be at least $MIN_DOB_AGE years old"
+        if (ageYears > MAX_DOB_AGE) return "Please enter a valid date of birth"
+        null
+    } catch (_: Exception) {
+        "Invalid date format"
+    }
+}
 
 private data class LinkItem(val name: String, val url: String)
 
@@ -237,12 +304,22 @@ fun ProfileScreen(
     var isCountrySaving by remember { mutableStateOf(false) }
     var isDobSaving by remember { mutableStateOf(false) }
 
-    // Genders + Countries fetched from backend (via REST API)
-    var genders by remember { mutableStateOf(listOf("Male", "Female", "Transmen", "Transwomen")) }
-    var countries by remember { mutableStateOf(listOf<Pair<String, String>>()) }
+    // Genders + Countries fetched from backend (NO hardcoded fallback).
+    // If the fetch fails, the list stays empty and the corresponding dialog
+    // shows an error message instead of falling back to hardcoded values.
+    var genders by remember { mutableStateOf<List<String>>(emptyList()) }
+    var countries by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var gendersFetchFailed by remember { mutableStateOf(false) }
+    var countriesFetchFailed by remember { mutableStateOf(false) }
 
-    // Fetch genders + countries from DB on first launch
+    // Fetch profile + reference data (genders, countries) from DB on first launch.
+    // Also hydrate UserRepository from the server so name/email always show.
     LaunchedEffect(Unit) {
+        // 1) Hydrate the profile from the server (ensures name + email show
+        //    on the Profile screen even after app restart or fresh login).
+        ProfileService.refreshFromServer(AppServiceContainer.supabaseClient)
+
+        // 2) Fetch genders from the genders table — NO fallback.
         try {
             val sr = AppServiceContainer.supabaseClient.getTable("genders", "select=name&order=sort_order.asc")
             if (sr is SupabaseResult.Success) {
@@ -250,9 +327,16 @@ fun ProfileScreen(
                 for (i in 0 until sr.data.length()) {
                     list.add(sr.data.getJSONObject(i).getString("name"))
                 }
-                if (list.isNotEmpty()) genders = list
+                genders = list
+                gendersFetchFailed = false
+            } else {
+                gendersFetchFailed = true
             }
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+            gendersFetchFailed = true
+        }
+
+        // 3) Fetch countries from the countries table — NO fallback.
         try {
             val cr = AppServiceContainer.supabaseClient.getTable("countries", "select=currency_code,country_name&order=country_name.asc")
             if (cr is SupabaseResult.Success) {
@@ -261,9 +345,14 @@ fun ProfileScreen(
                     val obj = cr.data.getJSONObject(i)
                     list.add(Pair(obj.getString("currency_code"), obj.getString("country_name")))
                 }
-                if (list.isNotEmpty()) countries = list
+                countries = list
+                countriesFetchFailed = false
+            } else {
+                countriesFetchFailed = true
             }
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+            countriesFetchFailed = true
+        }
     }
 
     // Holds the content:// URI handed to TakePicture() so the result callback
@@ -271,20 +360,102 @@ fun ProfileScreen(
     var cameraImageUri by remember { mutableStateOf<Uri?>(null) }
 
     // ------------------------------------------------------------------------
-    // Avatar — sync to DB via sync-user-profile edge function
+    // Avatar — upload to Supabase Storage bucket 'avatars', then sync the
+    // public URL to profiles.avatar_url via the sync-user-profile edge fn.
     // ------------------------------------------------------------------------
     fun saveAvatar(uriString: String) {
         if (isAvatarSaving) return
         isAvatarSaving = true
         coroutineScope.launch {
-            val payload = JSONObject().put("avatarUrl", uriString)
-            val result = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
-            isAvatarSaving = false
-            if (result is SupabaseResult.Success) {
-                UserRepository.updateAvatarUri(uriString)
-                Toast.makeText(context, "Profile photo updated", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(context, "Failed to save photo", Toast.LENGTH_SHORT).show()
+            try {
+                val uri = Uri.parse(uriString)
+
+                // 1) Resolve MIME type from ContentResolver
+                val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
+
+                // 2) Validate MIME type — avatars bucket only accepts these
+                val allowedMimeTypes = setOf("image/jpeg", "image/png", "image/webp", "image/gif")
+                if (mimeType !in allowedMimeTypes) {
+                    isAvatarSaving = false
+                    Toast.makeText(
+                        context,
+                        "Unsupported image format. Please use JPG, PNG, WEBP, or GIF.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@launch
+                }
+
+                // 3) Read bytes
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: run {
+                        isAvatarSaving = false
+                        Toast.makeText(context, "Could not read the selected image", Toast.LENGTH_SHORT).show()
+                        return@launch
+                    }
+
+                // 4) Validate file size — avatars bucket limit is 10 MB
+                val maxBytes = 10L * 1024 * 1024
+                if (bytes.size > maxBytes) {
+                    isAvatarSaving = false
+                    Toast.makeText(
+                        context,
+                        "Image is too large. Maximum size is 10 MB.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@launch
+                }
+
+                // 5) Generate a unique object path: {userId}/{timestamp}.{ext}
+                val ext = when (mimeType) {
+                    "image/jpeg" -> "jpg"
+                    "image/png" -> "png"
+                    "image/webp" -> "webp"
+                    "image/gif" -> "gif"
+                    else -> "jpg"
+                }
+                val userId = AppServiceContainer.supabaseClient.currentUser?.id
+                    ?: java.util.UUID.randomUUID().toString()
+                val fileName = "$userId/${System.currentTimeMillis()}.$ext"
+
+                // 6) Upload to the 'avatars' Storage bucket (upsert = true so
+                //    re-uploads overwrite cleanly)
+                val uploadResult = AppServiceContainer.supabaseClient.uploadFile(
+                    bucketName = "avatars",
+                    fileName = fileName,
+                    fileBytes = bytes,
+                    mimeType = mimeType,
+                    upsert = true
+                )
+
+                if (uploadResult is SupabaseResult.Error) {
+                    isAvatarSaving = false
+                    Toast.makeText(
+                        context,
+                        "Upload failed: ${uploadResult.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@launch
+                }
+
+                val publicUrl = (uploadResult as SupabaseResult.Success).data
+
+                // 7) Sync the public URL to profiles.avatar_url
+                val payload = JSONObject().put("avatarUrl", publicUrl)
+                val syncResult = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
+                isAvatarSaving = false
+                if (syncResult is SupabaseResult.Success) {
+                    UserRepository.updateAvatarUri(publicUrl)
+                    Toast.makeText(context, "Profile photo updated", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Failed to save photo", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                isAvatarSaving = false
+                Toast.makeText(
+                    context,
+                    "Failed to upload photo: ${e.message ?: "unknown error"}",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
@@ -718,10 +889,17 @@ fun ProfileScreen(
             title = "Enter your name",
             initialValue = profile.name,
             isSaving = isNameSaving,
+            validator = { validateName(it) },
+            maxLength = MAX_NAME,
             onDismiss = { if (!isNameSaving) showEditNameDialog = false },
             onConfirm = { value ->
                 val trimmed = value.trim()
-                if (trimmed.isEmpty()) return@ProfileEditDialog
+                // Defense in depth — validator already blocks this
+                val validationError = validateName(trimmed)
+                if (validationError != null) {
+                    Toast.makeText(context, validationError, Toast.LENGTH_LONG).show()
+                    return@ProfileEditDialog
+                }
                 isNameSaving = true
                 coroutineScope.launch {
                     val payload = JSONObject().put("fullName", trimmed)
@@ -732,7 +910,8 @@ fun ProfileScreen(
                         Toast.makeText(context, "Name saved", Toast.LENGTH_SHORT).show()
                         showEditNameDialog = false
                     } else {
-                        Toast.makeText(context, "Failed to save name", Toast.LENGTH_SHORT).show()
+                        val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save name"
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -756,7 +935,8 @@ fun ProfileScreen(
                         Toast.makeText(context, "About updated", Toast.LENGTH_SHORT).show()
                         showEditAboutDialog = false
                     } else {
-                        Toast.makeText(context, "Failed to save about", Toast.LENGTH_SHORT).show()
+                        val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save about"
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -779,7 +959,8 @@ fun ProfileScreen(
                         Toast.makeText(context, "Username saved", Toast.LENGTH_SHORT).show()
                         showEditUsernameDialog = false
                     } else {
-                        Toast.makeText(context, "Failed to save username", Toast.LENGTH_SHORT).show()
+                        val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save username"
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -803,7 +984,8 @@ fun ProfileScreen(
                         Toast.makeText(context, "Links saved", Toast.LENGTH_SHORT).show()
                         showEditLinksDialog = false
                     } else {
-                        Toast.makeText(context, "Failed to save links", Toast.LENGTH_SHORT).show()
+                        val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save links"
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -822,21 +1004,36 @@ fun ProfileScreen(
             title = { Text("Select Gender", color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
             text = {
                 Column {
-                    genders.forEach { g ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedGender = g }
-                                .padding(vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = selectedGender == g,
-                                onClick = { selectedGender = g },
-                                colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = TriggerGreenAccent)
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(g, fontSize = 15.sp, color = TriggerTextPrimary)
+                    if (genders.isEmpty()) {
+                        // NO hardcoded fallback — show an error if the fetch
+                        // failed or is still loading.
+                        Text(
+                            text = if (gendersFetchFailed) {
+                                "Couldn't load genders from the server. Please check your connection and reopen this dialog."
+                            } else {
+                                "Loading genders..."
+                            },
+                            fontSize = 14.sp,
+                            color = if (gendersFetchFailed) TriggerDanger else TriggerTextSecondary,
+                            modifier = Modifier.padding(vertical = 16.dp)
+                        )
+                    } else {
+                        genders.forEach { g ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedGender = g }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = selectedGender == g,
+                                    onClick = { selectedGender = g },
+                                    colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = TriggerGreenAccent)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(g, fontSize = 15.sp, color = TriggerTextPrimary)
+                            }
                         }
                     }
                 }
@@ -845,6 +1042,10 @@ fun ProfileScreen(
                 Button(
                     onClick = {
                         if (selectedGender.isBlank()) return@Button
+                        if (genders.isNotEmpty() && selectedGender !in genders) {
+                            Toast.makeText(context, "Please select a valid gender from the list", Toast.LENGTH_LONG).show()
+                            return@Button
+                        }
                         isGenderSaving = true
                         coroutineScope.launch {
                             val payload = JSONObject().put("gender", selectedGender)
@@ -855,11 +1056,12 @@ fun ProfileScreen(
                                 Toast.makeText(context, "Gender saved", Toast.LENGTH_SHORT).show()
                                 showEditGenderDialog = false
                             } else {
-                                Toast.makeText(context, "Failed to save gender", Toast.LENGTH_SHORT).show()
+                                val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save gender"
+                                Toast.makeText(context, err, Toast.LENGTH_LONG).show()
                             }
                         }
                     },
-                    enabled = !isGenderSaving && selectedGender.isNotBlank(),
+                    enabled = !isGenderSaving && selectedGender.isNotBlank() && genders.isNotEmpty(),
                     colors = ButtonDefaults.buttonColors(containerColor = TriggerGreenAccent),
                     shape = RoundedCornerShape(8.dp)
                 ) { SaveButtonContent(isSaving = isGenderSaving) }
@@ -886,43 +1088,66 @@ fun ProfileScreen(
             title = { Text("Select Country", color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
             text = {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = { Text("Search country...") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = TriggerGreenAccent,
-                            unfocusedBorderColor = Color(0xFFCFD8DC),
-                            cursorColor = TriggerGreenAccent
-                        ),
-                        enabled = !isCountrySaving,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    // Scrollable country list
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(300.dp)
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        filtered.forEach { (code, name) ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { selectedCountry = Pair(code, name) }
-                                    .padding(vertical = 8.dp, horizontal = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = selectedCountry?.first == code,
-                                    onClick = { selectedCountry = Pair(code, name) },
-                                    colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = TriggerGreenAccent)
+                    if (countries.isEmpty()) {
+                        // NO hardcoded fallback — show an error if the fetch failed.
+                        Text(
+                            text = if (countriesFetchFailed) {
+                                "Couldn't load countries from the server. Please check your connection and reopen this dialog."
+                            } else {
+                                "Loading countries..."
+                            },
+                            fontSize = 14.sp,
+                            color = if (countriesFetchFailed) TriggerDanger else TriggerTextSecondary,
+                            modifier = Modifier.padding(vertical = 16.dp)
+                        )
+                    } else {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text("Search country...") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = TriggerGreenAccent,
+                                unfocusedBorderColor = Color(0xFFCFD8DC),
+                                cursorColor = TriggerGreenAccent
+                            ),
+                            enabled = !isCountrySaving,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        // Scrollable country list
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(300.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            if (filtered.isEmpty()) {
+                                Text(
+                                    text = "No countries match \"$searchQuery\"",
+                                    fontSize = 13.sp,
+                                    color = TriggerTextSecondary,
+                                    modifier = Modifier.padding(vertical = 12.dp)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("$name ($code)", fontSize = 14.sp, color = TriggerTextPrimary)
+                            } else {
+                                filtered.forEach { (code, name) ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { selectedCountry = Pair(code, name) }
+                                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        RadioButton(
+                                            selected = selectedCountry?.first == code,
+                                            onClick = { selectedCountry = Pair(code, name) },
+                                            colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = TriggerGreenAccent)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("$name ($code)", fontSize = 14.sp, color = TriggerTextPrimary)
+                                    }
+                                }
                             }
                         }
                     }
@@ -932,6 +1157,10 @@ fun ProfileScreen(
                 Button(
                     onClick = {
                         val cc = selectedCountry ?: return@Button
+                        if (countries.isNotEmpty() && countries.none { it.first == cc.first }) {
+                            Toast.makeText(context, "Please select a valid country from the list", Toast.LENGTH_LONG).show()
+                            return@Button
+                        }
                         isCountrySaving = true
                         coroutineScope.launch {
                             val payload = JSONObject().put("country_code", cc.first)
@@ -942,11 +1171,12 @@ fun ProfileScreen(
                                 Toast.makeText(context, "Country saved", Toast.LENGTH_SHORT).show()
                                 showEditCountryDialog = false
                             } else {
-                                Toast.makeText(context, "Failed to save country", Toast.LENGTH_SHORT).show()
+                                val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save country"
+                                Toast.makeText(context, err, Toast.LENGTH_LONG).show()
                             }
                         }
                     },
-                    enabled = !isCountrySaving && selectedCountry != null,
+                    enabled = !isCountrySaving && selectedCountry != null && countries.isNotEmpty(),
                     colors = ButtonDefaults.buttonColors(containerColor = TriggerGreenAccent),
                     shape = RoundedCornerShape(8.dp)
                 ) { SaveButtonContent(isSaving = isCountrySaving) }
@@ -960,16 +1190,25 @@ fun ProfileScreen(
     }
 
     // ------------------------------------------------------------------------
-    // DOB date picker
+    // DOB date picker — enforces age >= 13 and <= 120 via SelectableDates.
     // ------------------------------------------------------------------------
     if (showDatePicker) {
+        // Compute the min selectable date (120 years ago) and max selectable
+        // date (13 years ago). Dates outside this range are greyed out.
+        val calendar = java.util.Calendar.getInstance()
+        val maxSelectable = calendar.clone() as java.util.Calendar
+        maxSelectable.add(java.util.Calendar.YEAR, -MIN_DOB_AGE)
+        val minSelectable = calendar.clone() as java.util.Calendar
+        minSelectable.add(java.util.Calendar.YEAR, -MAX_DOB_AGE)
+
         val datePickerState = rememberDatePickerState(
             initialSelectedDateMillis = profile.dob?.let {
                 try { java.text.SimpleDateFormat("yyyy-MM-dd").parse(it)?.time } catch (_: Exception) { null }
             },
             selectableDates = object : SelectableDates {
                 override fun isSelectableDate(utcTimeMillis: Long): Boolean {
-                    return utcTimeMillis <= System.currentTimeMillis() // no future dates
+                    return utcTimeMillis <= maxSelectable.timeInMillis &&
+                           utcTimeMillis >= minSelectable.timeInMillis
                 }
             }
         )
@@ -981,6 +1220,13 @@ fun ProfileScreen(
                         val millis = datePickerState.selectedDateMillis
                         if (millis != null) {
                             val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(millis))
+                            // Client-side validation (defense in depth — server
+                            // also validates via the edge function + DB CHECK)
+                            val validationError = validateDob(dateStr)
+                            if (validationError != null) {
+                                Toast.makeText(context, validationError, Toast.LENGTH_LONG).show()
+                                return@Button
+                            }
                             isDobSaving = true
                             coroutineScope.launch {
                                 val payload = JSONObject().put("dob", dateStr)
@@ -989,10 +1235,11 @@ fun ProfileScreen(
                                 if (result is SupabaseResult.Success) {
                                     UserRepository.updateDob(dateStr)
                                     Toast.makeText(context, "Date of birth saved", Toast.LENGTH_SHORT).show()
+                                    showDatePicker = false
                                 } else {
-                                    Toast.makeText(context, "Failed to save date of birth", Toast.LENGTH_SHORT).show()
+                                    val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save date of birth"
+                                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
                                 }
-                                showDatePicker = false
                             }
                         }
                     },
@@ -1069,6 +1316,7 @@ fun ProfileDetailItem(
 
 // ============================================================================
 // ProfileEditDialog — generic single-line text editor (used for Name).
+// Supports an optional validator for live client-side validation.
 // ============================================================================
 @Composable
 fun ProfileEditDialog(
@@ -1076,10 +1324,13 @@ fun ProfileEditDialog(
     initialValue: String,
     isSaving: Boolean = false,
     prefix: String? = null,
+    validator: ((String) -> String?)? = null,
+    maxLength: Int = Int.MAX_VALUE,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
     var textValue by remember { mutableStateOf(initialValue) }
+    val liveError = validator?.invoke(textValue)
 
     AlertDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
@@ -1089,29 +1340,46 @@ fun ProfileEditDialog(
             Text(text = title, color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
         },
         text = {
-            OutlinedTextField(
-                value = textValue,
-                onValueChange = { if (!isSaving) textValue = it },
-                prefix = if (prefix != null) {
-                    { Text(prefix, color = TriggerFabGreen, fontWeight = FontWeight.Bold) }
-                } else null,
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = TriggerTextPrimary,
-                    unfocusedTextColor = TriggerTextPrimary,
-                    focusedBorderColor = TriggerGreenAccent,
-                    unfocusedBorderColor = Color(0xFFCFD8DC),
-                    cursorColor = TriggerGreenAccent
-                ),
-                enabled = !isSaving,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Column {
+                OutlinedTextField(
+                    value = textValue,
+                    onValueChange = {
+                        if (!isSaving && it.length <= maxLength) textValue = it
+                    },
+                    prefix = if (prefix != null) {
+                        { Text(prefix, color = TriggerFabGreen, fontWeight = FontWeight.Bold) }
+                    } else null,
+                    singleLine = true,
+                    isError = liveError != null && textValue.isNotBlank(),
+                    supportingText = if (liveError != null && textValue.isNotBlank()) {
+                        { Text(liveError, color = TriggerDanger, fontSize = 12.sp) }
+                    } else null,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TriggerTextPrimary,
+                        unfocusedTextColor = TriggerTextPrimary,
+                        focusedBorderColor = if (liveError != null && textValue.isNotBlank()) TriggerDanger else TriggerGreenAccent,
+                        unfocusedBorderColor = Color(0xFFCFD8DC),
+                        cursorColor = TriggerGreenAccent
+                    ),
+                    enabled = !isSaving,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (maxLength != Int.MAX_VALUE) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "${textValue.length}/$maxLength",
+                        fontSize = 12.sp,
+                        color = if (textValue.length >= maxLength) TriggerDanger else TriggerTextSecondary,
+                        modifier = Modifier.align(Alignment.End)
+                    )
+                }
+            }
         },
         confirmButton = {
             Button(
-                onClick = { onConfirm(textValue) },
-                enabled = !isSaving && textValue.isNotBlank(),
+                onClick = { onConfirm(textValue.trim()) },
+                enabled = !isSaving && textValue.isNotBlank() && liveError == null,
                 colors = ButtonDefaults.buttonColors(containerColor = TriggerGreenAccent),
                 shape = RoundedCornerShape(8.dp)
             ) {
@@ -1359,13 +1627,16 @@ fun LinksEditDialog(
     var newName by remember { mutableStateOf("") }
     var newUrl by remember { mutableStateOf("") }
 
-    val urlValid = newUrl.startsWith("http://") || newUrl.startsWith("https://")
-    val urlError = if (newUrl.isEmpty() || urlValid) null else "Must start with http:// or https://"
+    // Use the shared validateUrl function for thorough URL validation
+    // (checks protocol, hostname, length).
+    val urlError = if (newUrl.isEmpty()) null else validateUrl(newUrl)
+    val nameError = if (newName.isEmpty()) null else if (newName.length > MAX_LINK_NAME) "Name too long (max $MAX_LINK_NAME)" else null
     val canAdd = !isSaving &&
         links.size < MAX_LINKS &&
         newName.isNotBlank() &&
         newName.length <= MAX_LINK_NAME &&
-        urlValid
+        urlError == null &&
+        newUrl.isNotBlank()
 
     AlertDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },

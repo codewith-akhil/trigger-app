@@ -24,6 +24,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.di.AppServiceContainer
+import com.example.service.ProfileService
 import com.example.service.supabase.SupabaseResult
 import com.example.ui.components.CustomGboardNumpad
 import com.example.ui.theme.*
@@ -89,6 +90,12 @@ fun EmailOtpVerificationScreen(
                     successMessage = "Email verified successfully!"
                     // Capture the verified OTP code so the reset-password screen can use it
                     onOtpVerified(otpCode)
+                    // Hydrate the profile from the server so name + email
+                    // show on the Profile screen immediately after signup.
+                    // This runs in parallel with the 800ms success delay.
+                    coroutineScope.launch {
+                        ProfileService.refreshFromServer(AppServiceContainer.supabaseClient)
+                    }
                     delay(800)
                     onVerificationSuccess()
                 } else {

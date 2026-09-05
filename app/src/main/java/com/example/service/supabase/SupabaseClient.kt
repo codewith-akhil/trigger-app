@@ -551,7 +551,8 @@ class SupabaseClient(
         bucketName: String,
         fileName: String,
         fileBytes: ByteArray,
-        mimeType: String = "application/octet-stream"
+        mimeType: String = "application/octet-stream",
+        upsert: Boolean = false
     ): SupabaseResult<String> = withContext(Dispatchers.IO) {
         if (!BackendConfig.isSupabaseConfigured) {
             return@withContext SupabaseResult.Error("Supabase is not configured")
@@ -562,13 +563,18 @@ class SupabaseClient(
             val mediaType = mimeType.toMediaType()
             val requestBody = fileBytes.toRequestBody(mediaType)
 
-            val request = Request.Builder()
+            val requestBuilder = Request.Builder()
                 .url("$baseUrl/storage/v1/object/$bucketName/$fileName")
                 .addHeader("apikey", anonKey)
                 .addHeader("Authorization", "Bearer $token")
                 .addHeader("Content-Type", mimeType)
-                .post(requestBody)
-                .build()
+
+            if (upsert) {
+                // x-upsert: true overwrites an existing object at the same path
+                requestBuilder.addHeader("x-upsert", "true")
+            }
+
+            val request = requestBuilder.post(requestBody).build()
 
             val response = httpClient.newCall(request).execute()
             val responseBody = response.body?.string() ?: ""

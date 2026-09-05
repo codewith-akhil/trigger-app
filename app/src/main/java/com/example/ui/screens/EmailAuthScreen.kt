@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.di.AppServiceContainer
 import com.example.model.UserRepository
+import com.example.service.ProfileService
 import com.example.service.supabase.SupabaseResult
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
@@ -83,11 +84,17 @@ fun EmailAuthScreen(
             when (val result = AppServiceContainer.supabaseClient.signInWithPassword(trimmedEmail, password)) {
                 is SupabaseResult.Success -> {
                     val user = result.data.user
+                    // Set the in-memory state immediately so the UI shows
+                    // something while we hydrate from the server.
                     UserRepository.setUser(
                         name = user.fullName ?: trimmedEmail.substringBefore("@"),
                         email = user.email,
                         id = user.id
                     )
+                    // Fetch the full profile (name, about, avatar, gender,
+                    // country, dob, username) from the server so the Profile
+                    // screen shows accurate data.
+                    ProfileService.refreshFromServer(AppServiceContainer.supabaseClient)
                     isLoading = false
                     onLoginSuccess()
                 }
