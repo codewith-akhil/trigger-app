@@ -102,9 +102,9 @@ fun LandingScreen(
                 .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.weight(0.15f))
+            Spacer(modifier = Modifier.weight(1.2f))
 
-            // Center Illustration with balanced geometric circular frame (reduced to 50%)
+            // Center Illustration with balanced geometric circular frame (placed directly above welcome message)
             Box(
                 modifier = Modifier
                     .size(130.dp)
@@ -124,7 +124,7 @@ fun LandingScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.weight(0.2f))
+            Spacer(modifier = Modifier.height(18.dp))
 
             // Welcome Title
             Text(
@@ -196,7 +196,7 @@ fun LandingScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.weight(0.25f))
+            Spacer(modifier = Modifier.weight(1f))
 
             // Agree and continue button (Brand green with white bold text and rounded pill shape)
             Button(
@@ -220,7 +220,7 @@ fun LandingScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(28.dp))
+            Spacer(modifier = Modifier.height(54.dp))
         }
     }
 }
