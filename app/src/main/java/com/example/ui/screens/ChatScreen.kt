@@ -254,7 +254,9 @@ fun ChatScreen(
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .testTag("chat_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             when {
                 selectedIds.isNotEmpty() -> {
@@ -354,7 +356,6 @@ fun ChatScreen(
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .navigationBarsPadding()
                             .clickable { showUnblockDialog = true }
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         shape = RoundedCornerShape(12.dp),
@@ -1238,7 +1239,6 @@ fun ChatVoiceRecordingBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .navigationBarsPadding()
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1336,7 +1336,6 @@ fun ChatComposerBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .navigationBarsPadding()
             .padding(horizontal = 6.dp, vertical = 6.dp),
         verticalAlignment = Alignment.Bottom
     ) {

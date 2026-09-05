@@ -131,45 +131,8 @@ class ChatViewModel(
             messageService.sendMessage(message)
             inputText.value = ""
             replyingTo.value = null
-
-            // Simulated realistic response from contact if connection is online
-            if (connectionState.value != PresenceStatus.OFFLINE) {
-                simulateContactResponse(text)
-            }
-        }
-    }
-
-    private fun simulateContactResponse(incomingPrompt: String) {
-        viewModelScope.launch {
-            delay(1000)
-            presenceService.setContactPresence(contactId, PresenceStatus.TYPING, "typing...")
-
-            delay(1800)
-            presenceService.setContactPresence(contactId, PresenceStatus.ONLINE, "online")
-
-            val replyText = when {
-                incomingPrompt.contains("?", ignoreCase = true) -> "Definitely! I'll be there right on time! 😊"
-                incomingPrompt.contains("love", ignoreCase = true) || incomingPrompt.contains("❤️") -> "Love you more! ❤️✨"
-                incomingPrompt.contains("where", ignoreCase = true) -> "Right by the main entrance. Waiting for you!"
-                incomingPrompt.contains("late", ignoreCase = true) -> "No worries at all, take your time! 💕"
-                incomingPrompt.contains("food", ignoreCase = true) || incomingPrompt.contains("eat", ignoreCase = true) -> "Fresh pasta sounds heavenly today 🍝"
-                else -> "Got it! Sounds like a great plan 😊"
-            }
-
-            val replyTime = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
-            val replyMsg = DomainMessage(
-                id = "msg_reply_${System.currentTimeMillis()}",
-                conversationId = contactId,
-                senderId = contactId,
-                senderName = contactName,
-                type = MessageType.TEXT,
-                text = replyText,
-                status = MessageStatus.READ,
-                timestamp = replyTime,
-                timestampMillis = System.currentTimeMillis(),
-                isOutgoing = false
-            )
-            messageService.sendMessage(replyMsg)
+            // NO fake/simulated bot reply — real chat uses Supabase Realtime.
+            // The receiver will see the message via realtime + can reply for real.
         }
     }
 
