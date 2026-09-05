@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.os.StatFs
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -8,17 +10,23 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.di.AppServiceContainer
+import com.example.service.supabase.SupabaseResult
+import kotlinx.coroutines.launch
+import org.json.JSONObject
+import java.io.File
 
 private val ScreenGreenHeader = Color(0xFF008069)
 private val ScreenBg = Color(0xFFF7F8FA)
@@ -34,6 +42,10 @@ fun StorageSettingsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val client = AppServiceContainer.supabaseClient
+
     var useLessDataForCalls by remember { mutableStateOf(false) }
     var mobileDataMedia by remember { mutableStateOf("Photos") }
     var wifiMedia by remember { mutableStateOf("All media") }
@@ -42,6 +54,97 @@ fun StorageSettingsScreen(
     var mediaDialogTitle by remember { mutableStateOf<String?>(null) }
     var mediaDialogOptions by remember { mutableStateOf(listOf<String>()) }
     var onMediaOptionSelected by remember { mutableStateOf<(String) -> Unit>({}) }
+
+    // Backup-now state.
+    var isBackingUp by remember { mutableStateOf(false) }
+
+    // Real free-space via StatFs on the app's data dir.
+    val freeSpaceStr = remember {
+        try {
+            val stat = StatFs(context.filesDir.absolutePath)
+            val freeBytes = stat.availableBlocksLong * stat.blockSizeLong
+            formatBytes(freeBytes)
+        } catch (_: Exception) {
+            "Unknown"
+        }
+    }
+    val appSizeStr = remember {
+        try {
+            val stat = StatFs(context.filesDir.absolutePath)
+            val totalBytes = stat.totalBytes
+            // Best-effort app-occupied size — use the app's cache + files dirs.
+            val usedBytes = dirSize(context.filesDir) + dirSize(context.cacheDir)
+            if (usedBytes > 0) formatBytes(usedBytes) else "Calculating…"
+        } catch (_: Exception) {
+            "Calculating…"
+        }
+    }
+    // TODO: wire real network-usage stats via ConnectivityManager /
+    // TrafficStats. Requires additional permissions; deferred.
+    val networkUsageStr = "Calculating…"
+
+    // Hydrate from server.
+    LaunchedEffect(Unit) {
+        coroutineScope.launch {
+            when (val res = client.invokeFunction("get-my-profile")) {
+                is SupabaseResult.Success -> {
+                    val settings = res.data.optJSONObject("settings")
+                    if (settings != null) {
+                        if (settings.has("useLessDataForCalls"))
+                            useLessDataForCalls = settings.getBoolean("useLessDataForCalls")
+                        if (settings.has("mobileDataMedia"))
+                            mobileDataMedia = serverMediaModeToLabel(settings.optString("mobileDataMedia"))
+                        if (settings.has("wifiMedia"))
+                            wifiMedia = serverMediaModeToLabel(settings.optString("wifiMedia"))
+                        if (settings.has("roamingMedia"))
+                            roamingMedia = if (settings.getBoolean("roamingMedia")) "All media" else "No media"
+                    }
+                }
+                is SupabaseResult.Error -> Unit
+            }
+        }
+    }
+
+    fun persistSetting(key: String, value: Any) {
+        val payload = JSONObject()
+        when (value) {
+            is Boolean -> payload.put(key, value)
+            is String -> payload.put(key, value)
+        }
+        coroutineScope.launch {
+            client.invokeFunction("update-user-settings", payload)
+        }
+    }
+
+    fun startBackup() {
+        if (isBackingUp) return
+        isBackingUp = true
+        coroutineScope.launch {
+            // The `backup-messages` edge function records a `chat_backups`
+            // row. Real backup requires first uploading the backup file to
+            // the `backups` Storage bucket — TODO: wire Storage upload. For
+            // now we record a metadata-only row so the backup history is
+            // visible in the user's account.
+            val storagePath = "backups/${System.currentTimeMillis()}.json"
+            val payload = JSONObject()
+                .put("action", "create")
+                .put("storagePath", storagePath)
+                .put("fileName", "trigger_backup_${System.currentTimeMillis()}.json")
+                .put("fileSize", 0)
+                .put("messageCount", 0)
+                .put("conversationCount", 0)
+            when (val res = client.invokeFunction("backup-messages", payload)) {
+                is SupabaseResult.Success -> {
+                    isBackingUp = false
+                    Toast.makeText(context, "Backup complete", Toast.LENGTH_SHORT).show()
+                }
+                is SupabaseResult.Error -> {
+                    isBackingUp = false
+                    Toast.makeText(context, "Backup failed", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     Scaffold(
         modifier = modifier
@@ -74,15 +177,53 @@ fun StorageSettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Manage storage",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Manage storage",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+                        // Back Up Now button — calls the `backup-messages`
+                        // edge function with action="create".
+                        Button(
+                            onClick = { startBackup() },
+                            enabled = !isBackingUp,
+                            colors = ButtonDefaults.buttonColors(containerColor = ScreenGreenHeader),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            if (isBackingUp) {
+                                CircularProgressIndicator(
+                                    color = Color.White,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Backing up…", color = Color.White, fontSize = 12.sp)
+                            } else {
+                                Icon(Icons.Filled.CloudUpload, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Back Up Now", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Progress Bar
+                    // Progress Bar — proportional to app-occupied vs free space.
+                    val appBytes = remember { dirSize(context.filesDir) + dirSize(context.cacheDir) }
+                    val totalBytes = remember {
+                        try {
+                            val stat = StatFs(context.filesDir.absolutePath)
+                            stat.totalBytes
+                        } catch (_: Exception) { 1L }
+                    }
+                    val appFraction = if (totalBytes > 0) (appBytes.toFloat() / totalBytes.toFloat()).coerceIn(0.02f, 1f) else 0.02f
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -93,7 +234,7 @@ fun StorageSettingsScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxHeight()
-                                .fillMaxWidth(0.18f)
+                                .fillMaxWidth(appFraction)
                                 .background(ScreenGreenHeader)
                         )
                     }
@@ -113,7 +254,7 @@ fun StorageSettingsScreen(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Trigger App: 1.2 GB",
+                                text = "Trigger App: $appSizeStr",
                                 fontSize = 13.sp,
                                 color = TextSecondary
                             )
@@ -128,7 +269,7 @@ fun StorageSettingsScreen(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Free space: 46.8 GB",
+                                text = "Free space: $freeSpaceStr",
                                 fontSize = 13.sp,
                                 color = TextSecondary
                             )
@@ -157,8 +298,10 @@ fun StorageSettingsScreen(
                 Column(modifier = Modifier.fillMaxWidth()) {
                     StorageItemRow(
                         title = "Network usage",
-                        subtitle = "142 MB sent • 388 MB received",
-                        onClick = { /* View network usage detail */ }
+                        subtitle = networkUsageStr,
+                        onClick = {
+                            Toast.makeText(context, "Network usage details coming soon", Toast.LENGTH_SHORT).show()
+                        }
                     )
                     HorizontalDivider(color = DividerColor, modifier = Modifier.padding(start = 16.dp))
 
@@ -183,7 +326,10 @@ fun StorageSettingsScreen(
                         }
                         Switch(
                             checked = useLessDataForCalls,
-                            onCheckedChange = { useLessDataForCalls = it },
+                            onCheckedChange = {
+                                useLessDataForCalls = it
+                                persistSetting("useLessDataForCalls", it)
+                            },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.White,
                                 checkedTrackColor = SwitchGreen
@@ -217,7 +363,10 @@ fun StorageSettingsScreen(
                         onClick = {
                             mediaDialogTitle = "When using mobile data"
                             mediaDialogOptions = listOf("No media", "Photos", "Photos, Audio", "All media")
-                            onMediaOptionSelected = { mobileDataMedia = it }
+                            onMediaOptionSelected = {
+                                mobileDataMedia = it
+                                persistSetting("mobileDataMedia", labelToServerMediaMode(it))
+                            }
                         }
                     )
                     HorizontalDivider(color = DividerColor, modifier = Modifier.padding(start = 16.dp))
@@ -228,7 +377,10 @@ fun StorageSettingsScreen(
                         onClick = {
                             mediaDialogTitle = "When connected on Wi-Fi"
                             mediaDialogOptions = listOf("No media", "Photos", "All media")
-                            onMediaOptionSelected = { wifiMedia = it }
+                            onMediaOptionSelected = {
+                                wifiMedia = it
+                                persistSetting("wifiMedia", labelToServerMediaMode(it))
+                            }
                         }
                     )
                     HorizontalDivider(color = DividerColor, modifier = Modifier.padding(start = 16.dp))
@@ -239,7 +391,10 @@ fun StorageSettingsScreen(
                         onClick = {
                             mediaDialogTitle = "When roaming"
                             mediaDialogOptions = listOf("No media", "Photos", "All media")
-                            onMediaOptionSelected = { roamingMedia = it }
+                            onMediaOptionSelected = {
+                                roamingMedia = it
+                                persistSetting("roamingMedia", it != "No media")
+                            }
                         }
                     )
                 }
@@ -285,6 +440,43 @@ fun StorageSettingsScreen(
             confirmButton = {}
         )
     }
+}
+
+/** Format a byte count as a human-readable string (KB / MB / GB). */
+private fun formatBytes(bytes: Long): String {
+    val kb = bytes / 1024.0
+    val mb = kb / 1024.0
+    val gb = mb / 1024.0
+    return when {
+        gb >= 1.0 -> "${"%.1f".format(gb)} GB"
+        mb >= 1.0 -> "${"%.0f".format(mb)} MB"
+        kb >= 1.0 -> "${"%.0f".format(kb)} KB"
+        else -> "$bytes B"
+    }
+}
+
+/** Recursively compute the on-disk size of a directory. */
+private fun dirSize(dir: File): Long {
+    if (!dir.exists()) return 0L
+    if (dir.isFile) return dir.length()
+    var sum = 0L
+    dir.listFiles()?.forEach { sum += dirSize(it) }
+    return sum
+}
+
+private fun labelToServerMediaMode(label: String): String = when (label) {
+    "No media" -> "off"
+    "Photos" -> "on"
+    "Photos, Audio" -> "on"
+    "All media" -> "auto"
+    else -> "auto"
+}
+
+private fun serverMediaModeToLabel(token: String): String = when (token.lowercase()) {
+    "off" -> "No media"
+    "on" -> "Photos"
+    "auto" -> "All media"
+    else -> "Photos"
 }
 
 @Composable

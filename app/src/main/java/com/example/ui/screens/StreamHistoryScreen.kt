@@ -7,7 +7,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.di.AppServiceContainer
 import com.example.service.StreamHistoryItem
+import kotlinx.coroutines.launch
 
 private val HeaderGreen = Color(0xFF008069)
 private val DarkBackground = Color(0xFFF7F9FA)
@@ -38,6 +38,14 @@ fun StreamHistoryScreen(
 ) {
     val historyItems by AppServiceContainer.streamScheduleService.streamHistory.collectAsState()
     var selectedFilter by remember { mutableStateOf("All") }
+    val coroutineScope = rememberCoroutineScope()
+
+    // Hydrate from `live_streams` (status=ended, host_id=caller) on entry.
+    LaunchedEffect(Unit) {
+        coroutineScope.launch {
+            AppServiceContainer.streamScheduleService.refreshStreamHistory()
+        }
+    }
 
     val filteredList = remember(historyItems, selectedFilter) {
         when (selectedFilter) {

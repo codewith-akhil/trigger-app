@@ -1,16 +1,21 @@
 package com.example.service
 
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.util.Log
+import com.example.di.AppServiceContainer
 import com.example.model.UserRepository
+import com.example.service.supabase.SupabaseResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 enum class StreamPricingType {
     FREE, PAID
@@ -86,8 +91,14 @@ class StreamScheduleService(
     private val _streamHistory = MutableStateFlow<List<StreamHistoryItem>>(emptyList())
     val streamHistory: StateFlow<List<StreamHistoryItem>> = _streamHistory.asStateFlow()
 
+    private val client get() = AppServiceContainer.supabaseClient
+
     /**
-     * Schedules a new stream and dispatches both Push and Email notifications.
+     * Schedules a new stream: updates the in-memory list, dispatches the
+     * `send-stream-scheduled-email` edge function to email the host, and
+     * inserts a row into the `scheduled_streams` Supabase table so the
+     * `cron-auto-start-streams` edge function can auto-promote it to live at
+     * the scheduled time.
      */
     fun scheduleStream(
         context: Context,
@@ -105,6 +116,7 @@ class StreamScheduleService(
         val userProfile = UserRepository.profile.value
         val hostName = userProfile.name
         val hostEmail = userProfile.email
+        val hostId = userProfile.id
 
         val streamId = "sch_${System.currentTimeMillis()}"
         val shareLink = "https://triggerapp.com/stream/$streamId"
@@ -143,13 +155,45 @@ class StreamScheduleService(
             )
         }
 
-        // 2. Production Email Notification to Registered Email
-        if (sendEmail) {
-            dispatchScheduledStreamEmail(
-                context = context,
-                recipientEmail = hostEmail,
-                stream = newStream
-            )
+        // 2. Insert into `scheduled_streams` table so cron-auto-start-streams
+        // can promote it to a live_streams row at the scheduled time.
+        scope.launch {
+            val scheduledAtIso = buildScheduledAtIso(date, time)
+            val row = JSONObject()
+                .put("id", streamId)
+                .put("host_id", hostId)
+                .put("host_email", hostEmail)
+                .put("host_name", hostName)
+                .put("title", title)
+                .put("category", category)
+                .put("scheduled_at", scheduledAtIso)
+                .put("slot_limit", slotLimit)
+                .put("pricing_type", if (type == StreamPricingType.PAID) "PAID" else "FREE")
+                .put("amount", amount)
+                .put("currency", currency)
+                .put("share_link", shareLink)
+            when (val res = client.upsertRecord("scheduled_streams", row, onConflict = "id")) {
+                is SupabaseResult.Success -> Log.i(TAG, "scheduled_streams row inserted: $streamId")
+                is SupabaseResult.Error -> Log.e(TAG, "scheduled_streams insert failed: ${res.message}")
+            }
+
+            // 3. Email notification via edge function (was previously
+            // constructed but never actually sent).
+            if (sendEmail) {
+                val emailPayload = JSONObject()
+                    .put("hostEmail", hostEmail)
+                    .put("hostName", hostName)
+                    .put("streamTitle", title)
+                    .put("category", category)
+                    .put("scheduledDateTime", "$date at $time")
+                    .put("slotInfo", if (slotLimit.equals("ANY", ignoreCase = true)) "Unlimited" else "$slotLimit attendees")
+                    .put("pricingBadge", newStream.priceDisplay)
+                    .put("shareLink", shareLink)
+                when (val res = client.invokeFunction("send-stream-scheduled-email", emailPayload)) {
+                    is SupabaseResult.Success -> Log.i(TAG, "send-stream-scheduled-email dispatched to $hostEmail")
+                    is SupabaseResult.Error -> Log.e(TAG, "send-stream-scheduled-email failed: ${res.message}")
+                }
+            }
         }
 
         Log.i(TAG, "Stream scheduled successfully: ${newStream.id} by $hostEmail")
@@ -202,96 +246,156 @@ class StreamScheduleService(
             attendeeName = userName
         )
 
-        // Email notification to both attendee and host
+        // Email notification to both attendee and host via edge function.
         dispatchBookingConfirmationEmail(
-            context = context,
             attendeeEmail = userEmail,
-            stream = updatedStream,
-            userName = userName
+            attendeeName = userName,
+            stream = updatedStream
         )
 
         return Result.success(updatedStream)
     }
 
     /**
-     * Dispatches official email notifications for the scheduled stream.
+     * Dispatches booking confirmation email via the
+     * `send-booking-confirmation-email` edge function (was previously a
+     * `Log.i` placeholder).
      */
-    private fun dispatchScheduledStreamEmail(
-        context: Context,
-        recipientEmail: String,
+    private fun dispatchBookingConfirmationEmail(
+        attendeeEmail: String,
+        attendeeName: String,
         stream: ScheduledStream
     ) {
         scope.launch {
-            try {
-                val subject = "📡 Stream Scheduled: ${stream.title} on Trigger App"
-                val body = buildString {
-                    appendLine("Hello ${stream.hostName},")
-                    appendLine()
-                    appendLine("Your live stream has been successfully scheduled on Trigger App!")
-                    appendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                    appendLine("📌 Stream Title: ${stream.title}")
-                    appendLine("🏷️ Category: ${stream.category}")
-                    appendLine("📅 Date: ${stream.date}")
-                    appendLine("⏰ Time: ${stream.time}")
-                    appendLine("👥 Slot Capacity: ${if (stream.isUnlimitedSlots) "Unlimited (ANY)" else "${stream.slotLimit} Attendees"}")
-                    appendLine("💰 Access Type: ${if (stream.type == StreamPricingType.PAID) "Paid (${stream.priceDisplay})" else "Free"}")
-                    appendLine("🔗 Direct Invite Link: ${stream.shareLink}")
-                    appendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                    appendLine()
-                    appendLine("Host Instructions:")
-                    appendLine("1. Please be ready 5 minutes prior to the broadcast.")
-                    appendLine("2. Use the 'Go Live' button inside Trigger App to begin streaming.")
-                    appendLine("3. Realtime Agora WebRTC 4.x will transmit high-definition video with low latency.")
-                    appendLine()
-                    appendLine("Thank you for broadcasting with Trigger App!")
-                    appendLine("Support: info@triggerapp.com")
-                }
-
-                // Launch real Android mail client with prefilled details
-                val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
-                    data = Uri.parse("mailto:")
-                    putExtra(Intent.EXTRA_EMAIL, arrayOf(recipientEmail))
-                    putExtra(Intent.EXTRA_SUBJECT, subject)
-                    putExtra(Intent.EXTRA_TEXT, body)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-
-                Log.i(TAG, "Dispatched scheduled stream email to: $recipientEmail")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error formatting email: ${e.message}")
+            val payload = JSONObject()
+                .put("attendeeEmail", attendeeEmail)
+                .put("attendeeName", attendeeName)
+                .put("hostEmail", stream.hostEmail)
+                .put("hostName", stream.hostName)
+                .put("streamTitle", stream.title)
+                .put("scheduledDateTime", "${stream.date} at ${stream.time}")
+                .put("pricingBadge", stream.priceDisplay)
+                .put("shareLink", stream.shareLink)
+            when (val res = client.invokeFunction("send-booking-confirmation-email", payload)) {
+                is SupabaseResult.Success -> Log.i(TAG, "Booking email dispatched to $attendeeEmail & host ${stream.hostEmail}")
+                is SupabaseResult.Error -> Log.e(TAG, "send-booking-confirmation-email failed: ${res.message}")
             }
         }
     }
 
     /**
-     * Dispatches booking confirmation email to joined attendee and streamer.
+     * Hydrates [_streamHistory] from the `live_streams` table (status=ended
+     * rows for the current host). Called from StreamHistoryScreen's
+     * LaunchedEffect.
      */
-    private fun dispatchBookingConfirmationEmail(
-        context: Context,
-        attendeeEmail: String,
-        stream: ScheduledStream,
-        userName: String
-    ) {
-        scope.launch {
-            try {
-                val subject = "🎟️ Booking Confirmed: ${stream.title}"
-                val body = buildString {
-                    appendLine("Hi $userName,")
-                    appendLine()
-                    appendLine("Your slot has been reserved for the live stream:")
-                    appendLine("Title: ${stream.title}")
-                    appendLine("Host: ${stream.hostName}")
-                    appendLine("Date & Time: ${stream.date} at ${stream.time}")
-                    appendLine("Access: ${stream.priceDisplay}")
-                    appendLine("Stream Link: ${stream.shareLink}")
-                    appendLine()
-                    appendLine("You can join the stream directly from the Trigger App dashboard when the host goes live.")
-                    appendLine("Need assistance? Contact info@triggerapp.com")
+    suspend fun refreshStreamHistory() {
+        val userId = UserRepository.profile.value.id
+        if (userId.isBlank()) {
+            // Fall back to no filter — server RLS will scope to caller anyway.
+            return
+        }
+        val query = "select=*&status=eq.ended&host_id=eq.$userId&order=created_at.desc&limit=50"
+        when (val res = client.getTable("live_streams", query)) {
+            is SupabaseResult.Success -> {
+                val list = ArrayList<StreamHistoryItem>(res.data.length())
+                for (i in 0 until res.data.length()) {
+                    val row = res.data.getJSONObject(i)
+                    val type = if (row.optString("pricing_type", "FREE").equals("PAID", true)) "PAID" else "FREE"
+                    val revenue = row.optDouble("revenue", row.optDouble("total_revenue", 0.0))
+                    val attendeesCount = row.optInt("peak_viewers", row.optInt("attendees_count", 0))
+                    val peakViewers = row.optInt("peak_viewers", attendeesCount)
+                    list += StreamHistoryItem(
+                        id = row.optString("id", "hist_${System.currentTimeMillis()}_$i"),
+                        title = row.optString("title", "Untitled Stream"),
+                        hostName = row.optString("host_name", row.optString("streamer_name", "")),
+                        date = row.optString("started_at", row.optString("created_at", "")),
+                        duration = formatDurationSeconds(row.optInt("duration_seconds", row.optInt("duration", 0))),
+                        peakViewers = peakViewers,
+                        type = type,
+                        revenue = revenue,
+                        currency = row.optString("currency", "USD (\$)"),
+                        attendeesCount = attendeesCount,
+                        status = row.optString("status", "ended").replaceFirstChar { it.uppercase() }
+                    )
                 }
-                Log.i(TAG, "Booking email prepared for $attendeeEmail & host ${stream.hostEmail}")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending booking email: ${e.message}")
+                _streamHistory.value = list
             }
+            is SupabaseResult.Error -> Log.w(TAG, "refreshStreamHistory failed: ${res.message}")
         }
     }
+
+    /**
+     * Hydrates [_scheduledStreams] from the `scheduled_streams` table for the
+     * current host.
+     */
+    suspend fun refreshScheduledStreams() {
+        val userId = UserRepository.profile.value.id
+        if (userId.isBlank()) return
+        val query = "select=*&host_id=eq.$userId&order=scheduled_at.desc&limit=50"
+        when (val res = client.getTable("scheduled_streams", query)) {
+            is SupabaseResult.Success -> {
+                val list = ArrayList<ScheduledStream>(res.data.length())
+                for (i in 0 until res.data.length()) {
+                    val row = res.data.getJSONObject(i)
+                    val slotLimit = row.optString("slot_limit", "50")
+                    val pricingType = if (row.optString("pricing_type", "FREE").equals("PAID", true))
+                        StreamPricingType.PAID else StreamPricingType.FREE
+                    val scheduledAt = row.optString("scheduled_at", "")
+                    list += ScheduledStream(
+                        id = row.optString("id", "sch_${System.currentTimeMillis()}_$i"),
+                        title = row.optString("title", "Untitled Stream"),
+                        category = row.optString("category", "Tech & Talk"),
+                        hostName = row.optString("host_name", ""),
+                        hostEmail = row.optString("host_email", ""),
+                        date = scheduledAt.take(10),
+                        time = scheduledAt.substringAfter('T', "").take(8),
+                        timestampMillis = parseIsoToMillis(scheduledAt),
+                        slotLimit = slotLimit,
+                        slotsBooked = row.optInt("slots_booked", 0),
+                        type = pricingType,
+                        amount = row.optDouble("amount", 0.0),
+                        currency = row.optString("currency", "USD (\$)"),
+                        shareLink = row.optString("share_link", ""),
+                        isHost = true,
+                        isJoined = false
+                    )
+                }
+                _scheduledStreams.value = list
+            }
+            is SupabaseResult.Error -> Log.w(TAG, "refreshScheduledStreams failed: ${res.message}")
+        }
+    }
+
+    /** Build an ISO-8601 timestamp from the user-selected date + time strings. */
+    private fun buildScheduledAtIso(date: String, time: String): String {
+        return try {
+            val inFmt = SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.US)
+            inFmt.timeZone = TimeZone.getDefault()
+            val outFmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
+            outFmt.timeZone = TimeZone.getDefault()
+            outFmt.format(inFmt.parse("$date $time") ?: Date())
+        } catch (_: Exception) {
+            // Fallback: just emit "now" so the row still gets inserted.
+            val outFmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
+            outFmt.format(Date())
+        }
+    }
+
+    private fun parseIsoToMillis(iso: String): Long {
+        return try {
+            val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
+            sdf.timeZone = TimeZone.getTimeZone("UTC")
+            sdf.parse(iso)?.time ?: System.currentTimeMillis()
+        } catch (_: Exception) {
+            System.currentTimeMillis()
+        }
+    }
+
+    private fun formatDurationSeconds(seconds: Int): String {
+        if (seconds <= 0) return "0 min"
+        val mins = seconds / 60
+        val secs = seconds % 60
+        return if (mins > 0) "$mins min $secs sec" else "$secs sec"
+    }
 }
+

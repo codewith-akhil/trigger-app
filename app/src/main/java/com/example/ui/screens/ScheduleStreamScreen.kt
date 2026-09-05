@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -36,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import com.example.di.AppServiceContainer
 import com.example.model.UserRepository
 import com.example.service.StreamPricingType
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -56,6 +56,7 @@ fun ScheduleStreamScreen(
 ) {
     val context = LocalContext.current
     val userProfile by UserRepository.profile.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
 
     var streamName by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("Tech & Dev") }
@@ -82,9 +83,12 @@ fun ScheduleStreamScreen(
     var selectedCurrency by remember { mutableStateOf("USD ($)") }
     var currencyDropdownExpanded by remember { mutableStateOf(false) }
 
-    // Generated Link Preview
-    val previewStreamId = remember { "sch_${System.currentTimeMillis() % 100000}" }
-    val shareLink = "https://triggerapp.com/stream/$previewStreamId"
+    // Link preview is a placeholder until the stream is actually scheduled —
+    // the real stream id (`sch_${System.currentTimeMillis()}`, no modulo) is
+    // generated inside StreamScheduleService.scheduleStream on submit. The
+    // success dialog already shows the correct shareLink from the returned
+    // ScheduledStream, so we just use a static placeholder here.
+    val shareLink = "https://triggerapp.com/stream/(generated on submit)"
 
     // Notifications configuration
     var sendPushNotification by remember { mutableStateOf(true) }
@@ -297,7 +301,10 @@ fun ScheduleStreamScreen(
                                         now.get(Calendar.YEAR),
                                         now.get(Calendar.MONTH),
                                         now.get(Calendar.DAY_OF_MONTH)
-                                    ).show()
+                                    ).apply {
+                                        // Prevent past dates.
+                                        datePicker.minDate = System.currentTimeMillis()
+                                    }.show()
                                 }
                                 .padding(12.dp)
                         ) {
@@ -326,6 +333,16 @@ fun ScheduleStreamScreen(
                                             val c = Calendar.getInstance().apply {
                                                 set(Calendar.HOUR_OF_DAY, h)
                                                 set(Calendar.MINUTE, m)
+                                            }
+                                            // If the selected date is today,
+                                            // reject past times — the time
+                                            // picker itself doesn't support
+                                            // minTime, so we validate after
+                                            // selection.
+                                            val today = dateFormat.format(Calendar.getInstance().time)
+                                            if (selectedDate == today && c.before(Calendar.getInstance())) {
+                                                snackbarMessage = "Please pick a future time for today's stream."
+                                                return@TimePickerDialog
                                             }
                                             selectedTime = timeFormat.format(c.time)
                                         },
@@ -697,24 +714,34 @@ fun ScheduleStreamScreen(
                         return@Button
                     }
 
+                    // Wrap in a coroutine so the isSubmitting spinner actually
+                    // renders (scheduleStream fires the server inserts in a
+                    // scope.launch internally; we still want the spinner to
+                    // show while the synchronous portion runs + briefly so
+                    // the user sees feedback).
                     isSubmitting = true
-
-                    val scheduled = AppServiceContainer.streamScheduleService.scheduleStream(
-                        context = context,
-                        title = streamName.trim(),
-                        category = selectedCategory,
-                        date = selectedDate,
-                        time = selectedTime,
-                        slotLimit = selectedSlot,
-                        type = streamType,
-                        amount = if (streamType == StreamPricingType.PAID) amount else 0.0,
-                        currency = selectedCurrency,
-                        sendEmail = sendEmailNotification,
-                        sendPush = sendPushNotification
-                    )
-
-                    isSubmitting = false
-                    showSuccessDialog = true
+                    coroutineScope.launch {
+                        try {
+                            AppServiceContainer.streamScheduleService.scheduleStream(
+                                context = context,
+                                title = streamName.trim(),
+                                category = selectedCategory,
+                                date = selectedDate,
+                                time = selectedTime,
+                                slotLimit = selectedSlot,
+                                type = streamType,
+                                amount = if (streamType == StreamPricingType.PAID) amount else 0.0,
+                                currency = selectedCurrency,
+                                sendEmail = sendEmailNotification,
+                                sendPush = sendPushNotification
+                            )
+                            isSubmitting = false
+                            showSuccessDialog = true
+                        } catch (e: Exception) {
+                            isSubmitting = false
+                            snackbarMessage = "Failed to schedule stream: ${e.message ?: "unknown error"}"
+                        }
+                    }
                 },
                 modifier = Modifier
                     .fillMaxWidth()

@@ -10,7 +10,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,6 +27,7 @@ import com.example.di.AppServiceContainer
 import com.example.service.BankDetails
 import com.example.service.PayoutDetails
 import com.example.service.WalletTransaction
+import kotlinx.coroutines.launch
 
 private val HeaderGreen = Color(0xFF008069)
 private val DarkBackground = Color(0xFFF7F9FA)
@@ -44,6 +44,7 @@ fun WalletScreen(
     modifier: Modifier = Modifier
 ) {
     val walletService = AppServiceContainer.walletService
+    val coroutineScope = rememberCoroutineScope()
 
     val balance by walletService.availableBalance.collectAsState()
     val pending by walletService.pendingBalance.collectAsState()
@@ -56,6 +57,11 @@ fun WalletScreen(
     var showEditBankDialog by remember { mutableStateOf(false) }
     var showEditPayoutDialog by remember { mutableStateOf(false) }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
+
+    // Hydrate balance + transactions from the server on entry.
+    LaunchedEffect(Unit) {
+        coroutineScope.launch { walletService.refreshFromServer() }
+    }
 
     Scaffold(
         modifier = modifier
@@ -319,8 +325,35 @@ fun WalletScreen(
             }
 
             // Transactions List
-            items(transactions, key = { it.id }) { tx ->
-                TransactionCard(tx)
+            if (transactions.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 48.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Filled.ReceiptLong,
+                                contentDescription = null,
+                                tint = Color(0xFFCBD5E1),
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "No transactions yet",
+                                fontSize = 14.sp,
+                                color = TextSub,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            } else {
+                items(transactions, key = { it.id }) { tx ->
+                    TransactionCard(tx)
+                }
             }
         }
     }
@@ -333,12 +366,14 @@ fun WalletScreen(
             payoutDetails = payoutDetails,
             onDismiss = { showWithdrawDialog = false },
             onConfirmWithdraw = { amount, dest ->
-                val result = walletService.withdraw(amount, dest)
                 showWithdrawDialog = false
-                if (result.isSuccess) {
-                    snackbarMessage = "Withdrawal of $${"%.2f".format(amount)} initiated to $dest!"
-                } else {
-                    snackbarMessage = result.exceptionOrNull()?.message ?: "Withdrawal failed"
+                coroutineScope.launch {
+                    val result = walletService.withdraw(amount, dest)
+                    if (result.isSuccess) {
+                        snackbarMessage = "Withdrawal of $${"%.2f".format(amount)} initiated to $dest!"
+                    } else {
+                        snackbarMessage = result.exceptionOrNull()?.message ?: "Withdrawal failed"
+                    }
                 }
             }
         )
@@ -350,9 +385,12 @@ fun WalletScreen(
             current = bankDetails,
             onDismiss = { showEditBankDialog = false },
             onSave = { name, bank, acct, ifsc, swift ->
-                walletService.updateBankDetails(name, bank, acct, ifsc, swift)
-                showEditBankDialog = false
-                snackbarMessage = "Bank account details updated successfully!"
+                coroutineScope.launch {
+                    val ok = walletService.updateBankDetails(name, bank, acct, ifsc, swift)
+                    showEditBankDialog = false
+                    snackbarMessage = if (ok) "Bank account details updated successfully!"
+                        else "Failed to update bank details — please try again."
+                }
             }
         )
     }
@@ -363,9 +401,12 @@ fun WalletScreen(
             current = payoutDetails,
             onDismiss = { showEditPayoutDialog = false },
             onSave = { method, upi, paypal ->
-                walletService.updatePayoutDetails(method, upi, paypal)
-                showEditPayoutDialog = false
-                snackbarMessage = "Payout details updated successfully!"
+                coroutineScope.launch {
+                    val ok = walletService.updatePayoutDetails(method, upi, paypal)
+                    showEditPayoutDialog = false
+                    snackbarMessage = if (ok) "Payout details updated successfully!"
+                        else "Failed to update payout details — please try again."
+                }
             }
         )
     }
@@ -443,14 +484,28 @@ fun WithdrawDialog(
     onConfirmWithdraw: (Double, String) -> Unit
 ) {
     var amountText by remember { mutableStateOf("") }
-    var selectedDestination by remember { mutableStateOf("${bankDetails.bankName} (${bankDetails.accountNumber})") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    val destinations = listOf(
-        "${bankDetails.bankName} (${bankDetails.accountNumber})",
-        "UPI: ${payoutDetails.upiId}",
-        "PayPal: ${payoutDetails.paypalEmail}"
-    )
+    // Build the destination list from the user's actual configured bank /
+    // payout details. Each entry pairs a display string with the server-
+    // accepted destination token ("Bank" | "UPI" | "PayPal").
+    val destinations = remember(bankDetails, payoutDetails) {
+        buildList {
+            if (bankDetails.accountNumber.isNotBlank()) {
+                add("Bank" to "Bank: ${bankDetails.bankName} (${bankDetails.accountNumber})")
+            }
+            if (payoutDetails.upiId.isNotBlank()) {
+                add("UPI" to "UPI: ${payoutDetails.upiId}")
+            }
+            if (payoutDetails.paypalEmail.isNotBlank()) {
+                add("PayPal" to "PayPal: ${payoutDetails.paypalEmail}")
+            }
+        }
+    }
+    var selectedDestination by remember(destinations) {
+        mutableStateOf(destinations.firstOrNull()?.first ?: "")
+    }
+    val hasAnyDestination = destinations.isNotEmpty()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -475,6 +530,7 @@ fun WithdrawDialog(
                     placeholder = { Text("e.g. 100.00") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     shape = RoundedCornerShape(10.dp),
+                    enabled = hasAnyDestination,
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -482,21 +538,43 @@ fun WithdrawDialog(
                 Text("Select Destination:", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextMain)
                 Spacer(modifier = Modifier.height(4.dp))
 
-                destinations.forEach { dest ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { selectedDestination = dest }
-                            .padding(vertical = 4.dp)
+                if (!hasAnyDestination) {
+                    // No bank account / payout details configured.
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFFFFF8E1),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        RadioButton(
-                            selected = selectedDestination == dest,
-                            onClick = { selectedDestination = dest },
-                            colors = RadioButtonDefaults.colors(selectedColor = HeaderGreen)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(dest, fontSize = 12.sp, color = TextMain)
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.AccountBalance, contentDescription = null, tint = Color(0xFFF57C00), modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Add a bank account or payout method to withdraw funds.",
+                                fontSize = 12.sp,
+                                color = TextMain
+                            )
+                        }
+                    }
+                } else {
+                    destinations.forEach { (token, display) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedDestination = token }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            RadioButton(
+                                selected = selectedDestination == token,
+                                onClick = { selectedDestination = token },
+                                colors = RadioButtonDefaults.colors(selectedColor = HeaderGreen)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(display, fontSize = 12.sp, color = TextMain)
+                        }
                     }
                 }
 
@@ -518,8 +596,13 @@ fun WithdrawDialog(
                         errorMessage = "Amount exceeds available balance ($${"%.2f".format(availableBalance)})."
                         return@Button
                     }
+                    if (selectedDestination.isBlank()) {
+                        errorMessage = "Please add a bank account or payout method first."
+                        return@Button
+                    }
                     onConfirmWithdraw(amt, selectedDestination)
                 },
+                enabled = hasAnyDestination,
                 colors = ButtonDefaults.buttonColors(containerColor = HeaderGreen)
             ) {
                 Text("Confirm Withdrawal", color = Color.White)
@@ -545,6 +628,17 @@ fun EditBankDetailsDialog(
     var ifsc by remember { mutableStateOf(current.ifscOrRouting) }
     var swift by remember { mutableStateOf(current.swiftCode) }
 
+    // Client-side validation mirroring the server-side `update-bank-details`
+    // edge function (account_holder_name 1-100, bankName 1-100, accountNumber
+    // 6-20 digits, ifscOrRouting max 20, swiftCode max 11).
+    val accountNumberRegex = Regex("^\\d{6,20}$")
+    val isNameValid = name.trim().length in 1..100
+    val isBankValid = bank.trim().length in 1..100
+    val isAcctValid = accountNumberRegex.matches(acct.trim())
+    val isIfscValid = ifsc.trim().length <= 20
+    val isSwiftValid = swift.trim().length <= 11
+    val isFormValid = isNameValid && isBankValid && isAcctValid && isIfscValid && isSwiftValid
+
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Color.White,
@@ -559,6 +653,10 @@ fun EditBankDetailsDialog(
                     onValueChange = { name = it },
                     label = { Text("Account Holder Name") },
                     singleLine = true,
+                    isError = name.isNotEmpty() && !isNameValid,
+                    supportingText = if (name.isNotEmpty() && !isNameValid) {
+                        { Text("Name is required (max 100 chars)", color = RedAlert, fontSize = 11.sp) }
+                    } else null,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
@@ -566,39 +664,46 @@ fun EditBankDetailsDialog(
                     onValueChange = { bank = it },
                     label = { Text("Bank Name") },
                     singleLine = true,
+                    isError = bank.isNotEmpty() && !isBankValid,
+                    supportingText = if (bank.isNotEmpty() && !isBankValid) {
+                        { Text("Bank name is required (max 100 chars)", color = RedAlert, fontSize = 11.sp) }
+                    } else null,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = acct,
-                    onValueChange = { acct = it },
-                    label = { Text("Account Number") },
+                    onValueChange = { acct = it.filter { ch -> ch.isDigit() } },
+                    label = { Text("Account Number (6-20 digits)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    isError = acct.isNotEmpty() && !isAcctValid,
+                    supportingText = if (acct.isNotEmpty() && !isAcctValid) {
+                        { Text("Account number must be 6-20 digits", color = RedAlert, fontSize = 11.sp) }
+                    } else null,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = ifsc,
-                    onValueChange = { ifsc = it },
-                    label = { Text("IFSC / Routing Code") },
+                    onValueChange = { ifsc = it.take(20) },
+                    label = { Text("IFSC / Routing Code (max 20)") },
                     singleLine = true,
+                    isError = ifsc.length > 20,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = swift,
-                    onValueChange = { swift = it },
-                    label = { Text("SWIFT / BIC Code (Optional)") },
+                    onValueChange = { swift = it.take(11) },
+                    label = { Text("SWIFT / BIC Code (Optional, max 11)") },
                     singleLine = true,
+                    isError = swift.length > 11,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
         },
         confirmButton = {
             Button(
-                onClick = {
-                    if (name.isNotBlank() && acct.isNotBlank()) {
-                        onSave(name, bank, acct, ifsc, swift)
-                    }
-                },
+                onClick = { onSave(name.trim(), bank.trim(), acct.trim(), ifsc.trim(), swift.trim()) },
+                enabled = isFormValid,
                 colors = ButtonDefaults.buttonColors(containerColor = HeaderGreen)
             ) {
                 Text("Save Details", color = Color.White)
@@ -618,9 +723,19 @@ fun EditPayoutDetailsDialog(
     onDismiss: () -> Unit,
     onSave: (String, String, String) -> Unit
 ) {
-    var primary by remember { mutableStateOf(current.primaryMethod) }
+    var primary by remember { mutableStateOf(current.primaryMethod.ifBlank { "Bank Transfer" }) }
     var upi by remember { mutableStateOf(current.upiId) }
     var paypal by remember { mutableStateOf(current.paypalEmail) }
+
+    // Client-side validation mirroring the server-side
+    // `update-payout-details` edge function: UPI VPA must match
+    // `^[a-z0-9.\-_]{2,30}@[a-z]{2,20}$`, PayPal must be a valid email.
+    val upiRegex = Regex("^[a-z0-9.\\-_]{2,30}@[a-z]{2,20}$")
+    val emailRegex = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
+    val isUpiValid = upi.isBlank() || upiRegex.matches(upi.trim().lowercase())
+    val isPaypalValid = paypal.isBlank() || emailRegex.matches(paypal.trim())
+    val isPrimaryValid = primary.isNotBlank()
+    val isFormValid = isUpiValid && isPaypalValid && isPrimaryValid
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -651,6 +766,10 @@ fun EditPayoutDetailsDialog(
                     onValueChange = { upi = it },
                     label = { Text("UPI ID (e.g. name@okhdfcbank)") },
                     singleLine = true,
+                    isError = upi.isNotEmpty() && !isUpiValid,
+                    supportingText = if (upi.isNotEmpty() && !isUpiValid) {
+                        { Text("Invalid UPI VPA format (e.g. name@okhdfcbank)", color = RedAlert, fontSize = 11.sp) }
+                    } else null,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
@@ -658,13 +777,18 @@ fun EditPayoutDetailsDialog(
                     onValueChange = { paypal = it },
                     label = { Text("PayPal Registered Email") },
                     singleLine = true,
+                    isError = paypal.isNotEmpty() && !isPaypalValid,
+                    supportingText = if (paypal.isNotEmpty() && !isPaypalValid) {
+                        { Text("Invalid email format", color = RedAlert, fontSize = 11.sp) }
+                    } else null,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
         },
         confirmButton = {
             Button(
-                onClick = { onSave(primary, upi, paypal) },
+                onClick = { onSave(primary.trim(), upi.trim(), paypal.trim()) },
+                enabled = isFormValid,
                 colors = ButtonDefaults.buttonColors(containerColor = HeaderGreen)
             ) {
                 Text("Save Payouts", color = Color.White)

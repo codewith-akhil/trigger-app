@@ -10,7 +10,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,6 +23,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
+import com.example.di.AppServiceContainer
+import com.example.service.supabase.SupabaseResult
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 private val ScreenGreenHeader = Color(0xFF008069)
 private val ScreenBg = Color(0xFFF7F8FA)
@@ -32,6 +36,7 @@ private val TextPrimary = Color(0xFF111B21)
 private val TextSecondary = Color(0xFF667781)
 private val IconTint = Color(0xFF54656F)
 private val DividerColor = Color(0xFFF0F2F5)
+private val ErrorRed = Color(0xFFD32F2F)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,10 +45,16 @@ fun HelpSettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val client = AppServiceContainer.supabaseClient
+
     var showContactDialog by remember { mutableStateOf(false) }
     var showAppInfoDialog by remember { mutableStateOf(false) }
     var showTermsDialog by remember { mutableStateOf(false) }
     var showSupportSentSnackbar by remember { mutableStateOf(false) }
+
+    val appVersionName = BuildConfig.VERSION_NAME
+    val appVersionCode = BuildConfig.VERSION_CODE
 
     Scaffold(
         modifier = modifier
@@ -197,7 +208,7 @@ fun HelpSettingsScreen(
                     HelpActionRow(
                         icon = Icons.Outlined.Info,
                         title = "App info",
-                        subtitle = "Trigger App v2.4.1",
+                        subtitle = "Trigger App v$appVersionName",
                         onClick = { showAppInfoDialog = true }
                     )
                 }
@@ -208,8 +219,13 @@ fun HelpSettingsScreen(
     // Contact Us Dialog
     if (showContactDialog) {
         var messageText by remember { mutableStateOf("") }
+        var isSending by remember { mutableStateOf(false) }
+        var errorMessage by remember { mutableStateOf<String?>(null) }
+
         AlertDialog(
-            onDismissRequest = { showContactDialog = false },
+            onDismissRequest = {
+                if (!isSending) showContactDialog = false
+            },
             containerColor = Color.White,
             shape = RoundedCornerShape(16.dp),
             title = {
@@ -230,28 +246,64 @@ fun HelpSettingsScreen(
                         minLines = 3,
                         maxLines = 5,
                         shape = RoundedCornerShape(10.dp),
+                        enabled = !isSending,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = ScreenGreenHeader,
                             cursorColor = ScreenGreenHeader
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
+                    errorMessage?.let { err ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(err, color = ErrorRed, fontSize = 12.sp)
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        showContactDialog = false
-                        showSupportSentSnackbar = true
+                        if (isSending) return@Button
+                        isSending = true
+                        errorMessage = null
+                        coroutineScope.launch {
+                            val payload = JSONObject()
+                                .put("message", messageText.trim())
+                                .put("category", "general")
+                            when (val res = client.invokeFunction("create-support-ticket", payload)) {
+                                is SupabaseResult.Success -> {
+                                    isSending = false
+                                    messageText = ""
+                                    showContactDialog = false
+                                    showSupportSentSnackbar = true
+                                }
+                                is SupabaseResult.Error -> {
+                                    isSending = false
+                                    errorMessage = "Failed to send — please try again"
+                                }
+                            }
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = ScreenGreenHeader),
-                    enabled = messageText.isNotBlank()
+                    enabled = messageText.isNotBlank() && !isSending
                 ) {
-                    Text("Send", color = Color.White)
+                    if (isSending) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Sending…", color = Color.White)
+                    } else {
+                        Text("Send", color = Color.White)
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showContactDialog = false }) {
+                TextButton(
+                    onClick = { if (!isSending) showContactDialog = false },
+                    enabled = !isSending
+                ) {
                     Text("Cancel", color = TextSecondary)
                 }
             }
@@ -296,7 +348,7 @@ fun HelpSettingsScreen(
             },
             text = {
                 Column {
-                    Text("Version 2.4.1 (Build 2026.09)", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 14.sp)
+                    Text("Version $appVersionName (Build $appVersionCode)", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 14.sp)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("Agora WebRTC Calling Engine v4.3.0", color = TextSecondary, fontSize = 13.sp)
                     Text("Realtime Local Message Repository", color = TextSecondary, fontSize = 13.sp)

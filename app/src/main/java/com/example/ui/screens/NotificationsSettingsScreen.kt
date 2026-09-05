@@ -6,7 +6,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,6 +15,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.di.AppServiceContainer
+import com.example.service.supabase.SupabaseResult
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 private val ScreenGreenHeader = Color(0xFF008069)
 private val ScreenBg = Color(0xFFF7F8FA)
@@ -31,6 +34,9 @@ fun NotificationsSettingsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val coroutineScope = rememberCoroutineScope()
+    val client = AppServiceContainer.supabaseClient
+
     var conversationTones by remember { mutableStateOf(true) }
     var highPriorityMessages by remember { mutableStateOf(true) }
     var messageTone by remember { mutableStateOf("Default (Trigger Bell)") }
@@ -41,6 +47,49 @@ fun NotificationsSettingsScreen(
     var tonePickerTitle by remember { mutableStateOf<String?>(null) }
     var toneOptions by remember { mutableStateOf(listOf<String>()) }
     var onToneSelected by remember { mutableStateOf<(String) -> Unit>({}) }
+
+    // Hydrate from server: call get-my-profile and look for a `settings`
+    // object. If absent (current edge fn returns only `profile`), defaults
+    // remain — the persistence write side still works via update-user-settings.
+    LaunchedEffect(Unit) {
+        coroutineScope.launch {
+            when (val res = client.invokeFunction("get-my-profile")) {
+                is SupabaseResult.Success -> {
+                    val settings = res.data.optJSONObject("settings")
+                    if (settings != null) {
+                        if (settings.has("conversationTones"))
+                            conversationTones = settings.getBoolean("conversationTones")
+                        if (settings.has("highPriorityMessages"))
+                            highPriorityMessages = settings.getBoolean("highPriorityMessages")
+                        if (settings.has("messageTone"))
+                            messageTone = settings.optString("messageTone", messageTone)
+                        if (settings.has("messageVibrate")) {
+                            // Server stores boolean; UI uses string labels.
+                            messageVibrate = if (settings.getBoolean("messageVibrate")) "Default" else "Off"
+                        }
+                        if (settings.has("groupTone"))
+                            groupTone = settings.optString("groupTone", groupTone)
+                        if (settings.has("callRingtone"))
+                            callRingtone = settings.optString("callRingtone", callRingtone)
+                    }
+                }
+                is SupabaseResult.Error -> Unit
+            }
+        }
+    }
+
+    // Fire-and-forget persistence helper.
+    fun persistSetting(key: String, value: Any) {
+        val payload = JSONObject()
+        when (value) {
+            is Boolean -> payload.put(key, value)
+            is String -> payload.put(key, value)
+            is Number -> payload.put(key, value)
+        }
+        coroutineScope.launch {
+            client.invokeFunction("update-user-settings", payload)
+        }
+    }
 
     Scaffold(
         modifier = modifier
@@ -93,7 +142,10 @@ fun NotificationsSettingsScreen(
                     }
                     Switch(
                         checked = conversationTones,
-                        onCheckedChange = { conversationTones = it },
+                        onCheckedChange = {
+                            conversationTones = it
+                            persistSetting("conversationTones", it)
+                        },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color.White,
                             checkedTrackColor = SwitchGreen
@@ -126,7 +178,10 @@ fun NotificationsSettingsScreen(
                         onClick = {
                             tonePickerTitle = "Message Notification tone"
                             toneOptions = listOf("Default (Trigger Bell)", "Chime", "Whistle", "Silent")
-                            onToneSelected = { messageTone = it }
+                            onToneSelected = {
+                                messageTone = it
+                                persistSetting("messageTone", it)
+                            }
                         }
                     )
                     HorizontalDivider(color = DividerColor, modifier = Modifier.padding(start = 16.dp))
@@ -137,7 +192,11 @@ fun NotificationsSettingsScreen(
                         onClick = {
                             tonePickerTitle = "Vibrate"
                             toneOptions = listOf("Off", "Default", "Short", "Long")
-                            onToneSelected = { messageVibrate = it }
+                            onToneSelected = {
+                                messageVibrate = it
+                                // Server stores boolean; map "Off" → false.
+                                persistSetting("messageVibrate", it != "Off")
+                            }
                         }
                     )
                     HorizontalDivider(color = DividerColor, modifier = Modifier.padding(start = 16.dp))
@@ -163,7 +222,10 @@ fun NotificationsSettingsScreen(
                         }
                         Switch(
                             checked = highPriorityMessages,
-                            onCheckedChange = { highPriorityMessages = it },
+                            onCheckedChange = {
+                                highPriorityMessages = it
+                                persistSetting("highPriorityMessages", it)
+                            },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.White,
                                 checkedTrackColor = SwitchGreen
@@ -197,7 +259,10 @@ fun NotificationsSettingsScreen(
                         onClick = {
                             tonePickerTitle = "Group Notification tone"
                             toneOptions = listOf("Default (Trigger Bell)", "Chime", "Echo", "Silent")
-                            onToneSelected = { groupTone = it }
+                            onToneSelected = {
+                                groupTone = it
+                                persistSetting("groupTone", it)
+                            }
                         }
                     )
                 }
@@ -227,7 +292,10 @@ fun NotificationsSettingsScreen(
                         onClick = {
                             tonePickerTitle = "Call Ringtone"
                             toneOptions = listOf("Trigger Call", "Classic Phone", "Acoustic", "Digital")
-                            onToneSelected = { callRingtone = it }
+                            onToneSelected = {
+                                callRingtone = it
+                                persistSetting("callRingtone", it)
+                            }
                         }
                     )
                 }

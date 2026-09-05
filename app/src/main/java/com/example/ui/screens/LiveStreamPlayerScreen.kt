@@ -140,6 +140,76 @@ fun LiveStreamPlayerScreen(
                         )
                     )
             )
+
+            // Error overlay — surfaces `currentStreamState.errorMessage` when
+            // Agora join fails or `sendComment` errors (was previously never
+            // displayed to the user).
+            currentStreamState.errorMessage?.let { errMsg ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.78f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Error,
+                            contentDescription = null,
+                            tint = Color(0xFFE53935),
+                            modifier = Modifier.size(56.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Stream Error",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = errMsg,
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontSize = 14.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            TextButton(
+                                onClick = {
+                                    // Retry: leave + rejoin the same stream.
+                                    coroutineScope.launch {
+                                        val stream2 = currentStreamState.stream
+                                        if (stream2 != null) {
+                                            liveStreamService.leaveLiveStream()
+                                            liveStreamService.joinLiveStream(stream2)
+                                        }
+                                    }
+                                },
+                                colors = ButtonDefaults.textButtonColors(
+                                    containerColor = Color(0xFF25D366).copy(alpha = 0.18f),
+                                    contentColor = Color(0xFF25D366)
+                                ),
+                                shape = RoundedCornerShape(20.dp)
+                            ) {
+                                Text("Retry", fontWeight = FontWeight.Bold)
+                            }
+                            Button(
+                                onClick = {
+                                    liveStreamService.leaveLiveStream()
+                                    onDismiss()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
+                                shape = RoundedCornerShape(20.dp)
+                            ) {
+                                Text("Leave", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // 2. TOP HEADER
