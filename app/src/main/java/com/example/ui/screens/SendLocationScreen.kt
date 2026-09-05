@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -59,7 +60,7 @@ data class PlaceLocationItem(
 fun SendLocationScreen(
     onBack: () -> Unit,
     onSendLocation: (latitude: Double, longitude: Double, name: String, address: String) -> Unit,
-    onSendLiveLocation: (durationText: String) -> Unit
+    onSendLiveLocation: (durationText: String, comment: String) -> Unit
 ) {
     val context = LocalContext.current
     var hasLocationPermission by remember {
@@ -97,10 +98,13 @@ fun SendLocationScreen(
     var isRefreshing by remember { mutableStateOf(false) }
 
     // Fetch live system location if available
+    val locManager = remember {
+        context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+    }
+
     DisposableEffect(hasLocationPermission) {
         if (hasLocationPermission) {
             try {
-                val locManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
                 val listener = object : LocationListener {
                     override fun onLocationChanged(location: Location) {
                         currentLat = location.latitude
@@ -138,6 +142,30 @@ fun SendLocationScreen(
             }
         } else {
             onDispose {}
+        }
+    }
+
+    // Manual refresh — re-fetches the last known location from the system
+    // location providers. Surfaces a toast so the user knows something happened.
+    fun refreshLocation() {
+        isRefreshing = true
+        Toast.makeText(context, "Refreshing location...", Toast.LENGTH_SHORT).show()
+        try {
+            if (hasLocationPermission) {
+                val lastKnown = locManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                    ?: locManager?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                if (lastKnown != null) {
+                    currentLat = lastKnown.latitude
+                    currentLng = lastKnown.longitude
+                    accuracyMeters = lastKnown.accuracy.toInt().coerceAtLeast(15)
+                }
+            }
+        } catch (e: SecurityException) {
+            // Permission was revoked between launch and tap — ignore.
+        } catch (e: Exception) {
+            // Location service unavailable — ignore.
+        } finally {
+            isRefreshing = false
         }
     }
 
@@ -233,12 +261,7 @@ fun SendLocationScreen(
                             )
                         }
 
-                        IconButton(onClick = {
-                            isRefreshing = true
-                            // brief simulation of location re-fix
-                            accuracyMeters = (15..25).random()
-                            isRefreshing = false
-                        }) {
+                        IconButton(onClick = { refreshLocation() }) {
                             Icon(
                                 imageVector = Icons.Filled.Refresh,
                                 contentDescription = "Refresh",
@@ -257,7 +280,11 @@ fun SendLocationScreen(
                     .height(mapHeight)
                     .background(Color(0xFF141F28))
             ) {
-                // Custom stylized vector map rendering dark Google Maps theme
+                // Custom stylized vector map rendering dark Google Maps theme.
+                // TODO: integrate Google Maps SDK — replace this Canvas mock with a
+                // real GoogleMap composable (com.google.maps.android:maps-compose)
+                // centred on currentLat/currentLng. Currently a hand-drawn vector
+                // approximation; a Google Maps API key + billing project required.
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val w = size.width
                     val h = size.height
@@ -349,9 +376,7 @@ fun SendLocationScreen(
                         .shadow(4.dp, CircleShape)
                         .clip(CircleShape)
                         .background(Color.White)
-                        .clickable {
-                            accuracyMeters = (15..20).random()
-                        },
+                        .clickable { refreshLocation() },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -427,6 +452,20 @@ fun SendLocationScreen(
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 8.dp)
                     )
+                }
+
+                // Empty-state for the nearby-places section. The default places
+                // list is currently empty (no Places API integration); surface
+                // this to the user instead of rendering a bare header.
+                if (filteredPlaces.isEmpty()) {
+                    item {
+                        Text(
+                            text = "No nearby places found",
+                            color = Color(0xFF8696A0),
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
                 }
 
                 // Send your current location
@@ -607,7 +646,7 @@ fun SendLocationScreen(
                         IconButton(
                             onClick = {
                                 showLiveLocationSheet = false
-                                onSendLiveLocation(selectedDuration)
+                                onSendLiveLocation(selectedDuration, commentText.trim())
                             }
                         ) {
                             Icon(

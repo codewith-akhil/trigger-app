@@ -1,6 +1,5 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,8 +27,13 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
+import coil.compose.AsyncImage
+import com.example.di.AppServiceContainer
 import com.example.model.UserRepository
+import com.example.service.supabase.SupabaseResult
+import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 
 private val TriggerLightBg = Color(0xFFFFFFFF)
 private val TriggerGreenHeader = Color(0xFF008069)
@@ -43,6 +47,7 @@ data class SelectContactItem(
     val name: String,
     val subtitle: String? = null,
     val avatarRes: Int? = null,
+    val avatarUrl: String? = null,
     val initialColor: Long = 0xFF1B5E20,
     val isSelf: Boolean = false
 )
@@ -55,20 +60,60 @@ fun SelectContactScreen(
     modifier: Modifier = Modifier
 ) {
     val currentUserProfile by UserRepository.profile.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var showMenu by remember { mutableStateOf(false) }
 
-    val contacts = remember(currentUserProfile) {
-        listOf(
-            SelectContactItem(
-                id = "me_chat",
-                name = currentUserProfile.name.ifEmpty { "You" },
-                subtitle = "Message yourself",
-                initialColor = 0xFF1FA855,
-                isSelf = true
-            )
+    // Real contacts state fetched from the `get-contacts` edge function.
+    var contacts by remember { mutableStateOf<List<SelectContactItem>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var loadError by remember { mutableStateOf(false) }
+
+    // Build the "Message yourself" row that always shows as the first item.
+    val selfItem = remember(currentUserProfile) {
+        SelectContactItem(
+            id = "me_chat",
+            name = currentUserProfile.name.ifEmpty { "You" },
+            subtitle = "Message yourself",
+            initialColor = 0xFF1FA855,
+            isSelf = true
         )
+    }
+
+    // Fetch real contacts from the backend. Called on first launch + on retry.
+    fun loadContacts() {
+        isLoading = true
+        loadError = false
+        coroutineScope.launch {
+            val result = AppServiceContainer.supabaseClient.invokeFunction("get-contacts", JSONObject())
+            isLoading = false
+            if (result is SupabaseResult.Success) {
+                val arr = result.data.optJSONArray("contacts") ?: JSONArray()
+                val list = mutableListOf<SelectContactItem>()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    list.add(
+                        SelectContactItem(
+                            id = obj.getString("id"),
+                            name = obj.getString("full_name"),
+                            subtitle = obj.optString("username", null)?.let { "@$it" },
+                            avatarUrl = obj.optString("avatar_url", null),
+                            initialColor = 0xFF1B5E20
+                        )
+                    )
+                }
+                contacts = list
+                loadError = false
+            } else {
+                loadError = true
+            }
+        }
+    }
+
+    // Initial fetch on screen entry.
+    LaunchedEffect(Unit) {
+        loadContacts()
     }
 
     val filteredContacts = remember(searchQuery, contacts) {
@@ -162,7 +207,7 @@ fun SelectContactScreen(
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "4042 contacts",
+                                    text = "${contacts.size} contacts",
                                     color = Color.White.copy(alpha = 0.8f),
                                     fontSize = 12.sp
                                 )
@@ -180,20 +225,11 @@ fun SelectContactScreen(
                                     modifier = Modifier.background(Color.White)
                                 ) {
                                     DropdownMenuItem(
-                                        text = { Text("Invite a friend", color = TriggerTextPrimary) },
-                                        onClick = { showMenu = false }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Contacts", color = TriggerTextPrimary) },
-                                        onClick = { showMenu = false }
-                                    )
-                                    DropdownMenuItem(
                                         text = { Text("Refresh", color = TriggerTextPrimary) },
-                                        onClick = { showMenu = false }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Help", color = TriggerTextPrimary) },
-                                        onClick = { showMenu = false }
+                                        onClick = {
+                                            showMenu = false
+                                            loadContacts()
+                                        }
                                     )
                                 }
                             }
@@ -227,9 +263,94 @@ fun SelectContactScreen(
                         )
                     }
                 }
+
+                // "Message yourself" is always the first row.
+                item(key = "me_chat") {
+                    SelectContactListItem(
+                        contact = selfItem,
+                        onClick = {
+                            onSelectContact(selfItem.id, selfItem.name, selfItem.avatarRes)
+                        }
+                    )
+                }
             }
 
-            // Contact Items
+            // Loading state
+            if (isLoading && contacts.isEmpty() && !isSearchActive) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = TriggerGreenAccent,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
+            }
+
+            // Error state — tappable to retry
+            if (loadError && contacts.isEmpty() && !isSearchActive) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { loadContacts() }
+                            .padding(24.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = "Retry",
+                            tint = TriggerTextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Failed to load contacts — tap to retry",
+                            color = TriggerTextSecondary,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+            }
+
+            // Empty state — only when not loading, no error, and list is empty
+            if (!isLoading && !loadError && contacts.isEmpty() && !isSearchActive) {
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Person,
+                            contentDescription = null,
+                            tint = TriggerTextSecondary,
+                            modifier = Modifier.size(40.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "No contacts yet",
+                            color = TriggerTextSecondary,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            text = "Use New Message to search for users by username.",
+                            color = TriggerTextSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+
+            // Contact Items (real contacts from `get-contacts`)
             items(filteredContacts, key = { it.id }) { contact ->
                 SelectContactListItem(
                     contact = contact,
@@ -237,6 +358,18 @@ fun SelectContactScreen(
                         onSelectContact(contact.id, contact.name, contact.avatarRes)
                     }
                 )
+            }
+
+            // Empty search results
+            if (isSearchActive && searchQuery.isNotBlank() && filteredContacts.isEmpty()) {
+                item {
+                    Text(
+                        text = "No contacts match \"$searchQuery\"",
+                        color = TriggerTextSecondary,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
             }
         }
     }
@@ -314,27 +447,39 @@ fun SelectContactListItem(
                 .background(Color(contact.initialColor)),
             contentAlignment = Alignment.Center
         ) {
-            if (contact.avatarRes != null) {
-                Image(
-                    painter = painterResource(id = contact.avatarRes),
-                    contentDescription = contact.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else if (contact.isSelf) {
-                Text(
-                    text = contact.name.take(1),
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Filled.Person,
-                    contentDescription = contact.name,
-                    tint = Color.White,
-                    modifier = Modifier.size(26.dp)
-                )
+            when {
+                contact.avatarRes != null -> {
+                    Image(
+                        painter = painterResource(id = contact.avatarRes),
+                        contentDescription = contact.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                contact.avatarUrl != null -> {
+                    AsyncImage(
+                        model = contact.avatarUrl,
+                        contentDescription = contact.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                contact.isSelf -> {
+                    Text(
+                        text = contact.name.take(1),
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp
+                    )
+                }
+                else -> {
+                    Icon(
+                        imageVector = Icons.Filled.Person,
+                        contentDescription = contact.name,
+                        tint = Color.White,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
             }
         }
 

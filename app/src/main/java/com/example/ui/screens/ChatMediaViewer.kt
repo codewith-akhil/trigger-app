@@ -28,7 +28,8 @@ import coil.compose.AsyncImage
 fun ChatMediaViewer(
     message: DomainMessage,
     onClose: () -> Unit,
-    onDelete: () -> Unit = {}
+    onDelete: () -> Unit = {},
+    onShare: () -> Unit = {}
 ) {
     var isVideoPlaying by remember { mutableStateOf(false) }
     var videoProgress by remember { mutableStateOf(0.35f) }
@@ -82,7 +83,10 @@ fun ChatMediaViewer(
                 )
             }
 
-            IconButton(onClick = onClose) {
+            IconButton(onClick = {
+                onShare()
+                onClose()
+            }) {
                 Icon(
                     imageVector = Icons.Filled.Share,
                     contentDescription = "Share",

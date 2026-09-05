@@ -439,18 +439,22 @@ class ChatViewModel(
         }
     }
 
-    fun shareLiveLocation(durationText: String) {
+    fun shareLiveLocation(durationText: String, comment: String = "") {
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
+        val baseText = "Live Location shared ($durationText)"
         val msg = DomainMessage(
             id = java.util.UUID.randomUUID().toString(),
             conversationId = contactId,
             senderId = "me",
             senderName = "You",
             type = MessageType.LOCATION,
-            text = "Live Location shared ($durationText)",
+            text = if (comment.isNotBlank()) "$baseText — $comment" else baseText,
             locationLatitude = 12.0436,
             locationLongitude = 75.3588,
-            locationAddress = "Live • updating ($durationText)",
+            locationAddress = if (comment.isNotBlank())
+                "Live • updating ($durationText) — $comment"
+            else
+                "Live • updating ($durationText)",
             status = MessageStatus.SENDING,
             timestamp = time,
             timestampMillis = System.currentTimeMillis(),

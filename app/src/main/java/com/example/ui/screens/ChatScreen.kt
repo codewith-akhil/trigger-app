@@ -141,17 +141,17 @@ fun ChatScreen(
     val coroutineScope = rememberCoroutineScope()
     val clipboardManager = LocalClipboardManager.current
 
-    // Real Camera capture launcher
+    // Real Camera capture launcher — uses ActivityResultContracts.TakePicture
+    // (full-resolution JPEG via FileProvider URI) instead of the low-res
+    // TakePicturePreview bitmap path. See ProfileScreen.kt for the same pattern.
+    var cameraImageUri by remember { mutableStateOf<Uri?>(null) }
     val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap: Bitmap? ->
-        if (bitmap != null) {
+        contract = ActivityResultContracts.TakePicture()
+    ) { success: Boolean ->
+        val uri = cameraImageUri
+        if (success && uri != null) {
             try {
-                val file = File(context.cacheDir, "camera_${System.currentTimeMillis()}.jpg")
-                file.outputStream().use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
-                }
-                val uri = Uri.fromFile(file)
+                val file = File(context.cacheDir, uri.lastPathSegment ?: "camera_${System.currentTimeMillis()}.jpg")
                 viewModel.selectMediaForPreview(
                     type = MessageType.IMAGE,
                     fileName = file.name,
@@ -164,19 +164,35 @@ fun ChatScreen(
                 e.printStackTrace()
             }
         }
+        cameraImageUri = null
+    }
+
+    fun launchCameraCapture() {
+        try {
+            val photoFile = File(context.cacheDir, "camera_${System.currentTimeMillis()}.jpg")
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                photoFile
+            )
+            cameraImageUri = uri
+            cameraLauncher.launch(uri)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            cameraLauncher.launch(null)
+            launchCameraCapture()
         }
     }
 
     fun launchCamera() {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            cameraLauncher.launch(null)
+            launchCameraCapture()
         } else {
             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
@@ -770,8 +786,8 @@ fun ChatScreen(
                 viewModel.shareLocation(lat, lng, name, address)
                 showSendLocationScreen = false
             },
-            onSendLiveLocation = { durationText ->
-                viewModel.shareLiveLocation(durationText)
+            onSendLiveLocation = { durationText, comment ->
+                viewModel.shareLiveLocation(durationText, comment)
                 showSendLocationScreen = false
             }
         )
@@ -809,6 +825,23 @@ fun ChatScreen(
             onDelete = {
                 viewModel.deleteSelectedForMe()
                 viewModel.activeViewerMessage.value = null
+            },
+            onShare = {
+                val mediaUrl = activeViewerMessage?.mediaUrl
+                if (!mediaUrl.isNullOrEmpty()) {
+                    try {
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = if (activeViewerMessage?.type == MessageType.VIDEO) "video/*"
+                                   else if (activeViewerMessage?.type == MessageType.DOCUMENT) "*/*"
+                                   else "image/*"
+                            putExtra(Intent.EXTRA_STREAM, Uri.parse(mediaUrl))
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(shareIntent, "Share via"))
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
             }
         )
     }

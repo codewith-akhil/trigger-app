@@ -25,7 +25,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.example.R
 import com.example.config.ChatConfig
 import com.example.model.*
 import com.example.ui.theme.*
@@ -355,7 +354,7 @@ fun UploadProgressBanner(
 
             Text(
                 text = if (uploadTask.isFailed) "Upload failed • Tap retry"
-                else "Uploading $percentage% • ${ChatConfig.formatFileSize(uploadTask.uploadedBytes)} / ${ChatConfig.formatFileSize(uploadTask.totalBytes)} • String.format(%.1f MB/s, $speedMb) • ${uploadTask.remainingSeconds}s remaining",
+                else "Uploading $percentage% • ${ChatConfig.formatFileSize(uploadTask.uploadedBytes)} / ${ChatConfig.formatFileSize(uploadTask.totalBytes)} • ${"%.1f".format(speedMb)} MB/s • ${uploadTask.remainingSeconds}s remaining",
                 color = Color.White,
                 fontSize = 10.sp,
                 maxLines = 1,
