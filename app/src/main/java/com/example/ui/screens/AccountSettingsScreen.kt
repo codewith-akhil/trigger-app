@@ -6,7 +6,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,7 +17,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.model.UserRepository
+import com.example.di.AppServiceContainer
+import com.example.service.supabase.SupabaseResult
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 private val ScreenGreenHeader = Color(0xFF008069)
 private val ScreenBg = Color(0xFFF7F8FA)
@@ -33,17 +35,36 @@ private val SwitchGreen = Color(0xFF00A884)
 @Composable
 fun AccountSettingsScreen(
     onBack: () -> Unit,
-    onDeleteAccountConfirmed: () -> Unit = onBack,
+    onNavigateToDeleteAccount: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val userProfile by UserRepository.profile.collectAsState()
-    var securityNotificationsEnabled by remember { mutableStateOf(true) }
+    // Initialised from server (get-my-profile -> settings) on first launch; fall
+    // back to false if the server response doesn't include a settings object.
+    var securityNotificationsEnabled by remember { mutableStateOf(false) }
     var twoStepEnabled by remember { mutableStateOf(false) }
 
-    var showChangeEmailDialog by remember { mutableStateOf(false) }
-    var showDeleteAccountDialog by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
     var showTwoStepDialog by remember { mutableStateOf(false) }
     var showRequestReportSnackbar by remember { mutableStateOf(false) }
+
+    // Hydrate toggles from the server once. get-my-profile may include a
+    // `settings` object; if not (current backend shape), we default to false.
+    LaunchedEffect(Unit) {
+        try {
+            val result = AppServiceContainer.supabaseClient.invokeFunction("get-my-profile")
+            if (result is SupabaseResult.Success) {
+                val profile = result.data.optJSONObject("profile")
+                val settings = profile?.optJSONObject("settings")
+                if (settings != null) {
+                    securityNotificationsEnabled = settings.optBoolean("securityNotifications", false)
+                    twoStepEnabled = settings.optBoolean("twoStepEnabled", false)
+                }
+            }
+        } catch (_: Exception) {
+            // Silent — defaults remain false.
+        }
+    }
 
     Scaffold(
         modifier = modifier
@@ -118,7 +139,18 @@ fun AccountSettingsScreen(
                         }
                         Switch(
                             checked = securityNotificationsEnabled,
-                            onCheckedChange = { securityNotificationsEnabled = it },
+                            onCheckedChange = { newValue ->
+                                securityNotificationsEnabled = newValue
+                                // Fire-and-forget sync to update-user-settings edge fn.
+                                scope.launch {
+                                    try {
+                                        AppServiceContainer.supabaseClient.invokeFunction(
+                                            "update-user-settings",
+                                            JSONObject().put("securityNotifications", newValue)
+                                        )
+                                    } catch (_: Exception) { /* silent */ }
+                                }
+                            },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.White,
                                 checkedTrackColor = SwitchGreen
@@ -138,16 +170,6 @@ fun AccountSettingsScreen(
 
                     HorizontalDivider(color = DividerColor, modifier = Modifier.padding(start = 56.dp))
 
-                    // Change email
-                    AccountActionRow(
-                        icon = Icons.Outlined.Email,
-                        title = "Change email address",
-                        subtitle = userProfile.email.ifEmpty { "Add an email address" },
-                        onClick = { showChangeEmailDialog = true }
-                    )
-
-                    HorizontalDivider(color = DividerColor, modifier = Modifier.padding(start = 56.dp))
-
                     // Request account info
                     AccountActionRow(
                         icon = Icons.Outlined.Description,
@@ -158,13 +180,14 @@ fun AccountSettingsScreen(
 
                     HorizontalDivider(color = DividerColor, modifier = Modifier.padding(start = 56.dp))
 
-                    // Delete my account
+                    // Delete my account — navigates directly to the OTP-confirmed
+                    // delete flow (DeleteAccountScreen). No local confirm dialog.
                     AccountActionRow(
                         icon = Icons.Outlined.DeleteForever,
                         title = "Delete my account",
                         subtitle = "Erase your account, message history and groups",
                         isDestructive = true,
-                        onClick = { showDeleteAccountDialog = true }
+                        onClick = onNavigateToDeleteAccount
                     )
                 }
             }
@@ -197,8 +220,18 @@ fun AccountSettingsScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        twoStepEnabled = !twoStepEnabled
+                        val newValue = !twoStepEnabled
+                        twoStepEnabled = newValue
                         showTwoStepDialog = false
+                        // Fire-and-forget sync to update-user-settings edge fn.
+                        scope.launch {
+                            try {
+                                AppServiceContainer.supabaseClient.invokeFunction(
+                                    "update-user-settings",
+                                    JSONObject().put("twoStepEnabled", newValue)
+                                )
+                            } catch (_: Exception) { /* silent */ }
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (twoStepEnabled) Color(0xFFD32F2F) else ScreenGreenHeader
@@ -209,91 +242,6 @@ fun AccountSettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showTwoStepDialog = false }) {
-                    Text("Cancel", color = TextSecondary)
-                }
-            }
-        )
-    }
-
-    // Change Email Dialog
-    if (showChangeEmailDialog) {
-        var newEmail by remember { mutableStateOf(userProfile.email) }
-        AlertDialog(
-            onDismissRequest = { showChangeEmailDialog = false },
-            containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
-            title = {
-                Text("Change Email Address", fontWeight = FontWeight.Bold, color = TextPrimary)
-            },
-            text = {
-                Column {
-                    Text(
-                        "Enter the new email address for your Trigger App account.",
-                        fontSize = 13.sp,
-                        color = TextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = newEmail,
-                        onValueChange = { newEmail = it },
-                        singleLine = true,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = ScreenGreenHeader,
-                            cursorColor = ScreenGreenHeader
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (newEmail.isNotBlank()) UserRepository.updateEmail(newEmail.trim())
-                        showChangeEmailDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = ScreenGreenHeader)
-                ) {
-                    Text("Save", color = Color.White)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showChangeEmailDialog = false }) {
-                    Text("Cancel", color = TextSecondary)
-                }
-            }
-        )
-    }
-
-    // Delete Account Dialog
-    if (showDeleteAccountDialog) {
-        AlertDialog(
-            onDismissRequest = { showDeleteAccountDialog = false },
-            containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
-            title = {
-                Text("Delete Account?", fontWeight = FontWeight.Bold, color = Color(0xFFD32F2F))
-            },
-            text = {
-                Text(
-                    "Deleting your account will permanently delete your account info, profile photo, and remove you from all Trigger groups. This action cannot be undone.",
-                    fontSize = 14.sp,
-                    color = TextSecondary
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showDeleteAccountDialog = false
-                        onDeleteAccountConfirmed()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
-                ) {
-                    Text("Delete Account", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteAccountDialog = false }) {
                     Text("Cancel", color = TextSecondary)
                 }
             }

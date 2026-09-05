@@ -7,7 +7,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
@@ -281,11 +280,16 @@ fun DeleteAccountScreen(
                                     .invokeFunction("delete-account-otp", payload)
                                 isProcessing = false
                                 if (result is SupabaseResult.Success) {
+                                    // Fire navigation IMMEDIATELY so the user is taken to
+                                    // the landing screen regardless of whether they back
+                                    // out during the visual DELETING / SUCCESS overlays
+                                    // below. The overlays are kept purely for transient
+                                    // visual feedback during the nav transition.
+                                    onDeleted()
                                     step = DeleteStep.DELETING
                                     delay(2500) // show "Deleting your data, Please wait" for 2.5s
                                     step = DeleteStep.SUCCESS
                                     delay(5000) // show success for 5s
-                                    onDeleted()
                                 } else {
                                     val err = (result as? SupabaseResult.Error)?.message ?: "Failed to delete account"
                                     errorMessage = when {

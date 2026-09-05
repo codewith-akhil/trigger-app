@@ -1624,7 +1624,7 @@ fun LinksEditDialog(
             val arr = JSONArray(initialLinksJson)
             (0 until arr.length()).map { i ->
                 val obj = arr.getJSONObject(i)
-                LinkItem(obj.optString("name"), obj.optString("url"))
+                LinkItem(obj.optString("label").ifEmpty { obj.optString("name") }, obj.optString("url"))
             }
         } catch (_: Exception) {
             emptyList()
@@ -1807,7 +1807,7 @@ fun LinksEditDialog(
                 onClick = {
                     val arr = JSONArray()
                     links.forEach { l ->
-                        arr.put(JSONObject().put("name", l.name).put("url", l.url))
+                        arr.put(JSONObject().put("label", l.name).put("url", l.url))
                     }
                     onConfirm(arr.toString())
                 },

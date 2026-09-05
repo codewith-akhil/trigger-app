@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -21,9 +22,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
+import com.example.di.AppServiceContainer
 import com.example.model.Language
 import com.example.model.LanguageRepository
 import com.example.ui.theme.*
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 @Composable
 fun LanguageSelectionScreen(
@@ -32,6 +36,8 @@ fun LanguageSelectionScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val scope = rememberCoroutineScope()
+
     Scaffold(
         modifier = modifier
             .fillMaxSize()
@@ -65,7 +71,22 @@ fun LanguageSelectionScreen(
                     LanguageRowItem(
                         language = language,
                         isSelected = isSelected,
-                        onClick = { onLanguageSelected(language) }
+                        onClick = {
+                            // Sync the language choice to the backend (fire-and-forget).
+                            // The selection is also forwarded to the caller for local UI
+                            // state updates regardless of the sync outcome.
+                            scope.launch {
+                                try {
+                                    AppServiceContainer.supabaseClient.invokeFunction(
+                                        "sync-user-profile",
+                                        JSONObject().put("languageCode", language.code)
+                                    )
+                                } catch (_: Exception) {
+                                    // Don't block the UI on sync failure.
+                                }
+                            }
+                            onLanguageSelected(language)
+                        }
                     )
                 }
             }

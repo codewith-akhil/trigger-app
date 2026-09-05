@@ -347,10 +347,8 @@ fun TriggerAppNavHost(
         composable(TriggerDestinations.SETTINGS_ACCOUNT) {
             AccountSettingsScreen(
                 onBack = { navController.popBackStack() },
-                onDeleteAccountConfirmed = {
-                    navController.navigate(TriggerDestinations.LANDING) {
-                        popUpTo(0) { inclusive = true }
-                    }
+                onNavigateToDeleteAccount = {
+                    navController.navigate(TriggerDestinations.DELETE_ACCOUNT)
                 }
             )
         }
