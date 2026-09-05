@@ -28,6 +28,7 @@ object TriggerDestinations {
     const val PROFILE = "profile"
     const val DELETE_ACCOUNT = "delete_account"
     const val SELECT_CONTACT = "select_contact"
+    const val NEW_MESSAGE = "new_message"
     const val HOME = "home"
     const val SETTINGS = "settings"
     const val SETTINGS_ACCOUNT = "settings_account"
@@ -382,6 +383,18 @@ fun TriggerAppNavHost(
                     activeChatContactId = contactId
                     activeChatContactName = contactName
                     activeChatAvatarRes = avatarRes
+                    navController.navigate(TriggerDestinations.CHAT)
+                }
+            )
+        }
+
+        composable(TriggerDestinations.NEW_MESSAGE) {
+            NewMessageScreen(
+                onBack = { navController.popBackStack() },
+                onChatOpened = { convId, contactId, contactName ->
+                    activeChatContactId = contactId
+                    activeChatContactName = contactName
+                    activeChatAvatarRes = null
                     navController.navigate(TriggerDestinations.CHAT)
                 }
             )
