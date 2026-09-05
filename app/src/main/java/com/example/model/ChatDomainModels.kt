@@ -90,6 +90,8 @@ data class DomainMessage(
     val locationLatitude: Double? = null,
     val locationLongitude: Double? = null,
     val locationAddress: String? = null,
+    val locationLiveMinutes: Int? = null,   // live-location duration (15/60/480) — null for static locations
+    val locationComment: String? = null,    // user comment attached to a location share
     val contactName: String? = null,
     val contactPhone: String? = null,
     val reactions: List<MessageReaction> = emptyList(),

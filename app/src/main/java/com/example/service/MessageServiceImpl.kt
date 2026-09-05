@@ -215,6 +215,9 @@ class MessageServiceImpl(
             locationLatitude = record.optString("location_lat", null)?.toDoubleOrNull(),
             locationLongitude = record.optString("location_lng", null)?.toDoubleOrNull(),
             locationAddress = record.optString("location_address", null),
+            locationLiveMinutes = if (!record.isNull("location_live_minutes"))
+                record.optInt("location_live_minutes").takeIf { it > 0 } else null,
+            locationComment = record.optString("location_comment", null),
             contactName = record.optString("contact_name", null),
             contactPhone = record.optString("contact_phone", null)
         )
@@ -262,6 +265,8 @@ class MessageServiceImpl(
             if (message.locationLatitude != null) put("location_lat", message.locationLatitude)
             if (message.locationLongitude != null) put("location_lng", message.locationLongitude)
             if (message.locationAddress != null) put("location_address", message.locationAddress)
+            if (message.locationLiveMinutes != null) put("location_live_minutes", message.locationLiveMinutes)
+            if (message.locationComment != null) put("location_comment", message.locationComment)
             if (message.contactName != null) put("contact_name", message.contactName)
             if (message.contactPhone != null) put("contact_phone", message.contactPhone)
         }

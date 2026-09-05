@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [MessageEntity::class, ConversationEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -28,11 +28,20 @@ abstract class ChatDatabase : RoomDatabase() {
                     ChatDatabase::class.java,
                     "whatsapp_chat_db"
                 )
-                    .addMigrations(REMOVE_SEEDED_DATA, ADD_PIN_EDIT_SEQ_IDEMPOTENCY_ARCHIVED)
+                    .addMigrations(REMOVE_SEEDED_DATA, ADD_PIN_EDIT_SEQ_IDEMPOTENCY_ARCHIVED, ADD_LOCATION_LIVE_FIELDS)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        // Migration 4 → 5: live-location metadata on messages
+        // (locationLiveMinutes = share duration, locationComment = user comment)
+        private val ADD_LOCATION_LIVE_FIELDS = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN locationLiveMinutes INTEGER")
+                db.execSQL("ALTER TABLE messages ADD COLUMN locationComment TEXT")
             }
         }
 

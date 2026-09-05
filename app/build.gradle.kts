@@ -127,6 +127,9 @@ dependencies {
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.okhttp)
+  // OpenStreetMap map engine for the Send Location screen (real interactive map,
+  // live location dot, pinch/pan gestures). No API key or billing required.
+  implementation(libs.osmdroid)
   // implementation(libs.play.services.location)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)

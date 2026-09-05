@@ -73,3 +73,11 @@
 -keepclasseswithmembernames class * {
     native <methods>;
 }
+
+# ----------------------------------------------------------------------------
+# osmdroid (OpenStreetMap map engine — Send Location screen).
+# Tile providers, HTTP user-agent negotiation and the location overlays are
+# looked up reflectively; upstream guidance is to keep the package intact.
+# ----------------------------------------------------------------------------
+-keep class org.osmdroid.** { *; }
+-dontwarn org.osmdroid.**

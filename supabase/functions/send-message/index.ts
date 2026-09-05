@@ -45,6 +45,8 @@ interface Body {
   location_lat?: number;
   location_lng?: number;
   location_address?: string;
+  location_live_minutes?: number;
+  location_comment?: string;
   contact_name?: string;
   contact_phone?: string;
   call_type?: string;
@@ -82,6 +84,16 @@ async function handler(req: Request): Promise<Response> {
   }
   if (body.text && body.text.length > 10000) {
     return json({ error: "Message too long (max 10000 chars)", code: ErrorCode.VALIDATION_FAILED }, 422);
+  }
+
+  // Live-location metadata validation (optional, LOCATION messages only)
+  if (body.location_live_minutes != null) {
+    if (!Number.isInteger(body.location_live_minutes) || body.location_live_minutes < 1 || body.location_live_minutes > 1440) {
+      return json({ error: "location_live_minutes must be an integer between 1 and 1440", code: ErrorCode.VALIDATION_FAILED }, 422);
+    }
+  }
+  if (body.location_comment != null && typeof body.location_comment === "string" && body.location_comment.length > 500) {
+    return json({ error: "location_comment too long (max 500 chars)", code: ErrorCode.VALIDATION_FAILED }, 422);
   }
 
   // File size validation (server-side authoritative)
@@ -192,6 +204,8 @@ async function handler(req: Request): Promise<Response> {
     location_lat: body.location_lat ?? null,
     location_lng: body.location_lng ?? null,
     location_address: body.location_address ?? null,
+    location_live_minutes: body.location_live_minutes ?? null,
+    location_comment: body.location_comment != null ? String(body.location_comment).slice(0, 500) : null,
     contact_name: body.contact_name ?? null,
     contact_phone: body.contact_phone ?? null,
     call_type: body.call_type ?? null,
@@ -216,7 +230,7 @@ async function handler(req: Request): Promise<Response> {
     : body.type === "VIDEO" ? "🎥 Video"
     : body.type === "AUDIO" || body.type === "VOICE_NOTE" ? "🎤 Voice message"
     : body.type === "DOCUMENT" ? "📄 Document"
-    : body.type === "LOCATION" ? "📍 Location"
+    : body.type === "LOCATION" ? (body.location_live_minutes ? "📍 Live location" : "📍 Location")
     : body.type === "CONTACT" ? "👤 Contact"
     : "Message";
 

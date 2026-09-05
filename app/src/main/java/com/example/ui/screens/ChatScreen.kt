@@ -876,8 +876,8 @@ fun ChatScreen(
                 viewModel.shareLocation(lat, lng, name, address)
                 showSendLocationScreen = false
             },
-            onSendLiveLocation = { durationText, comment ->
-                viewModel.shareLiveLocation(durationText, comment)
+            onSendLiveLocation = { latitude, longitude, durationText, comment ->
+                viewModel.shareLiveLocation(latitude, longitude, durationText, comment)
                 showSendLocationScreen = false
             }
         )

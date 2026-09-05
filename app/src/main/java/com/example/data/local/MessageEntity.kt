@@ -46,6 +46,8 @@ data class MessageEntity(
     val locationLatitude: Double? = null,
     val locationLongitude: Double? = null,
     val locationAddress: String? = null,
+    val locationLiveMinutes: Int? = null, // live-location duration in minutes (15/60/480)
+    val locationComment: String? = null,  // user comment attached to a location share
     val contactName: String? = null,
     val contactPhone: String? = null,
     val reactionsRaw: String = "" // e.g. "❤️:1:false,👍:2:true"
@@ -100,6 +102,8 @@ data class MessageEntity(
             locationLatitude = locationLatitude,
             locationLongitude = locationLongitude,
             locationAddress = locationAddress,
+            locationLiveMinutes = locationLiveMinutes,
+            locationComment = locationComment,
             contactName = contactName,
             contactPhone = contactPhone,
             reactions = parsedReactions,
@@ -144,6 +148,8 @@ data class MessageEntity(
                 locationLatitude = domain.locationLatitude,
                 locationLongitude = domain.locationLongitude,
                 locationAddress = domain.locationAddress,
+                locationLiveMinutes = domain.locationLiveMinutes,
+                locationComment = domain.locationComment,
                 contactName = domain.contactName,
                 contactPhone = domain.contactPhone,
                 reactionsRaw = reactionsString

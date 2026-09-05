@@ -439,7 +439,15 @@ class ChatViewModel(
         }
     }
 
-    fun shareLiveLocation(durationText: String, comment: String = "") {
+    /**
+     * Share a live-location message with the REAL current device coordinates.
+     *
+     * @param latitude  real GPS/NETWORK fix latitude (from SendLocationScreen)
+     * @param longitude real GPS/NETWORK fix longitude
+     * @param durationText one of "15 minutes" / "1 hour" / "8 hours"
+     * @param comment   optional user comment attached to the share
+     */
+    fun shareLiveLocation(latitude: Double, longitude: Double, durationText: String, comment: String = "") {
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
         val baseText = "Live Location shared ($durationText)"
         val msg = DomainMessage(
@@ -449,12 +457,14 @@ class ChatViewModel(
             senderName = "You",
             type = MessageType.LOCATION,
             text = if (comment.isNotBlank()) "$baseText — $comment" else baseText,
-            locationLatitude = 12.0436,
-            locationLongitude = 75.3588,
+            locationLatitude = latitude,
+            locationLongitude = longitude,
             locationAddress = if (comment.isNotBlank())
                 "Live • updating ($durationText) — $comment"
             else
                 "Live • updating ($durationText)",
+            locationLiveMinutes = durationTextToMinutes(durationText),
+            locationComment = comment.ifBlank { null },
             status = MessageStatus.SENDING,
             timestamp = time,
             timestampMillis = System.currentTimeMillis(),
@@ -465,8 +475,12 @@ class ChatViewModel(
         }
     }
 
-    fun shareCurrentLocation() {
-        shareLocation(12.0436, 75.3588, "Current Location", "Accurate to 20 meters")
+    /** Maps the UI duration chips to the server's `location_live_minutes` column. */
+    private fun durationTextToMinutes(durationText: String): Int = when (durationText.trim().lowercase()) {
+        "15 minutes" -> 15
+        "1 hour" -> 60
+        "8 hours" -> 480
+        else -> 60
     }
 
     fun setBlocked(isBlocked: Boolean) {

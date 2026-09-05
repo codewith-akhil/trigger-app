@@ -22,6 +22,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         com.example.di.AppServiceContainer.initialize(this)
 
+        // osmdroid configuration — MUST run before the first MapView is created.
+        // A per-app User-Agent is REQUIRED by the OpenStreetMap tile usage policy,
+        // and the tile cache lives in the app-private cacheDir (no storage permission).
+        org.osmdroid.config.Configuration.getInstance().apply {
+            userAgentValue = packageName
+            osmdroidBasePath = java.io.File(cacheDir, "osmdroid")
+            osmdroidTileCache = java.io.File(cacheDir, "osmdroid/tiles")
+        }
+
         // Create FCM notification channels + auto-register the FCM token with
         // the Supabase register-push-token edge function on every app launch.
         com.example.service.TriggerFirebaseMessagingService.createNotificationChannels(this)
