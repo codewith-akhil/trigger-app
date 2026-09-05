@@ -529,7 +529,7 @@ fun ChatScreen(
                     // Bottom Input or Voice Recording Bar
                     if (isRecordingVoice) {
                         ChatVoiceRecordingBar(
-                            durationSeconds = recordingDurationSec,
+                            durationSeconds = recordingDurationSec.toInt(),
                             amplitudes = recordingAmplitudes,
                             onCancel = { viewModel.cancelVoiceRecording() },
                             onSend = { viewModel.sendVoiceMessage() }

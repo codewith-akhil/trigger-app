@@ -56,6 +56,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -898,20 +899,20 @@ fun ProfileScreen(
                 val validationError = validateName(trimmed)
                 if (validationError != null) {
                     Toast.makeText(context, validationError, Toast.LENGTH_LONG).show()
-                    return@ProfileEditDialog
-                }
-                isNameSaving = true
-                coroutineScope.launch {
-                    val payload = JSONObject().put("fullName", trimmed)
-                    val result = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
-                    isNameSaving = false
-                    if (result is SupabaseResult.Success) {
-                        UserRepository.updateName(trimmed)
-                        Toast.makeText(context, "Name saved", Toast.LENGTH_SHORT).show()
-                        showEditNameDialog = false
-                    } else {
-                        val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save name"
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                } else {
+                    isNameSaving = true
+                    coroutineScope.launch {
+                        val payload = JSONObject().put("fullName", trimmed)
+                        val result = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
+                        isNameSaving = false
+                        if (result is SupabaseResult.Success) {
+                            UserRepository.updateName(trimmed)
+                            Toast.makeText(context, "Name saved", Toast.LENGTH_SHORT).show()
+                            showEditNameDialog = false
+                        } else {
+                            val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save name"
+                            Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                        }
                     }
                 }
             }
@@ -1044,20 +1045,20 @@ fun ProfileScreen(
                         if (selectedGender.isBlank()) return@Button
                         if (genders.isNotEmpty() && selectedGender !in genders) {
                             Toast.makeText(context, "Please select a valid gender from the list", Toast.LENGTH_LONG).show()
-                            return@Button
-                        }
-                        isGenderSaving = true
-                        coroutineScope.launch {
-                            val payload = JSONObject().put("gender", selectedGender)
-                            val result = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
-                            isGenderSaving = false
-                            if (result is SupabaseResult.Success) {
-                                UserRepository.updateGender(selectedGender)
-                                Toast.makeText(context, "Gender saved", Toast.LENGTH_SHORT).show()
-                                showEditGenderDialog = false
-                            } else {
-                                val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save gender"
-                                Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                        } else {
+                            isGenderSaving = true
+                            coroutineScope.launch {
+                                val payload = JSONObject().put("gender", selectedGender)
+                                val result = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
+                                isGenderSaving = false
+                                if (result is SupabaseResult.Success) {
+                                    UserRepository.updateGender(selectedGender)
+                                    Toast.makeText(context, "Gender saved", Toast.LENGTH_SHORT).show()
+                                    showEditGenderDialog = false
+                                } else {
+                                    val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save gender"
+                                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                                }
                             }
                         }
                     },
@@ -1159,20 +1160,20 @@ fun ProfileScreen(
                         val cc = selectedCountry ?: return@Button
                         if (countries.isNotEmpty() && countries.none { it.first == cc.first }) {
                             Toast.makeText(context, "Please select a valid country from the list", Toast.LENGTH_LONG).show()
-                            return@Button
-                        }
-                        isCountrySaving = true
-                        coroutineScope.launch {
-                            val payload = JSONObject().put("country_code", cc.first)
-                            val result = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
-                            isCountrySaving = false
-                            if (result is SupabaseResult.Success) {
-                                UserRepository.updateCountry(cc.second, cc.first)
-                                Toast.makeText(context, "Country saved", Toast.LENGTH_SHORT).show()
-                                showEditCountryDialog = false
-                            } else {
-                                val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save country"
-                                Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                        } else {
+                            isCountrySaving = true
+                            coroutineScope.launch {
+                                val payload = JSONObject().put("country_code", cc.first)
+                                val result = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
+                                isCountrySaving = false
+                                if (result is SupabaseResult.Success) {
+                                    UserRepository.updateCountry(cc.second, cc.first)
+                                    Toast.makeText(context, "Country saved", Toast.LENGTH_SHORT).show()
+                                    showEditCountryDialog = false
+                                } else {
+                                    val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save country"
+                                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                                }
                             }
                         }
                     },
@@ -1225,20 +1226,20 @@ fun ProfileScreen(
                             val validationError = validateDob(dateStr)
                             if (validationError != null) {
                                 Toast.makeText(context, validationError, Toast.LENGTH_LONG).show()
-                                return@Button
-                            }
-                            isDobSaving = true
-                            coroutineScope.launch {
-                                val payload = JSONObject().put("dob", dateStr)
-                                val result = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
-                                isDobSaving = false
-                                if (result is SupabaseResult.Success) {
-                                    UserRepository.updateDob(dateStr)
-                                    Toast.makeText(context, "Date of birth saved", Toast.LENGTH_SHORT).show()
-                                    showDatePicker = false
-                                } else {
-                                    val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save date of birth"
-                                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                            } else {
+                                isDobSaving = true
+                                coroutineScope.launch {
+                                    val payload = JSONObject().put("dob", dateStr)
+                                    val result = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
+                                    isDobSaving = false
+                                    if (result is SupabaseResult.Success) {
+                                        UserRepository.updateDob(dateStr)
+                                        Toast.makeText(context, "Date of birth saved", Toast.LENGTH_SHORT).show()
+                                        showDatePicker = false
+                                    } else {
+                                        val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save date of birth"
+                                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                                    }
                                 }
                             }
                         }
@@ -1252,7 +1253,9 @@ fun ProfileScreen(
                     Text("Cancel", color = TriggerTextSecondary)
                 }
             }
-        )
+        ) {
+            DatePicker(state = datePickerState)
+        }
     }
 }
 
@@ -1351,9 +1354,6 @@ fun ProfileEditDialog(
                     } else null,
                     singleLine = true,
                     isError = liveError != null && textValue.isNotBlank(),
-                    supportingText = if (liveError != null && textValue.isNotBlank()) {
-                        { Text(liveError, color = TriggerDanger, fontSize = 12.sp) }
-                    } else null,
                     shape = RoundedCornerShape(12.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = TriggerTextPrimary,
@@ -1365,6 +1365,14 @@ fun ProfileEditDialog(
                     enabled = !isSaving,
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (liveError != null && textValue.isNotBlank()) {
+                    Text(
+                        text = liveError,
+                        color = TriggerDanger,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                    )
+                }
                 if (maxLength != Int.MAX_VALUE) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
