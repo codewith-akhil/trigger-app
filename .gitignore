@@ -52,3 +52,4 @@ local.properties
 trigger-upload-key.jks
 keystore.properties
 keystore-credentials.txt
+my-upload-key.jks
