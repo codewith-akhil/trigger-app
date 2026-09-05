@@ -37,6 +37,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -46,6 +49,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
@@ -376,10 +382,23 @@ fun ChatScreen(
         }
     }
 
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val focusRequester = remember { FocusRequester() }
+    val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+
+    // When software keyboard opens, close custom emoji and GIF pickers
+    LaunchedEffect(imeBottom) {
+        if (imeBottom > 0) {
+            if (isEmojiPickerOpen) isEmojiPickerOpen = false
+            if (isGifPickerOpen) isGifPickerOpen = false
+        }
+    }
+
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
-            .imePadding()
             .testTag("chat_screen"),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
@@ -512,7 +531,11 @@ fun ChatScreen(
             }
         },
         bottomBar = {
-            Column {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+            ) {
                 if (isBlocked) {
                     // Blocked contact notice banner
                     Surface(
@@ -575,27 +598,51 @@ fun ChatScreen(
                             onAttachClick = {
                                 isEmojiPickerOpen = false
                                 isGifPickerOpen = false
+                                keyboardController?.hide()
                                 showAttachmentSheet = true
                             },
                             onCameraClick = {
                                 isEmojiPickerOpen = false
                                 isGifPickerOpen = false
+                                keyboardController?.hide()
                                 launchCamera()
                             },
                             onStartVoiceRecording = {
                                 isEmojiPickerOpen = false
                                 isGifPickerOpen = false
+                                keyboardController?.hide()
                                 startVoiceRecordingWithPermission()
                             },
                             isEmojiPickerOpen = isEmojiPickerOpen,
                             isGifPickerOpen = isGifPickerOpen,
+                            focusRequester = focusRequester,
+                            onInputFocus = {
+                                isEmojiPickerOpen = false
+                                isGifPickerOpen = false
+                            },
                             onEmojiClick = {
                                 isGifPickerOpen = false
-                                isEmojiPickerOpen = !isEmojiPickerOpen
+                                if (!isEmojiPickerOpen) {
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
+                                    isEmojiPickerOpen = true
+                                } else {
+                                    isEmojiPickerOpen = false
+                                    focusRequester.requestFocus()
+                                    keyboardController?.show()
+                                }
                             },
                             onGifClick = {
                                 isEmojiPickerOpen = false
-                                isGifPickerOpen = !isGifPickerOpen
+                                if (!isGifPickerOpen) {
+                                    keyboardController?.hide()
+                                    focusManager.clearFocus()
+                                    isGifPickerOpen = true
+                                } else {
+                                    isGifPickerOpen = false
+                                    focusRequester.requestFocus()
+                                    keyboardController?.show()
+                                }
                             }
                         )
 
@@ -1271,165 +1318,170 @@ fun ChatMainTopBar(
         color = WhatsAppChatDarkTeal,
         shadowElevation = 4.dp
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .height(60.dp)
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(24.dp))
-                    .clickable(onClick = onBack)
-                    .padding(vertical = 4.dp, horizontal = 2.dp),
+                    .fillMaxWidth()
+                    .height(60.dp)
+                    .padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = Color.White,
-                    modifier = Modifier.size(24.dp)
-                )
-
-                Spacer(modifier = Modifier.width(4.dp))
-
-                Box(
+                Row(
                     modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF25D366))
+                        .clip(RoundedCornerShape(24.dp))
+                        .clickable(onClick = onBack)
+                        .padding(vertical = 4.dp, horizontal = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (avatarRes != null) {
-                        Image(
-                            painter = painterResource(id = avatarRes),
-                            contentDescription = contactName,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.Person,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.fillMaxSize().padding(6.dp)
-                        )
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+
+                    Spacer(modifier = Modifier.width(4.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF25D366))
+                    ) {
+                        if (avatarRes != null) {
+                            Image(
+                                painter = painterResource(id = avatarRes),
+                                contentDescription = contactName,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Filled.Person,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.fillMaxSize().padding(6.dp)
+                            )
+                        }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(8.dp))
 
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable(onClick = onHeaderClick)
-            ) {
-                Text(
-                    text = contactName,
-                    color = Color.White,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1
-                )
-                Text(
-                    text = presenceText,
-                    color = if (presenceText.contains("typing") || presenceText.contains("recording")) Color(0xFF80CBC4) else Color(0xFFB2DFDB),
-                    fontSize = 12.5.sp,
-                    maxLines = 1
-                )
-            }
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(onClick = onHeaderClick)
+                ) {
+                    Text(
+                        text = contactName,
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = presenceText,
+                        color = if (presenceText.contains("typing") || presenceText.contains("recording")) Color(0xFF80CBC4) else Color(0xFFB2DFDB),
+                        fontSize = 12.5.sp,
+                        maxLines = 1
+                    )
+                }
 
-            IconButton(onClick = onVideoCall) {
-                Icon(
-                    imageVector = Icons.Filled.Videocam,
-                    contentDescription = "Video Call",
-                    tint = Color.White,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-
-            IconButton(onClick = onVoiceCall) {
-                Icon(
-                    imageVector = Icons.Filled.Call,
-                    contentDescription = "Voice Call",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            Box {
-                IconButton(onClick = onMenuClick) {
+                IconButton(onClick = onVideoCall) {
                     Icon(
-                        imageVector = Icons.Filled.MoreVert,
-                        contentDescription = "More Options",
+                        imageVector = Icons.Filled.Videocam,
+                        contentDescription = "Video Call",
                         tint = Color.White,
                         modifier = Modifier.size(22.dp)
                     )
                 }
 
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = onDismissMenu,
-                    modifier = Modifier.background(Color.White)
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("View contact", color = GeometricTextDark) },
-                        onClick = onViewContact
+                IconButton(onClick = onVoiceCall) {
+                    Icon(
+                        imageVector = Icons.Filled.Call,
+                        contentDescription = "Voice Call",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
                     )
-                    DropdownMenuItem(
-                        text = { Text("Search", color = GeometricTextDark) },
-                        onClick = {
-                            onDismissMenu()
-                            onSearchClick()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Mute notifications", color = GeometricTextDark) },
-                        onClick = {
-                            onDismissMenu()
-                            onMuteClick()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Disappearing messages", color = GeometricTextDark) },
-                        onClick = {
-                            onDismissMenu()
-                            onDisappearingClick()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = if (isArchived) "Unarchive chat" else "Archive chat",
-                                color = GeometricTextDark
-                            )
-                        },
-                        onClick = {
-                            onDismissMenu()
-                            onArchiveClick()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Clear chat", color = Color(0xFFD32F2F)) },
-                        onClick = {
-                            onDismissMenu()
-                            onClearChat()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = if (isBlocked) "Unblock contact" else "Block contact",
-                                color = if (isBlocked) WhatsAppFabGreen else Color(0xFFD32F2F)
-                            )
-                        },
-                        onClick = {
-                            onDismissMenu()
-                            onBlockToggleClick()
-                        }
-                    )
+                }
+
+                Box {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = "More Options",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = onDismissMenu,
+                        modifier = Modifier.background(Color.White)
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("View contact", color = GeometricTextDark) },
+                            onClick = onViewContact
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Search", color = GeometricTextDark) },
+                            onClick = {
+                                onDismissMenu()
+                                onSearchClick()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Mute notifications", color = GeometricTextDark) },
+                            onClick = {
+                                onDismissMenu()
+                                onMuteClick()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Disappearing messages", color = GeometricTextDark) },
+                            onClick = {
+                                onDismissMenu()
+                                onDisappearingClick()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (isArchived) "Unarchive chat" else "Archive chat",
+                                    color = GeometricTextDark
+                                )
+                            },
+                            onClick = {
+                                onDismissMenu()
+                                onArchiveClick()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Clear chat", color = Color(0xFFD32F2F)) },
+                            onClick = {
+                                onDismissMenu()
+                                onClearChat()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (isBlocked) "Unblock contact" else "Block contact",
+                                    color = if (isBlocked) WhatsAppFabGreen else Color(0xFFD32F2F)
+                                )
+                            },
+                            onClick = {
+                                onDismissMenu()
+                                onBlockToggleClick()
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -1452,50 +1504,55 @@ fun ChatSelectionTopBar(
         color = WhatsAppChatDarkTeal,
         shadowElevation = 4.dp
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .height(60.dp)
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onClearSelection) {
-                Icon(Icons.Filled.Close, contentDescription = "Close selection", tint = Color.White)
-            }
-            Text(
-                text = "$selectedCount",
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
-            )
-            if (onEdit != null) {
-                IconButton(onClick = onEdit) {
-                    Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(60.dp)
+                    .padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onClearSelection) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close selection", tint = Color.White)
                 }
-            }
-            if (onPin != null) {
-                IconButton(onClick = onPin) {
-                    Icon(Icons.Filled.PushPin, contentDescription = "Pin", tint = Color.White)
+                Text(
+                    text = "$selectedCount",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                if (onEdit != null) {
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White)
+                    }
                 }
-            }
-            if (onStar != null) {
-                IconButton(onClick = onStar) {
-                    Icon(Icons.Filled.Star, contentDescription = "Star", tint = Color.White)
+                if (onPin != null) {
+                    IconButton(onClick = onPin) {
+                        Icon(Icons.Filled.PushPin, contentDescription = "Pin", tint = Color.White)
+                    }
                 }
-            }
-            IconButton(onClick = onReply) {
-                Icon(Icons.Filled.Reply, contentDescription = "Reply", tint = Color.White)
-            }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = Color.White)
-            }
-            IconButton(onClick = onForward) {
-                Icon(Icons.Filled.Forward, contentDescription = "Forward", tint = Color.White)
-            }
-            IconButton(onClick = onCopy) {
-                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy", tint = Color.White)
+                if (onStar != null) {
+                    IconButton(onClick = onStar) {
+                        Icon(Icons.Filled.Star, contentDescription = "Star", tint = Color.White)
+                    }
+                }
+                IconButton(onClick = onReply) {
+                    Icon(Icons.Filled.Reply, contentDescription = "Reply", tint = Color.White)
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = Color.White)
+                }
+                IconButton(onClick = onForward) {
+                    Icon(Icons.Filled.Forward, contentDescription = "Forward", tint = Color.White)
+                }
+                IconButton(onClick = onCopy) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = "Copy", tint = Color.White)
+                }
             }
         }
     }
@@ -1518,41 +1575,46 @@ fun ChatSearchTopBar(
             color = Color.White,
             shadowElevation = 4.dp
         ) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .height(60.dp)
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onCloseSearch) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search", tint = Color(0xFF111B21))
-                }
-                BasicTextField(
-                    value = query,
-                    onValueChange = onQueryChanged,
-                    textStyle = TextStyle(color = Color(0xFF111B21), fontSize = 16.sp),
-                    cursorBrush = SolidColor(WhatsAppFabGreen),
-                    modifier = Modifier.weight(1f),
-                    decorationBox = { innerTextField ->
-                        if (query.isEmpty()) {
-                            Text("Search in chat...", color = Color(0xFF8696A0), fontSize = 16.sp)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(60.dp)
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onCloseSearch) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search", tint = Color(0xFF111B21))
+                    }
+                    BasicTextField(
+                        value = query,
+                        onValueChange = onQueryChanged,
+                        textStyle = TextStyle(color = Color(0xFF111B21), fontSize = 16.sp),
+                        cursorBrush = SolidColor(WhatsAppFabGreen),
+                        modifier = Modifier.weight(1f),
+                        decorationBox = { innerTextField ->
+                            if (query.isEmpty()) {
+                                Text("Search in chat...", color = Color(0xFF8696A0), fontSize = 16.sp)
+                            }
+                            innerTextField()
                         }
-                        innerTextField()
-                    }
-                )
-                if (query.isNotEmpty()) {
-                    Text(
-                        text = if (matchCount > 0) "$currentIndex of $matchCount" else "0 of 0",
-                        fontSize = 12.sp,
-                        color = Color(0xFF667781)
                     )
-                    IconButton(onClick = onPreviousMatch) {
-                        Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Previous", tint = Color(0xFF111B21))
-                    }
-                    IconButton(onClick = onNextMatch) {
-                        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Next", tint = Color(0xFF111B21))
+                    if (query.isNotEmpty()) {
+                        Text(
+                            text = if (matchCount > 0) "$currentIndex of $matchCount" else "0 of 0",
+                            fontSize = 12.sp,
+                            color = Color(0xFF667781)
+                        )
+                        IconButton(onClick = onPreviousMatch) {
+                            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Previous", tint = Color(0xFF111B21))
+                        }
+                        IconButton(onClick = onNextMatch) {
+                            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Next", tint = Color(0xFF111B21))
+                        }
                     }
                 }
             }
@@ -1741,6 +1803,8 @@ fun ChatComposerBar(
     onStartVoiceRecording: () -> Unit,
     isEmojiPickerOpen: Boolean = false,
     isGifPickerOpen: Boolean = false,
+    focusRequester: FocusRequester? = null,
+    onInputFocus: () -> Unit = {},
     onEmojiClick: () -> Unit = {},
     onGifClick: () -> Unit = {}
 ) {
@@ -1790,6 +1854,15 @@ fun ChatComposerBar(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("chat_input_field")
+                            .then(
+                                if (focusRequester != null) Modifier.focusRequester(focusRequester)
+                                else Modifier
+                            )
+                            .onFocusChanged { focusState ->
+                                if (focusState.isFocused) {
+                                    onInputFocus()
+                                }
+                            }
                     )
                 }
 

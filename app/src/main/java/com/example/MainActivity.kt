@@ -30,12 +30,12 @@ class MainActivity : ComponentActivity() {
         // Enable edge-to-edge so content draws behind the system bars.
         enableEdgeToEdge()
 
-        // Set the system status bar background to the app's signature green
+        // Set the system status bar and navigation bar to transparent for clean edge-to-edge
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         controller.isAppearanceLightStatusBars = false
-        window.statusBarColor = android.graphics.Color.parseColor("#008069")
-        window.navigationBarColor = android.graphics.Color.parseColor("#008069")
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
 
         // ProcessLifecycleOwner observer — detects real app foreground/background
         // transitions (not just login/logout). Calls presence onAppForeground/
