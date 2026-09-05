@@ -100,35 +100,16 @@ fun ScheduleStreamScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("schedule_stream_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = DarkBackground,
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = "Schedule Stream",
-                            color = Color.White,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Live WebRTC Broadcast",
-                            color = Color.White.copy(alpha = 0.8f),
-                            fontSize = 12.sp
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = HeaderGreen)
+            com.example.ui.components.TriggerTopHeader(
+                title = "Schedule Stream",
+                onBack = onBack
             )
+        },
+        bottomBar = {
+            com.example.ui.components.TriggerBottomNavInset()
         },
         snackbarHost = {
             snackbarMessage?.let { msg ->

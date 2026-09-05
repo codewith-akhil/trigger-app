@@ -54,35 +54,16 @@ fun StreamHistoryScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("stream_history_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = DarkBackground,
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = "Stream History",
-                            color = Color.White,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Past Broadcasts & Performance",
-                            color = Color.White.copy(alpha = 0.8f),
-                            fontSize = 12.sp
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = HeaderGreen)
+            com.example.ui.components.TriggerTopHeader(
+                title = "Stream History",
+                onBack = onBack
             )
+        },
+        bottomBar = {
+            com.example.ui.components.TriggerBottomNavInset()
         }
     ) { innerPadding ->
         LazyColumn(

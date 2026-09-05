@@ -102,6 +102,7 @@ fun WhatsAppDashboardScreen(
         modifier = Modifier
             .fillMaxSize()
             .testTag("trigger_dashboard_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = Color.White,
         topBar = {
             if (selectedTab != DashboardTab.PROFILE) {
@@ -147,6 +148,10 @@ fun WhatsAppDashboardScreen(
                         }
                     }
                 }
+            } else {
+                ProfileTopHeader(
+                    onBack = { selectedTab = DashboardTab.CHATS }
+                )
             }
         },
         bottomBar = {
@@ -298,7 +303,8 @@ fun WhatsAppDashboardScreen(
                 DashboardTab.PROFILE -> {
                     ProfileScreen(
                         onBack = { selectedTab = DashboardTab.CHATS },
-                        onLogout = onRestartFlow
+                        onLogout = onRestartFlow,
+                        showHeader = false
                     )
                 }
             }
@@ -520,13 +526,20 @@ fun WhatsAppTopHeader(
         color = Color.White,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Area above the header section (status bar) with header green background
+            Spacer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsTopHeight(WindowInsets.statusBars)
+                    .background(TriggerHeaderGreen)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
             // Brand name "Trigger App"
             Text(
                 text = "Trigger App",
@@ -596,6 +609,7 @@ fun WhatsAppTopHeader(
                     )
                 }
             }
+        }
         }
     }
 }
@@ -881,90 +895,99 @@ fun WhatsAppBottomNavBar(
     unreadChatsCount: Int,
     onTabSelected: (DashboardTab) -> Unit
 ) {
-    Surface(
-        color = WhatsAppBottomBarBg,
-        shadowElevation = 8.dp,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Surface(
+            color = WhatsAppBottomBarBg,
+            shadowElevation = 8.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceAround,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Tab 1: Chats
+                BottomNavItem(
+                    title = "Chats",
+                    isSelected = selectedTab == DashboardTab.CHATS,
+                    badgeCount = unreadChatsCount,
+                    icon = { isSelected ->
+                        Icon(
+                            imageVector = if (isSelected) Icons.Filled.Chat else Icons.Outlined.Chat,
+                            contentDescription = "Chats",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    },
+                    onClick = { onTabSelected(DashboardTab.CHATS) }
+                )
+
+                // Tab 2: Updates
+                BottomNavItem(
+                    title = "Updates",
+                    isSelected = selectedTab == DashboardTab.UPDATES,
+                    icon = { isSelected ->
+                        Icon(
+                            imageVector = if (isSelected) Icons.Filled.Update else Icons.Outlined.Update,
+                            contentDescription = "Updates",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    },
+                    onClick = { onTabSelected(DashboardTab.UPDATES) }
+                )
+
+                // Tab 3: Stream
+                BottomNavItem(
+                    title = "Stream",
+                    isSelected = selectedTab == DashboardTab.STREAM,
+                    icon = { isSelected ->
+                        Icon(
+                            imageVector = if (isSelected) Icons.Filled.LiveTv else Icons.Outlined.LiveTv,
+                            contentDescription = "Stream",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    },
+                    onClick = { onTabSelected(DashboardTab.STREAM) }
+                )
+
+                // Tab 4: Calls
+                BottomNavItem(
+                    title = "Calls",
+                    isSelected = selectedTab == DashboardTab.CALLS,
+                    icon = { isSelected ->
+                        Icon(
+                            imageVector = if (isSelected) Icons.Filled.Call else Icons.Outlined.Call,
+                            contentDescription = "Calls",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    },
+                    onClick = { onTabSelected(DashboardTab.CALLS) }
+                )
+
+                // Tab 5: Profile
+                BottomNavItem(
+                    title = "Profile",
+                    isSelected = selectedTab == DashboardTab.PROFILE,
+                    icon = { isSelected ->
+                        Icon(
+                            imageVector = if (isSelected) Icons.Filled.Person else Icons.Outlined.Person,
+                            contentDescription = "Profile",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    },
+                    onClick = { onTabSelected(DashboardTab.PROFILE) }
+                )
+            }
+        }
+
+        // Below the mobile nav section - styled with header background color
+        Spacer(
             modifier = Modifier
                 .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceAround,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Tab 1: Chats
-            BottomNavItem(
-                title = "Chats",
-                isSelected = selectedTab == DashboardTab.CHATS,
-                badgeCount = unreadChatsCount,
-                icon = { isSelected ->
-                    Icon(
-                        imageVector = if (isSelected) Icons.Filled.Chat else Icons.Outlined.Chat,
-                        contentDescription = "Chats",
-                        modifier = Modifier.size(22.dp)
-                    )
-                },
-                onClick = { onTabSelected(DashboardTab.CHATS) }
-            )
-
-            // Tab 2: Updates
-            BottomNavItem(
-                title = "Updates",
-                isSelected = selectedTab == DashboardTab.UPDATES,
-                icon = { isSelected ->
-                    Icon(
-                        imageVector = if (isSelected) Icons.Filled.Update else Icons.Outlined.Update,
-                        contentDescription = "Updates",
-                        modifier = Modifier.size(22.dp)
-                    )
-                },
-                onClick = { onTabSelected(DashboardTab.UPDATES) }
-            )
-
-            // Tab 3: Stream
-            BottomNavItem(
-                title = "Stream",
-                isSelected = selectedTab == DashboardTab.STREAM,
-                icon = { isSelected ->
-                    Icon(
-                        imageVector = if (isSelected) Icons.Filled.LiveTv else Icons.Outlined.LiveTv,
-                        contentDescription = "Stream",
-                        modifier = Modifier.size(22.dp)
-                    )
-                },
-                onClick = { onTabSelected(DashboardTab.STREAM) }
-            )
-
-            // Tab 4: Calls
-            BottomNavItem(
-                title = "Calls",
-                isSelected = selectedTab == DashboardTab.CALLS,
-                icon = { isSelected ->
-                    Icon(
-                        imageVector = if (isSelected) Icons.Filled.Call else Icons.Outlined.Call,
-                        contentDescription = "Calls",
-                        modifier = Modifier.size(22.dp)
-                    )
-                },
-                onClick = { onTabSelected(DashboardTab.CALLS) }
-            )
-
-            // Tab 5: Profile
-            BottomNavItem(
-                title = "Profile",
-                isSelected = selectedTab == DashboardTab.PROFILE,
-                icon = { isSelected ->
-                    Icon(
-                        imageVector = if (isSelected) Icons.Filled.Person else Icons.Outlined.Person,
-                        contentDescription = "Profile",
-                        modifier = Modifier.size(22.dp)
-                    )
-                },
-                onClick = { onTabSelected(DashboardTab.PROFILE) }
-            )
-        }
+                .windowInsetsBottomHeight(WindowInsets.navigationBars)
+                .background(TriggerHeaderGreen)
+        )
     }
 }
 

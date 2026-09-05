@@ -58,26 +58,12 @@ fun SettingsScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("settings_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = SettingsBg,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Settings",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
-                    }
-                },
+            com.example.ui.components.TriggerTopHeader(
+                title = "Settings",
+                onBack = onBack,
                 actions = {
                     IconButton(onClick = { /* Search settings */ }) {
                         Icon(
@@ -86,11 +72,11 @@ fun SettingsScreen(
                             tint = Color.White
                         )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = SettingsGreenHeader
-                )
+                }
             )
+        },
+        bottomBar = {
+            com.example.ui.components.TriggerBottomNavInset()
         },
         snackbarHost = {
             if (showInviteSnackbar) {

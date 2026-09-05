@@ -31,6 +31,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.ui.components.HelpModalBottomSheet
+import com.example.ui.components.TriggerBottomNavInset
+import com.example.ui.components.TriggerTopHeader
 import com.example.ui.theme.*
 
 @Composable
@@ -43,84 +45,84 @@ fun LandingScreen(
     var showMenu by remember { mutableStateOf(false) }
     var showHelpSheet by remember { mutableStateOf(false) }
 
-    Box(
+    Scaffold(
         modifier = modifier
             .fillMaxSize()
-            .background(GeometricCanvasBg)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .testTag("landing_screen")
-    ) {
+            .testTag("landing_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = GeometricCanvasBg,
+        topBar = {
+            TriggerTopHeader(
+                title = "Trigger App",
+                actions = {
+                    // Accessibility button
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.2f))
+                            .testTag("accessibility_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AccessibilityNew,
+                            contentDescription = "Accessibility",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(4.dp))
+
+                    Box {
+                        IconButton(
+                            onClick = { showMenu = true },
+                            modifier = Modifier.testTag("landing_more_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.MoreVert,
+                                contentDescription = "More options",
+                                tint = Color.White
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false },
+                            modifier = Modifier
+                                .background(Color.White)
+                                .testTag("landing_dropdown_menu")
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = stringResource(R.string.help),
+                                        color = GeometricTextPrimary,
+                                        fontSize = 15.sp
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    showHelpSheet = true
+                                },
+                                modifier = Modifier.testTag("menu_help_item")
+                            )
+                        }
+                    }
+                }
+            )
+        },
+        bottomBar = {
+            TriggerBottomNavInset()
+        }
+    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .padding(innerPadding)
                 .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Top Bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Accessibility button
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFFE8F5E9))
-                        .testTag("accessibility_button"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.AccessibilityNew,
-                        contentDescription = "Accessibility",
-                        tint = GeometricGreenDark,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                Box {
-                    IconButton(
-                        onClick = { showMenu = true },
-                        modifier = Modifier.testTag("landing_more_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.MoreVert,
-                            contentDescription = "More options",
-                            tint = Color(0xFF44474E)
-                        )
-                    }
-
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false },
-                        modifier = Modifier
-                            .background(Color.White)
-                            .testTag("landing_dropdown_menu")
-                    ) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = stringResource(R.string.help),
-                                    color = GeometricTextPrimary,
-                                    fontSize = 15.sp
-                                )
-                            },
-                            onClick = {
-                                showMenu = false
-                                showHelpSheet = true
-                            },
-                            modifier = Modifier.testTag("menu_help_item")
-                        )
-                    }
-                }
-            }
-
             Spacer(modifier = Modifier.weight(0.15f))
 
             // Center Illustration with balanced geometric circular frame

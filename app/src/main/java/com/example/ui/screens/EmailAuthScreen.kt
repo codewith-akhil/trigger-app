@@ -94,30 +94,16 @@ fun EmailAuthScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("email_auth_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = Color.White,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Enter your email",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TriggerHeaderGreen
-                    )
-                },
-                navigationIcon = {
-                    if (onBack != null) {
-                        IconButton(onClick = onBack) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = TriggerHeaderGreen
-                            )
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
+            com.example.ui.components.TriggerTopHeader(
+                title = "Enter your email",
+                onBack = onBack
             )
+        },
+        bottomBar = {
+            com.example.ui.components.TriggerBottomNavInset()
         }
     ) { innerPadding ->
         Column(

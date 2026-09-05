@@ -50,28 +50,16 @@ fun PrivacySettingsScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("privacy_settings_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = ScreenBg,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Privacy",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = ScreenGreenHeader)
+            com.example.ui.components.TriggerTopHeader(
+                title = "Privacy",
+                onBack = onBack
             )
+        },
+        bottomBar = {
+            com.example.ui.components.TriggerBottomNavInset()
         }
     ) { innerPadding ->
         Column(

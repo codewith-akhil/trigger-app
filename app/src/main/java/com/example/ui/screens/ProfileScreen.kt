@@ -14,13 +14,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -56,6 +61,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -138,6 +144,53 @@ private sealed class UsernameAvailability {
 }
 
 // ============================================================================
+// ProfileTopHeader
+// ============================================================================
+@Composable
+fun ProfileTopHeader(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = TriggerGreenAccent,
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Fill area above the header section (status bar) with header green background
+            Spacer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsTopHeight(WindowInsets.statusBars)
+                    .background(TriggerGreenAccent)
+            )
+            // Header content
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Profile",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+// ============================================================================
 // ProfileScreen
 // ============================================================================
 @OptIn(ExperimentalMaterial3Api::class)
@@ -145,6 +198,7 @@ private sealed class UsernameAvailability {
 fun ProfileScreen(
     onBack: () -> Unit,
     onLogout: () -> Unit = {},
+    showHeader: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val profile by UserRepository.profile.collectAsState()
@@ -251,34 +305,22 @@ fun ProfileScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("profile_screen"),
-        // White/light-gray background for the content area (NOT green — green
-        // is only for the TopAppBar + status bar, set globally in MainActivity).
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = TriggerLightBg,
         topBar = {
-            TopAppBar(
-                modifier = Modifier
-                    .height(48.dp),
-                title = {
-                    Text(
-                        text = "Profile",
-                        color = Color.White,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = TriggerGreenAccent
+            if (showHeader) {
+                ProfileTopHeader(onBack = onBack)
+            }
+        },
+        bottomBar = {
+            if (showHeader) {
+                Spacer(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .windowInsetsBottomHeight(WindowInsets.navigationBars)
+                        .background(TriggerGreenAccent)
                 )
-            )
+            }
         }
     ) { innerPadding ->
         Column(
@@ -395,7 +437,7 @@ fun ProfileScreen(
                     ProfileDetailItem(
                         icon = Icons.Outlined.AlternateEmail,
                         label = "Username",
-                        value = if (profile.username.isNotEmpty()) "@${profile.username}" else "Reserve username",
+                        value = if (profile.username.isNotEmpty()) "@${profile.username}" else "Create a username",
                         isValueGreen = profile.username.isEmpty(),
                         onClick = { showEditUsernameDialog = true },
                         testTag = "profile_username_item"

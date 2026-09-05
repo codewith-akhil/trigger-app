@@ -110,28 +110,16 @@ fun ResetPasswordScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("reset_password_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = Color.White,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Create new password",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TriggerHeaderGreen
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = TriggerHeaderGreen
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
+            com.example.ui.components.TriggerTopHeader(
+                title = "Create new password",
+                onBack = onBack
             )
+        },
+        bottomBar = {
+            com.example.ui.components.TriggerBottomNavInset()
         }
     ) { innerPadding ->
         Column(

@@ -61,35 +61,16 @@ fun WalletScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("wallet_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = DarkBackground,
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = "Trigger Wallet & Payouts",
-                            color = Color.White,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Stream Monetization & Banking",
-                            color = Color.White.copy(alpha = 0.8f),
-                            fontSize = 12.sp
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = HeaderGreen)
+            com.example.ui.components.TriggerTopHeader(
+                title = "Trigger Wallet & Payouts",
+                onBack = onBack
             )
+        },
+        bottomBar = {
+            com.example.ui.components.TriggerBottomNavInset()
         },
         snackbarHost = {
             snackbarMessage?.let { msg ->

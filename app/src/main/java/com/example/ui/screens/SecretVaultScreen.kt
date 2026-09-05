@@ -110,17 +110,16 @@ fun VaultPinLockScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = DarkBackground,
         topBar = {
-            TopAppBar(
-                title = { Text("Trigger Secret Vault", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBackground)
+            com.example.ui.components.TriggerTopHeader(
+                title = "Trigger Secret Vault",
+                onBack = onBack
             )
+        },
+        bottomBar = {
+            com.example.ui.components.TriggerBottomNavInset()
         }
     ) { innerPadding ->
         Column(
@@ -335,27 +334,21 @@ fun VaultGalleryScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = DarkBackground,
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("Secret Vault", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                        Text("${items.size} hidden items", color = Color(0xFF94A3B8), fontSize = 12.sp)
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-                    }
-                },
+            com.example.ui.components.TriggerTopHeader(
+                title = "Secret Vault",
+                onBack = onBack,
                 actions = {
                     IconButton(onClick = onLock) {
-                        Icon(Icons.Filled.Lock, contentDescription = "Lock Vault", tint = AccentGreen)
+                        Icon(Icons.Filled.Lock, contentDescription = "Lock Vault", tint = Color.White)
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = CardDark)
+                }
             )
+        },
+        bottomBar = {
+            com.example.ui.components.TriggerBottomNavInset()
         },
         floatingActionButton = {
             FloatingActionButton(

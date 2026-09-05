@@ -47,100 +47,106 @@ fun CountrySelectionScreen(
         }
     }
 
-    Box(
+    Scaffold(
         modifier = modifier
             .fillMaxSize()
-            .background(GeometricCanvasBg)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .testTag("country_selection_screen")
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Top Bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(60.dp)
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = {
-                        if (isSearching) {
-                            isSearching = false
-                            searchQuery = ""
-                        } else {
-                            onBack()
-                        }
-                    },
-                    modifier = Modifier.testTag("country_back_button")
+            .testTag("country_selection_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = GeometricCanvasBg,
+        topBar = {
+            if (isSearching) {
+                Surface(
+                    color = TriggerHeaderGreen,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = Color(0xFF44474E)
-                    )
-                }
-
-                if (isSearching) {
-                    TextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = {
-                            Text(
-                                text = stringResource(R.string.search_country),
-                                color = GeometricTextMuted,
-                                fontSize = 16.sp
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Spacer(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .windowInsetsTopHeight(WindowInsets.statusBars)
+                                .background(TriggerHeaderGreen)
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp)
+                                .padding(horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = {
+                                isSearching = false
+                                searchQuery = ""
+                            }) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Back",
+                                    tint = Color.White
+                                )
+                            }
+                            TextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                placeholder = {
+                                    Text(
+                                        text = stringResource(R.string.search_country),
+                                        color = Color.White.copy(alpha = 0.7f),
+                                        fontSize = 16.sp
+                                    )
+                                },
+                                colors = TextFieldDefaults.colors(
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    cursorColor = Color.White,
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent
+                                ),
+                                singleLine = true,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("country_search_input")
                             )
-                        },
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            focusedTextColor = GeometricTextDark,
-                            unfocusedTextColor = GeometricTextDark,
-                            cursorColor = GeometricGreenPrimary,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent
-                        ),
-                        singleLine = true,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("country_search_input")
-                    )
-
-                    if (searchQuery.isNotEmpty()) {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Close,
+                                        contentDescription = "Clear",
+                                        tint = Color.White
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                com.example.ui.components.TriggerTopHeader(
+                    title = stringResource(R.string.choose_country),
+                    onBack = onBack,
+                    actions = {
                         IconButton(
-                            onClick = { searchQuery = "" },
-                            modifier = Modifier.testTag("clear_country_search")
+                            onClick = { isSearching = true },
+                            modifier = Modifier.testTag("country_search_button")
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.Close,
-                                contentDescription = "Clear",
-                                tint = Color(0xFF44474E)
+                                imageVector = Icons.Filled.Search,
+                                contentDescription = "Search",
+                                tint = Color.White
                             )
                         }
                     }
-                } else {
-                    Text(
-                        text = stringResource(R.string.choose_country),
-                        color = GeometricTextPrimary,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    IconButton(
-                        onClick = { isSearching = true },
-                        modifier = Modifier.testTag("country_search_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Search,
-                            contentDescription = "Search",
-                            tint = Color(0xFF44474E)
-                        )
-                    }
-                }
+                )
             }
+        },
+        bottomBar = {
+            com.example.ui.components.TriggerBottomNavInset()
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
 
             HorizontalDivider(color = GeometricBorderLight, thickness = 1.dp)
 

@@ -86,110 +86,124 @@ fun SelectContactScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("select_contact_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = TriggerLightBg,
         topBar = {
-            TopAppBar(
-                title = {
-                    if (isSearchActive) {
-                        BasicTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            textStyle = TextStyle(
-                                color = Color.White,
-                                fontSize = 16.sp
-                            ),
-                            cursorBrush = SolidColor(Color.White),
-                            singleLine = true,
-                            decorationBox = { innerTextField ->
-                                if (searchQuery.isEmpty()) {
-                                    Text(
-                                        text = "Search contacts...",
-                                        color = Color.White.copy(alpha = 0.7f),
-                                        fontSize = 16.sp
+            Surface(
+                color = TriggerGreenHeader,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Spacer(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsTopHeight(WindowInsets.statusBars)
+                            .background(TriggerGreenHeader)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = {
+                                if (isSearchActive) {
+                                    isSearchActive = false
+                                    searchQuery = ""
+                                } else {
+                                    onBack()
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = Color.White
+                            )
+                        }
+
+                        if (isSearchActive) {
+                            BasicTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                textStyle = TextStyle(
+                                    color = Color.White,
+                                    fontSize = 16.sp
+                                ),
+                                cursorBrush = SolidColor(Color.White),
+                                singleLine = true,
+                                decorationBox = { innerTextField ->
+                                    if (searchQuery.isEmpty()) {
+                                        Text(
+                                            text = "Search contacts...",
+                                            color = Color.White.copy(alpha = 0.7f),
+                                            fontSize = 16.sp
+                                        )
+                                    }
+                                    innerTextField()
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("select_contact_search_field")
+                            )
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(Icons.Filled.Close, contentDescription = "Clear", tint = Color.White)
+                                }
+                            }
+                        } else {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Select contact",
+                                    color = Color.White,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "4042 contacts",
+                                    color = Color.White.copy(alpha = 0.8f),
+                                    fontSize = 12.sp
+                                )
+                            }
+                            IconButton(onClick = { isSearchActive = true }) {
+                                Icon(Icons.Filled.Search, contentDescription = "Search", tint = Color.White)
+                            }
+                            Box {
+                                IconButton(onClick = { showMenu = true }) {
+                                    Icon(Icons.Filled.MoreVert, contentDescription = "More options", tint = Color.White)
+                                }
+                                DropdownMenu(
+                                    expanded = showMenu,
+                                    onDismissRequest = { showMenu = false },
+                                    modifier = Modifier.background(Color.White)
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Invite a friend", color = TriggerTextPrimary) },
+                                        onClick = { showMenu = false }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Contacts", color = TriggerTextPrimary) },
+                                        onClick = { showMenu = false }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Refresh", color = TriggerTextPrimary) },
+                                        onClick = { showMenu = false }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Help", color = TriggerTextPrimary) },
+                                        onClick = { showMenu = false }
                                     )
                                 }
-                                innerTextField()
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("select_contact_search_field")
-                        )
-                    } else {
-                        Column {
-                            Text(
-                                text = "Select contact",
-                                color = Color.White,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "4042 contacts",
-                                color = Color.White.copy(alpha = 0.8f),
-                                fontSize = 12.sp
-                            )
-                        }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(
-                        onClick = {
-                            if (isSearchActive) {
-                                isSearchActive = false
-                                searchQuery = ""
-                            } else {
-                                onBack()
                             }
                         }
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
                     }
-                },
-                actions = {
-                    if (isSearchActive) {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Filled.Close, contentDescription = "Clear", tint = Color.White)
-                            }
-                        }
-                    } else {
-                        IconButton(onClick = { isSearchActive = true }) {
-                            Icon(Icons.Filled.Search, contentDescription = "Search", tint = Color.White)
-                        }
-                        IconButton(onClick = { showMenu = true }) {
-                            Icon(Icons.Filled.MoreVert, contentDescription = "More options", tint = Color.White)
-                        }
-                        DropdownMenu(
-                            expanded = showMenu,
-                            onDismissRequest = { showMenu = false },
-                            modifier = Modifier.background(Color.White)
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Invite a friend", color = TriggerTextPrimary) },
-                                onClick = { showMenu = false }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Contacts", color = TriggerTextPrimary) },
-                                onClick = { showMenu = false }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Refresh", color = TriggerTextPrimary) },
-                                onClick = { showMenu = false }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Help", color = TriggerTextPrimary) },
-                                onClick = { showMenu = false }
-                            )
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = TriggerGreenHeader
-                )
-            )
+                }
+            }
+        },
+        bottomBar = {
+            com.example.ui.components.TriggerBottomNavInset()
         }
     ) { innerPadding ->
         LazyColumn(

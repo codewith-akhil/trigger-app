@@ -49,28 +49,16 @@ fun AccountSettingsScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("account_settings_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = ScreenBg,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Account",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = ScreenGreenHeader)
+            com.example.ui.components.TriggerTopHeader(
+                title = "Account",
+                onBack = onBack
             )
+        },
+        bottomBar = {
+            com.example.ui.components.TriggerBottomNavInset()
         },
         snackbarHost = {
             if (showRequestReportSnackbar) {

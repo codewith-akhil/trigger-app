@@ -32,52 +32,27 @@ fun LanguageSelectionScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    Scaffold(
         modifier = modifier
             .fillMaxSize()
-            .background(GeometricCanvasBg)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .testTag("language_selection_screen")
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Top Bar with subtle divider
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(60.dp)
-                    .drawBehind {
-                        drawLine(
-                            color = GeometricBorderLight,
-                            start = androidx.compose.ui.geometry.Offset(0f, size.height),
-                            end = androidx.compose.ui.geometry.Offset(size.width, size.height),
-                            strokeWidth = 1.dp.toPx()
-                        )
-                    }
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier.testTag("close_language_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Close",
-                        tint = Color(0xFF44474E)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Text(
-                    text = stringResource(R.string.app_language),
-                    color = GeometricTextPrimary,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-
+            .testTag("language_selection_screen"),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = GeometricCanvasBg,
+        topBar = {
+            com.example.ui.components.TriggerTopHeader(
+                title = stringResource(R.string.app_language),
+                onBack = onBack
+            )
+        },
+        bottomBar = {
+            com.example.ui.components.TriggerBottomNavInset()
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
             // Language items list
             LazyColumn(
                 modifier = Modifier
