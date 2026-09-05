@@ -43,6 +43,15 @@ fun ForgotPasswordScreen(
     val coroutineScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
+    val imeInsets = WindowInsets.ime
+    val density = androidx.compose.ui.platform.LocalDensity.current
+
+    // Smooth scroll into view when keyboard opens
+    LaunchedEffect(imeInsets.getBottom(density)) {
+        if (imeInsets.getBottom(density) > 0) {
+            scrollState.animateScrollTo(scrollState.maxValue)
+        }
+    }
 
     fun handleSubmit() {
         errorMessage = null
@@ -135,26 +144,40 @@ fun ForgotPasswordScreen(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Email text field
+            // Email text field (reduced font size for longer emails, smooth scroll friendly)
             OutlinedTextField(
                 value = email,
                 onValueChange = {
                     email = it
                     errorMessage = null
                 },
-                label = { Text("Registered email") },
-                placeholder = { Text("you@example.com") },
+                textStyle = LocalTextStyle.current.copy(
+                    fontSize = 13.5.sp,
+                    lineHeight = 18.sp,
+                    color = GeometricTextPrimary
+                ),
+                label = { Text("Registered email", fontSize = 13.sp) },
+                placeholder = { Text("you@example.com", fontSize = 13.5.sp, color = GeometricTextMuted) },
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Outlined.Email,
                         contentDescription = null,
-                        tint = TriggerHeaderGreen
+                        tint = TriggerHeaderGreen,
+                        modifier = Modifier.size(20.dp)
                     )
                 },
                 trailingIcon = {
                     if (email.isNotEmpty()) {
-                        IconButton(onClick = { email = "" }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Clear", tint = Color.Gray)
+                        IconButton(
+                            onClick = { email = "" },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = "Clear",
+                                tint = Color.Gray,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
                 },

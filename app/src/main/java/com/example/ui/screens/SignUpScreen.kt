@@ -48,15 +48,22 @@ fun SignUpScreen(
     var fullName by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var confirmPassword by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
-    var isConfirmPasswordVisible by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isSubmitting by remember { mutableStateOf(false) }
 
     val coroutineScope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
+    val imeInsets = WindowInsets.ime
+    val density = androidx.compose.ui.platform.LocalDensity.current
+
+    // Smooth scroll into view when keyboard opens
+    LaunchedEffect(imeInsets.getBottom(density)) {
+        if (imeInsets.getBottom(density) > 0) {
+            scrollState.animateScrollTo(scrollState.maxValue)
+        }
+    }
 
     fun handleSignUp() {
         errorMessage = null
@@ -88,10 +95,6 @@ fun SignUpScreen(
         }
         if (password.length < 6) {
             errorMessage = "Password must be at least 6 characters"
-            return
-        }
-        if (password != confirmPassword) {
-            errorMessage = "Passwords do not match"
             return
         }
 
@@ -235,20 +238,26 @@ fun SignUpScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Email input field
+            // Email input field (reduced font size for longer emails, smooth scroll friendly)
             OutlinedTextField(
                 value = email,
                 onValueChange = {
                     email = it
                     errorMessage = null
                 },
-                label = { Text("Email address") },
-                placeholder = { Text("you@example.com") },
+                textStyle = LocalTextStyle.current.copy(
+                    fontSize = 13.5.sp,
+                    lineHeight = 18.sp,
+                    color = GeometricTextPrimary
+                ),
+                label = { Text("Email address", fontSize = 13.sp) },
+                placeholder = { Text("you@example.com", fontSize = 13.5.sp, color = GeometricTextMuted) },
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Outlined.Email,
                         contentDescription = null,
-                        tint = TriggerHeaderGreen
+                        tint = TriggerHeaderGreen,
+                        modifier = Modifier.size(20.dp)
                     )
                 },
                 singleLine = true,
@@ -301,53 +310,6 @@ fun SignUpScreen(
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Password,
-                    imeAction = ImeAction.Next
-                ),
-                keyboardActions = KeyboardActions(
-                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
-                ),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = TriggerFabGreen,
-                    unfocusedBorderColor = GeometricBorderLight,
-                    focusedLabelColor = TriggerFabGreen
-                ),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("signup_password_input")
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Confirm Password input field
-            OutlinedTextField(
-                value = confirmPassword,
-                onValueChange = {
-                    confirmPassword = it
-                    errorMessage = null
-                },
-                label = { Text("Confirm Password") },
-                placeholder = { Text("Re-enter password") },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Outlined.Lock,
-                        contentDescription = null,
-                        tint = TriggerHeaderGreen
-                    )
-                },
-                trailingIcon = {
-                    IconButton(onClick = { isConfirmPasswordVisible = !isConfirmPasswordVisible }) {
-                        Icon(
-                            imageVector = if (isConfirmPasswordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                            contentDescription = if (isConfirmPasswordVisible) "Hide password" else "Show password",
-                            tint = Color.Gray
-                        )
-                    }
-                },
-                visualTransformation = if (isConfirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
                     imeAction = ImeAction.Done
                 ),
                 keyboardActions = KeyboardActions(
@@ -364,7 +326,7 @@ fun SignUpScreen(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("signup_confirm_password_input")
+                    .testTag("signup_password_input")
             )
 
             // Error display
