@@ -30,9 +30,12 @@ interface Body {
   phone?: string;
   phoneVerified?: boolean;
   countryIso?: string;
+  country_code?: string;
   languageCode?: string;
   links?: Array<{ label: string; url: string }>;
   isOnline?: boolean;
+  gender?: string;
+  dob?: string;
 }
 
 async function handler(req: Request): Promise<Response> {
@@ -58,18 +61,44 @@ async function handler(req: Request): Promise<Response> {
   // update only touches the supplied columns.
   const patch: Record<string, unknown> = {};
   if (typeof body.fullName === "string") patch.full_name = body.fullName.trim();
-  if (typeof body.username === "string") patch.username = body.username.trim().toLowerCase() || null;
+  if (typeof body.username === "string") {
+    const cleanUsername = body.username.trim().toLowerCase().replace(/^@/, "");
+    patch.username = cleanUsername || null;
+  }
   if (typeof body.about === "string") patch.about = body.about;
   if (typeof body.avatarUrl === "string") patch.avatar_url = body.avatarUrl;
   if (typeof body.avatarBucket === "string") patch.avatar_bucket = body.avatarBucket;
   if (typeof body.phone === "string") patch.phone = body.phone.trim();
   if (typeof body.phoneVerified === "boolean") patch.phone_verified = body.phoneVerified;
   if (typeof body.countryIso === "string") patch.country_iso = body.countryIso.toUpperCase().substring(0, 2);
+  if (typeof body.country_code === "string") patch.country_code = body.country_code.toUpperCase().substring(0, 3);
   if (typeof body.languageCode === "string") patch.language_code = body.languageCode;
   if (Array.isArray(body.links)) patch.links = body.links;
   if (typeof body.isOnline === "boolean") {
     patch.is_online = body.isOnline;
     patch.last_seen_at = new Date().toISOString();
+  }
+  if (typeof body.gender === "string") patch.gender = body.gender || null;
+  if (typeof body.dob === "string") patch.dob = body.dob || null;
+
+  // --- Username change: record old username in history table ---
+  if (patch.username !== undefined) {
+    const supabase0 = createAdminClient();
+    const { data: currentProfile } = await supabase0
+      .from("profiles")
+      .select("username")
+      .eq("id", userId)
+      .maybeSingle();
+    oldUsername = currentProfile?.username ?? null;
+    // Only record history if the username is actually changing
+    if (oldUsername && oldUsername !== patch.username) {
+      await supabase0.from("username_history").insert({
+        user_id: userId,
+        old_username: oldUsername,
+        new_username: patch.username,
+        released_at: new Date().toISOString(),
+      });
+    }
   }
 
   if (Object.keys(patch).length === 0) {
