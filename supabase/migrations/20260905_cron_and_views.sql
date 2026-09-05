@@ -25,6 +25,15 @@ create extension if not exists pg_net  with schema extensions;
 -- The job POSTs to the edge function via pg_net. The function is idempotent
 -- (only transitions status='scheduled' rows whose time has passed), so running
 -- every minute is safe.
+--
+-- POST-DEPLOY SETUP (required for this cron job to actually authenticate):
+--   1. Deploy cron-auto-start-streams with `verify_jwt = false` (see config.toml).
+--   2. Set the CRON_SECRET env var on the function:
+--        supabase secrets set CRON_SECRET=<your-shared-secret>
+--   3. Set the matching GUC on the database so pg_net can read it:
+--        alter database postgres set app.cron_secret = '<your-shared-secret>';
+--      (then reconnect / restart connections so the GUC is picked up).
+--   4. Update the URL below if your project ref differs.
 do $$
 begin
   -- Drop any existing job with the same name to make this re-runnable.
@@ -38,10 +47,19 @@ select cron.schedule(
   '* * * * *',  -- every minute
   $$
     select net.http_post(
+      -- TODO: replace with your project URL if different.
       url := 'https://uazkcainrajcgxecomly.functions.supabase.co/cron-auto-start-streams',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'Authorization', 'Bearer ' || current_setting('request.jwt.claim', true)
+        -- The function is deployed with verify_jwt = false (see config.toml).
+        -- It authenticates via the x-cron-secret header (matched against the
+        -- CRON_SECRET env var on the function). The previous version of this
+        -- cron job passed `Authorization: Bearer <jwt>` using
+        -- `current_setting('request.jwt.claim', true)` — which is always NULL
+        -- inside a pg_cron job (no request JWT context), so every call would
+        -- have been rejected. The GUC `app.cron_secret` must be set post-deploy
+        -- (see the POST-DEPLOY SETUP comment above).
+        'x-cron-secret', current_setting('app.cron_secret', true)
       ),
       body := jsonb_build_object()
     ) as request_id;

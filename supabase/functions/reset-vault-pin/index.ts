@@ -29,7 +29,10 @@ interface Body {
   action?: string; // "send_otp" (default) | "reset"
   otp?: string;
   newPin?: string;
-  email?: string; // optional override; defaults to the caller's auth email
+  // NOTE: `email` is intentionally NOT accepted from the client body —
+  // the OTP is always sent to the authenticated user's own email
+  // (resolved via the JWT). Accepting a client-supplied email would let
+  // an attacker spam arbitrary inboxes.
 }
 
 function isValidPin(v: string): boolean {
@@ -88,12 +91,14 @@ async function handler(req: Request): Promise<Response> {
   const action = (body.action ?? "send_otp").toLowerCase();
 
   // Look up the user's email from auth.users via the admin client.
+  // The email is ALWAYS resolved from the JWT — never from the request
+  // body — so an attacker can't spam OTPs at arbitrary inboxes.
   const supabase = createAdminClient();
   const { data: userData, error: userError } = await supabase.auth.admin.getUserById(userId);
   if (userError || !userData?.user?.email) {
     return errorResponse("Unable to resolve user email", 500);
   }
-  const email = (body.email ?? userData.user.email).trim().toLowerCase();
+  const email = userData.user.email.trim().toLowerCase();
 
   if (action === "send_otp") {
     // --- Cooldown check ------------------------------------------------------

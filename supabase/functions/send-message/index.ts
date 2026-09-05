@@ -178,14 +178,21 @@ async function handler(req: Request): Promise<Response> {
     last_message_at: new Date().toISOString(),
   }).eq("id", body.conversation_id);
 
-  // Increment unread_count for the receiver's conversation (direct SQL, no RPC needed)
+  // Increment unread_count for the receiver's conversation atomically.
+  // The previous "direct SQL" update referenced `conv.unread_count`, which
+  // was never fetched in the SELECT above (`.select("id, owner_id, peer_id, request_status")`),
+  // so `(conv.unread_count ?? 0) + 1` always evaluated to 1 — clobbering the
+  // receiver's true unread count instead of incrementing it. The
+  // security_definer RPC `increment_unread_count` (defined in migrations
+  // 20260912 + 20260913) does the increment atomically server-side:
+  //   update conversations set unread_count = unread_count + 1
+  //    where id = p_conversation_id and (owner_id = p_user_id or peer_id = p_user_id)
   const receiverId = conv.owner_id === userId ? conv.peer_id : conv.owner_id;
   if (receiverId) {
-    // Direct SQL update — works without a separate RPC
-    await supabase.from("conversations")
-      .update({ unread_count: (conv.unread_count ?? 0) + 1 })
-      .eq("id", body.conversation_id)
-      .neq("owner_id", userId);
+    await supabase.rpc("increment_unread_count", {
+      p_conversation_id: body.conversation_id,
+      p_user_id: receiverId,
+    });
   }
 
   // Send push notification to the receiver via send-chat-notification edge function

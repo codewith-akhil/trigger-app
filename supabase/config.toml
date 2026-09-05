@@ -432,3 +432,39 @@ enabled = true
 # declarative_schema_path = "./schemas"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+
+# ----------------------------------------------------------------------------
+# Edge Functions — verify_jwt overrides
+# ----------------------------------------------------------------------------
+# Functions called WITHOUT a user JWT (pre-auth flows, cron jobs, or webhooks
+# verified by other means) MUST set verify_jwt = false. Otherwise Supabase
+# returns 401 before the function even runs. All other functions default to
+# verify_jwt = true (set via the dashboard / CLI default) and are NOT listed
+# here — they require a valid Supabase JWT (sync-user-profile, get-my-profile,
+# check-username-availability, send-message, search-messages, wallet-withdraw,
+# upsert-vault-pin, verify-vault-pin, reset-vault-pin, etc.).
+#
+# Pre-auth / OTP flows (caller has no session yet):
+[functions.verify-email-otp]
+verify_jwt = false
+[functions.send-email-otp]
+verify_jwt = false
+[functions.check-email]
+verify_jwt = false
+[functions.reset-password]
+verify_jwt = false
+[functions.delete-account-otp]
+verify_jwt = false
+# Webhook receivers (verified by HMAC signature, not JWT):
+[functions.razorpay-webhook]
+verify_jwt = false
+# Cron-triggered (no user JWT context — authenticated via x-cron-secret header):
+[functions.update-fx-rates]
+verify_jwt = false
+[functions.cron-auto-start-streams]
+verify_jwt = false
+# Cron-invoked email senders (called by other edge functions / scheduler):
+[functions.send-stream-scheduled-email]
+verify_jwt = false
+[functions.send-booking-confirmation-email]
+verify_jwt = false

@@ -82,7 +82,6 @@ async function handler(req: Request): Promise<Response> {
   // --- Fetch the authoritative payment details from Razorpay (don't trust
   // client-supplied amount/streamId — only the signature is verified above).
   const keyId = Deno.env.get("RAZORPAY_KEY_ID");
-  const keySecret = Deno.env.get("RAZORPAY_KEY_SECRET");
   if (!keyId || !keySecret) return errorResponse("Razorpay keys not configured", 500);
   const auth = btoa(`${keyId}:${keySecret}`);
   const payRes = await fetch(`https://api.razorpay.com/v1/payments/${body.razorpayPaymentId}`, {
@@ -107,18 +106,18 @@ async function handler(req: Request): Promise<Response> {
   const supabase = createAdminClient();
   const referenceId = `RZP-${body.razorpayPaymentId}`;
 
-  if (purpose === "stream_booking" && body.streamId) {
+  if (purpose === "stream_booking" && streamId) {
     // Insert a stream_booking row + a wallet credit to the host.
     const { error: bookingError } = await supabase.from("stream_bookings").upsert(
       {
-        stream_id: body.streamId,
+        stream_id: streamId,
         user_id: userId,
         user_name: "",  // filled by client-triggered profile lookup if desired
         user_email: "",
         payment_method: "cards",
         payment_reference: referenceId,
-        amount_paid: body.amount ?? 0,
-        currency: body.currency ?? "INR (₹)",
+        amount_paid: amount,
+        currency: currency === "INR" ? "INR (₹)" : currency,
       },
       { onConflict: "stream_id,user_id" },
     );
@@ -131,26 +130,26 @@ async function handler(req: Request): Promise<Response> {
     const { data: stream } = await supabase
       .from("scheduled_streams")
       .select("host_id, title")
-      .eq("id", body.streamId)
+      .eq("id", streamId)
       .single();
     if (stream?.host_id) {
       await supabase.from("wallet_transactions").insert({
         user_id: stream.host_id,
         type: "credit",
-        amount: body.amount ?? 0,
-        currency: body.currency ?? "INR (₹)",
+        amount: amount,
+        currency: currency === "INR" ? "INR (₹)" : currency,
         description: `Ticket sale: ${stream.title ?? "stream"}`,
         reference_id: referenceId,
         status: "completed",
-        related_stream_id: body.streamId,
+        related_stream_id: streamId,
       });
     }
   } else if (purpose === "wallet_topup") {
     await supabase.from("wallet_transactions").insert({
       user_id: userId,
       type: "credit",
-      amount: body.amount ?? 0,
-      currency: body.currency ?? "INR (₹)",
+      amount: amount,
+      currency: currency === "INR" ? "INR (₹)" : currency,
       description: "Wallet top-up",
       reference_id: referenceId,
       status: "completed",
