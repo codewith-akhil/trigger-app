@@ -111,7 +111,7 @@ class ChatViewModel(
     // Voice recording state
     var isRecordingVoice = MutableStateFlow(false)
     var isRecordingLocked = MutableStateFlow(false)
-    var recordingDurationSec = MutableStateFlow(0)
+    var recordingDurationSec = MutableStateFlow(0f)
     var recordingAmplitudes = MutableStateFlow<List<Float>>(emptyList())
     private var recordingTimerJob: Job? = null
     private var mediaRecorder: android.media.MediaRecorder? = null
@@ -213,7 +213,7 @@ class ChatViewModel(
     fun startVoiceRecording() {
         isRecordingVoice.value = true
         isRecordingLocked.value = false
-        recordingDurationSec.value = 0
+        recordingDurationSec.value = 0f
         recordingAmplitudes.value = emptyList()
 
         viewModelScope.launch {
@@ -253,7 +253,7 @@ class ChatViewModel(
             recordingTimerJob = viewModelScope.launch {
                 while (isActive) {
                     delay(1000)
-                    recordingDurationSec.value += 1
+                    recordingDurationSec.value += 1f
                     recordingAmplitudes.value = (recordingAmplitudes.value + 0.1f).takeLast(24)
                 }
             }
@@ -274,7 +274,7 @@ class ChatViewModel(
         currentVoiceFile = null
         isRecordingVoice.value = false
         isRecordingLocked.value = false
-        recordingDurationSec.value = 0
+        recordingDurationSec.value = 0f
         recordingAmplitudes.value = emptyList()
 
         viewModelScope.launch {
@@ -480,7 +480,7 @@ class ChatViewModel(
     fun shareContact(name: String, phone: String) {
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
         val msg = DomainMessage(
-            id = "contact_${System.currentTimeMillis()}",
+            id = java.util.UUID.randomUUID().toString(),
             conversationId = contactId,
             senderId = "me",
             senderName = "You",
@@ -576,7 +576,7 @@ class ChatViewModel(
             repository.setDisappearingDuration(contactId, duration)
             val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
             val systemMsg = DomainMessage(
-                id = "sys_${System.currentTimeMillis()}",
+                id = java.util.UUID.randomUUID().toString(),
                 conversationId = contactId,
                 senderId = "system",
                 senderName = "System",

@@ -9,6 +9,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.example.ui.navigation.TriggerAppNavHost
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.TriggerDarkBackground
@@ -21,7 +24,6 @@ class MainActivity : ComponentActivity() {
 
         // Create FCM notification channels + auto-register the FCM token with
         // the Supabase register-push-token edge function on every app launch.
-        // The token refresh is also handled by TriggerFirebaseMessagingService.onNewToken.
         com.example.service.TriggerFirebaseMessagingService.createNotificationChannels(this)
         com.example.service.TriggerFirebaseMessagingService.registerToken(this)
 
@@ -29,16 +31,26 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         // Set the system status bar background to the app's signature green
-        // (#008069) so every page has the green strip at the top — unique to
-        // Trigger App. The navigation bar stays transparent/default.
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        // Use the compat controller to set status bar color on all API levels.
         val controller = WindowCompat.getInsetsController(window, window.decorView)
-        controller.isAppearanceLightStatusBars = false // white status bar icons on green bg
-        // Set the status bar color directly via the window (works on API 21+).
+        controller.isAppearanceLightStatusBars = false
         window.statusBarColor = android.graphics.Color.parseColor("#008069")
-        // Navigation bar gets a subtle dark green too for consistency.
         window.navigationBarColor = android.graphics.Color.parseColor("#008069")
+
+        // ProcessLifecycleOwner observer — detects real app foreground/background
+        // transitions (not just login/logout). Calls presence onAppForeground/
+        // onAppBackground so the heartbeat starts/stops correctly.
+        ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) {
+                // App came to foreground
+                (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppForeground()
+            }
+
+            override fun onStop(owner: LifecycleOwner) {
+                // App went to background
+                (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppBackground()
+            }
+        })
 
         setContent {
             MyApplicationTheme {

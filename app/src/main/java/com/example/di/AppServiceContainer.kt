@@ -99,7 +99,7 @@ object AppServiceContainer {
             }
 
             val callLogMsg = DomainMessage(
-                id = "call_${System.currentTimeMillis()}",
+                id = java.util.UUID.randomUUID().toString(),
                 conversationId = contactId,
                 senderId = "me",
                 senderName = "You",
