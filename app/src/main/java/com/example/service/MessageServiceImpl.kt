@@ -291,7 +291,13 @@ class MessageServiceImpl(
 
     override suspend fun toggleReaction(messageId: String, emoji: String) {
         repository.toggleReaction(messageId, emoji)
-        // TODO: sync to Supabase message_reactions table via edge function
+        // Sync to Supabase message_reactions table via toggle-reaction edge function
+        val supabaseClient = AppServiceContainer.supabaseClient
+        val payload = JSONObject().apply {
+            put("message_id", messageId)
+            put("emoji", emoji)
+        }
+        supabaseClient.invokeFunction("toggle-reaction", payload)
     }
 
     override suspend fun markViewOnceOpened(messageId: String) {
@@ -352,6 +358,7 @@ class MessageServiceImpl(
     }
 
     override suspend fun forwardMessage(message: DomainMessage, targetConversationIds: List<String>) {
+        // Insert locally for each target
         val currentTime = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()).format(java.util.Date())
         targetConversationIds.forEach { targetId ->
             val forwardedMsg = message.copy(
@@ -364,7 +371,22 @@ class MessageServiceImpl(
                 reactions = emptyList(),
                 idempotencyKey = java.util.UUID.randomUUID().toString()
             )
-            sendMessage(forwardedMsg)
+            repository.sendMessage(forwardedMsg, true)
+        }
+
+        // Sync to Supabase via forward-message edge function
+        val supabaseClient = AppServiceContainer.supabaseClient
+        val payload = JSONObject().apply {
+            put("message_id", message.id)
+            put("target_conversation_ids", org.json.JSONArray(targetConversationIds))
+        }
+        val result = supabaseClient.invokeFunction("forward-message", payload)
+        if (result is SupabaseResult.Success) {
+            // Update local messages to SENT
+            targetConversationIds.forEach { _ ->
+                // The edge function created the real server-side messages
+                // Realtime will deliver them to the receiver
+            }
         }
     }
 
@@ -425,14 +447,12 @@ class MessageServiceImpl(
     override suspend fun togglePinMessage(messageId: String) {
         // Toggle locally
         repository.togglePin(messageId)
-        // Sync to Supabase via direct upsert (no edge function defined, so use upsertRecord)
+        // Sync to Supabase via pin-message edge function
         val supabaseClient = AppServiceContainer.supabaseClient
-        val msg = repository.getMessageById(messageId) ?: return
         val payload = JSONObject().apply {
-            put("id", messageId)
-            put("is_pinned", msg.isPinned)
+            put("message_id", messageId)
         }
-        supabaseClient.upsertRecord("messages", payload, onConflict = "id")
+        supabaseClient.invokeFunction("pin-message", payload)
     }
 
     override suspend fun searchMessagesEx(

@@ -21,6 +21,10 @@ class ChatRepositoryImpl(
         }
     }
 
+    suspend fun insertConversation(entity: com.example.data.local.ConversationEntity) {
+        conversationDao.insertConversation(entity)
+    }
+
     fun getConversation(id: String): Flow<DomainConversation?> {
         return conversationDao.getConversationById(id).map { it?.toDomain() }
     }

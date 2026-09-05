@@ -12,8 +12,46 @@ import kotlinx.coroutines.launch
 class DashboardViewModel : ViewModel() {
     private val repository = AppServiceContainer.chatRepository
     private val presenceService = AppServiceContainer.presenceService
+    private val supabaseClient = AppServiceContainer.supabaseClient
 
     val connectionState: StateFlow<PresenceStatus> = presenceService.connectionState
+
+    init {
+        // Sync conversations from Supabase on app launch (multi-device sync)
+        viewModelScope.launch {
+            try {
+                val payload = org.json.JSONObject().apply {
+                    put("action", "pull")
+                }
+                val result = supabaseClient.invokeFunction("sync-conversations", payload)
+                if (result is com.example.service.supabase.SupabaseResult.Success) {
+                    val arr = result.data.optJSONArray("conversations") ?: return@launch
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        // Insert/update each conversation in Room
+                        val conv = com.example.data.local.ConversationEntity(
+                            id = obj.getString("id"),
+                            name = obj.optString("peer_name", "Unknown"),
+                            avatarRes = null,
+                            initialColor = obj.optLong("peer_avatar_color", 0xFF00A884),
+                            lastMessage = obj.optString("last_message", ""),
+                            timestamp = obj.optString("last_message_at", ""),
+                            unreadCount = obj.optInt("unread_count", 0),
+                            isPinned = obj.optBoolean("is_pinned", false),
+                            hasStatusUpdate = false,
+                            isGroup = obj.optBoolean("is_group", false),
+                            isOnline = false,
+                            lastSeenText = "offline",
+                            disappearingDuration = obj.optString("disappearing_duration", "OFF"),
+                            isMuted = obj.optBoolean("is_muted", false),
+                            isBlocked = obj.optBoolean("is_blocked", false)
+                        )
+                        repository.insertConversation(conv)
+                    }
+                }
+            } catch (_: Exception) { }
+        }
+    }
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()

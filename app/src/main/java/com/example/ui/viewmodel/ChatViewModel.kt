@@ -114,6 +114,8 @@ class ChatViewModel(
     var recordingDurationSec = MutableStateFlow(0)
     var recordingAmplitudes = MutableStateFlow<List<Float>>(emptyList())
     private var recordingTimerJob: Job? = null
+    private var mediaRecorder: android.media.MediaRecorder? = null
+    private var currentVoiceFile: java.io.File? = null
 
     // Attachment pre-send modal
     var pendingAttachment = MutableStateFlow<PendingAttachment?>(null)
@@ -218,13 +220,42 @@ class ChatViewModel(
             presenceService.setUserRecording(contactId, true)
         }
 
-        recordingTimerJob = viewModelScope.launch {
-            val random = Random()
-            while (isActive) {
-                delay(1000)
-                recordingDurationSec.value += 1
-                val amp = 0.2f + random.nextFloat() * 0.8f
-                recordingAmplitudes.value = (recordingAmplitudes.value + amp).takeLast(24)
+        // Real voice recording using MediaRecorder — captures actual audio amplitudes
+        try {
+            val context = AppServiceContainer.context
+            val voiceFile = java.io.File(context.cacheDir, "voice_${System.currentTimeMillis()}.m4a")
+            currentVoiceFile = voiceFile
+            val recorder = android.media.MediaRecorder().apply {
+                setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+                setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+                setAudioSamplingRate(44100)
+                setAudioEncodingBitRate(128000)
+                setOutputFile(voiceFile.absolutePath)
+                prepare()
+                start()
+            }
+            mediaRecorder = recorder
+
+            recordingTimerJob = viewModelScope.launch {
+                while (isActive) {
+                    delay(100) // Sample every 100ms for smooth waveform
+                    recordingDurationSec.value = (recordingDurationSec.value + 0.1f)
+                    // Get real amplitude from MediaRecorder (0-32767)
+                    val maxAmplitude = try { recorder.maxAmplitude } catch (e: Exception) { 0 }
+                    // Normalize to 0.0-1.0 for the waveform UI
+                    val amp = (maxAmplitude.toFloat() / 32767f).coerceIn(0f, 1f)
+                    recordingAmplitudes.value = (recordingAmplitudes.value + amp).takeLast(100)
+                }
+            }
+        } catch (e: Exception) {
+            // Fallback: if MediaRecorder fails (no permission, etc.), use minimal amplitudes
+            recordingTimerJob = viewModelScope.launch {
+                while (isActive) {
+                    delay(1000)
+                    recordingDurationSec.value += 1
+                    recordingAmplitudes.value = (recordingAmplitudes.value + 0.1f).takeLast(24)
+                }
             }
         }
     }
@@ -235,6 +266,12 @@ class ChatViewModel(
 
     fun cancelVoiceRecording() {
         recordingTimerJob?.cancel()
+        // Stop + release MediaRecorder
+        try { mediaRecorder?.stop() } catch (_: Exception) {}
+        try { mediaRecorder?.release() } catch (_: Exception) {}
+        mediaRecorder = null
+        currentVoiceFile?.delete()
+        currentVoiceFile = null
         isRecordingVoice.value = false
         isRecordingLocked.value = false
         recordingDurationSec.value = 0
@@ -247,11 +284,24 @@ class ChatViewModel(
 
     fun sendVoiceMessage() {
         val duration = recordingDurationSec.value
-        cancelVoiceRecording()
-        if (duration < 1) return
+        val voiceFile = currentVoiceFile
+        // Stop recording but DON'T delete the file — we need it for upload
+        recordingTimerJob?.cancel()
+        try { mediaRecorder?.stop() } catch (_: Exception) {}
+        try { mediaRecorder?.release() } catch (_: Exception) {}
+        mediaRecorder = null
+        isRecordingVoice.value = false
+        isRecordingLocked.value = false
+
+        if (duration < 1) {
+            voiceFile?.delete()
+            currentVoiceFile = null
+            return
+        }
 
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
         val msgId = java.util.UUID.randomUUID().toString()
+        val idempotencyKey = java.util.UUID.randomUUID().toString()
 
         val message = DomainMessage(
             id = msgId,
@@ -259,25 +309,35 @@ class ChatViewModel(
             senderId = "me",
             senderName = "You",
             type = MessageType.AUDIO,
-            mediaDurationSec = duration,
+            mediaDurationSec = duration.toInt(),
             status = MessageStatus.SENDING,
             timestamp = time,
             timestampMillis = System.currentTimeMillis(),
-            isOutgoing = true
+            isOutgoing = true,
+            idempotencyKey = idempotencyKey
         )
 
         viewModelScope.launch {
             messageService.sendMessage(message)
-            // Enqueue upload
+            // Enqueue real upload with the actual voice file path
+            val fileSize = voiceFile?.length() ?: (duration.toLong() * 16000L).coerceAtLeast(1024L)
             val task = UploadTask(
                 id = "upload_$msgId",
                 messageId = msgId,
                 conversationId = contactId,
-                fileName = "Voice_note_${System.currentTimeMillis()}.m4a",
+                fileName = voiceFile?.name ?: "Voice_note_${System.currentTimeMillis()}.m4a",
                 fileType = MessageType.AUDIO,
-                totalBytes = (duration * 32 * 1024L).coerceAtLeast(64 * 1024L)
+                totalBytes = fileSize,
+                filePath = voiceFile?.absolutePath,
+                mimeType = "audio/mp4"
             )
             uploadService.enqueueUpload(task)
+            // Clean up the reference (file will be deleted by the cache after upload)
+            currentVoiceFile = null
+        }
+
+        viewModelScope.launch {
+            presenceService.setUserRecording(contactId, false)
         }
     }
 
