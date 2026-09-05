@@ -162,13 +162,43 @@ async function handler(req: Request): Promise<Response> {
     last_message_at: new Date().toISOString(),
   }).eq("id", body.conversation_id);
 
-  // Increment unread_count for the receiver's conversation
+  // Increment unread_count for the receiver's conversation (direct SQL, no RPC needed)
   const receiverId = conv.owner_id === userId ? conv.peer_id : conv.owner_id;
   if (receiverId) {
-    await supabase.rpc("increment_unread_count", {
-      p_conversation_id: body.conversation_id,
-      p_user_id: receiverId,
-    }).then(() => {}).catch(() => {}); // non-fatal if RPC doesn't exist
+    // Direct SQL update — works without a separate RPC
+    await supabase.from("conversations")
+      .update({ unread_count: (conv.unread_count ?? 0) + 1 })
+      .eq("id", body.conversation_id)
+      .neq("owner_id", userId);
+  }
+
+  // Send push notification to the receiver via send-chat-notification edge function
+  try {
+    const senderName = msg.sender_name || "New message";
+    const preview = lastMsgPreview;
+    const notifPayload = {
+      conversationId: body.conversation_id,
+      recipientId: receiverId,
+      senderName: senderName,
+      messagePreview: preview,
+      messageType: body.type,
+    };
+    // Call send-chat-notification edge function (internal HTTP call)
+    const token = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+    const baseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    await fetch(`${baseUrl}/functions/v1/send-chat-notification`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+        "apikey": anonKey,
+      },
+      body: JSON.stringify(notifPayload),
+    });
+  } catch (pushErr) {
+    // Push failure is non-fatal — the message was still sent + Realtime will deliver it
+    console.warn("send-chat-notification failed:", pushErr);
   }
 
   return json({ sent: true, message: msg });

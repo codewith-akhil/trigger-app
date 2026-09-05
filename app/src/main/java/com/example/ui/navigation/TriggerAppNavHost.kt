@@ -134,6 +134,12 @@ fun TriggerAppNavHost(
         composable(TriggerDestinations.EMAIL_AUTH) {
             EmailAuthScreen(
                 onLoginSuccess = {
+                    // Connect to Supabase Realtime on login
+                    com.example.di.AppServiceContainer.supabaseClient.connectRealtime(
+                        tables = listOf("public.messages", "public.conversations", "public.user_presences")
+                    )
+                    // Start presence heartbeat
+                    (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppForeground()
                     navController.navigate(TriggerDestinations.DASHBOARD) {
                         popUpTo(TriggerDestinations.LANDING) { inclusive = true }
                     }
@@ -259,6 +265,9 @@ fun TriggerAppNavHost(
                 },
                 onLogout = {
                     kotlinx.coroutines.MainScope().launch {
+                        // Disconnect Realtime WebSocket + stop presence heartbeat
+                        (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppBackground()
+                        com.example.di.AppServiceContainer.supabaseClient.disconnectRealtime()
                         com.example.di.AppServiceContainer.supabaseClient.signOut()
                         com.example.model.UserRepository.clear()
                     }
@@ -277,6 +286,8 @@ fun TriggerAppNavHost(
                 onBack = { navController.popBackStack() },
                 onDeleted = {
                     kotlinx.coroutines.MainScope().launch {
+                        (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppBackground()
+                        com.example.di.AppServiceContainer.supabaseClient.disconnectRealtime()
                         com.example.di.AppServiceContainer.supabaseClient.signOut()
                         com.example.model.UserRepository.clear()
                     }

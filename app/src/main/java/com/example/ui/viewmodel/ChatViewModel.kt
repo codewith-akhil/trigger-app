@@ -19,7 +19,9 @@ data class PendingAttachment(
     val previewRes: Int? = null,
     val caption: String = "",
     val isViewOnce: Boolean = false,
-    val durationSec: Int = 0
+    val durationSec: Int = 0,
+    val filePath: String? = null,
+    val mimeType: String? = null
 )
 
 class ChatViewModel(
@@ -109,7 +111,7 @@ class ChatViewModel(
 
         val reply = replyingTo.value
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
-        val msgId = "msg_${System.currentTimeMillis()}"
+        val msgId = java.util.UUID.randomUUID().toString()
 
         val message = DomainMessage(
             id = msgId,
@@ -180,7 +182,7 @@ class ChatViewModel(
         if (duration < 1) return
 
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
-        val msgId = "voice_${System.currentTimeMillis()}"
+        val msgId = java.util.UUID.randomUUID().toString()
 
         val message = DomainMessage(
             id = msgId,
@@ -211,7 +213,7 @@ class ChatViewModel(
     }
 
     // Attachment flow with file size verification
-    fun selectMediaForPreview(type: MessageType, fileName: String, fileSize: Long, previewUrl: String? = null, previewRes: Int? = null) {
+    fun selectMediaForPreview(type: MessageType, fileName: String, fileSize: Long, previewUrl: String? = null, previewRes: Int? = null, filePath: String? = null, mimeType: String? = null) {
         val (isValid, errorMsg) = storageService.validateUpload(fileSize, type)
         if (!isValid) {
             fileSizeErrorMessage.value = errorMsg
@@ -223,7 +225,9 @@ class ChatViewModel(
             fileName = fileName,
             fileSize = fileSize,
             previewUrl = previewUrl,
-            previewRes = previewRes
+            previewRes = previewRes,
+            filePath = filePath,
+            mimeType = mimeType
         )
     }
 
@@ -246,7 +250,7 @@ class ChatViewModel(
         pendingAttachment.value = null
 
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
-        val msgId = "media_${System.currentTimeMillis()}"
+        val msgId = java.util.UUID.randomUUID().toString()
 
         val message = DomainMessage(
             id = msgId,
@@ -274,7 +278,9 @@ class ChatViewModel(
                 conversationId = contactId,
                 fileName = pending.fileName,
                 fileType = pending.type,
-                totalBytes = pending.fileSize
+                totalBytes = pending.fileSize,
+                filePath = pending.filePath,
+                mimeType = pending.mimeType
             )
             uploadService.enqueueUpload(task)
         }
@@ -285,7 +291,7 @@ class ChatViewModel(
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
         val locText = if (placeName.isNotBlank() && placeName != "Current Location") "$placeName\n$address" else address
         val msg = DomainMessage(
-            id = "loc_${System.currentTimeMillis()}",
+            id = java.util.UUID.randomUUID().toString(),
             conversationId = contactId,
             senderId = "me",
             senderName = "You",
@@ -307,7 +313,7 @@ class ChatViewModel(
     fun shareLiveLocation(durationText: String) {
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
         val msg = DomainMessage(
-            id = "loc_live_${System.currentTimeMillis()}",
+            id = java.util.UUID.randomUUID().toString(),
             conversationId = contactId,
             senderId = "me",
             senderName = "You",

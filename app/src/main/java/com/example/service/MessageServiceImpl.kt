@@ -282,15 +282,14 @@ class MessageServiceImpl(
 
     /**
      * Call this when the user opens a conversation — marks all incoming
-     * messages as READ via the mark_messages_read RPC.
+     * messages as READ via the mark-conversation-read edge function.
      */
     suspend fun markConversationRead(conversationId: String) {
         val supabaseClient = AppServiceContainer.supabaseClient
         val userId = supabaseClient.currentUser?.id ?: return
-        // Call the RPC via REST
+        // Call the mark-conversation-read edge function with the correct payload
         val payload = JSONObject().apply {
-            put("p_conversation_id", conversationId)
-            put("p_reader_id", userId)
+            put("conversationId", conversationId)
         }
         supabaseClient.invokeFunction("mark-conversation-read", payload)
     }

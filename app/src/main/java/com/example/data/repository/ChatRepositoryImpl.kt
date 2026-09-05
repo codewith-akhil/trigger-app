@@ -49,16 +49,12 @@ class ChatRepositoryImpl(
         }
         conversationDao.updateLastMessage(message.conversationId, lastMsgPreview, message.timestamp)
 
+        // Status transitions are driven by the send-message edge function (SENT)
+        // and Supabase Realtime (DELIVERED/READ). No fake delay() ticks.
         if (isOnline) {
-            // Realtime WhatsApp ticks simulation: SENDING -> SENT -> DELIVERED -> READ
-            coroutineScope.launch {
-                delay(350)
-                messageDao.updateMessageStatus(message.id, MessageStatus.SENT.name)
-                delay(600)
-                messageDao.updateMessageStatus(message.id, MessageStatus.DELIVERED.name)
-                delay(900)
-                messageDao.updateMessageStatus(message.id, MessageStatus.READ.name)
-            }
+            // The MessageServiceImpl.sendMessage calls the edge function which
+            // sets status=SENT on the server. Realtime UPDATE events from the
+            // receiver's device will set DELIVERED and READ.
         }
     }
 
@@ -149,12 +145,8 @@ class ChatRepositoryImpl(
     suspend fun retryFailedMessage(messageId: String) {
         val msg = messageDao.getMessageById(messageId) ?: return
         messageDao.updateMessageStatus(messageId, MessageStatus.SENDING.name)
-        // In production, the retry calls send-message edge function again.
-        // The status transitions (SENT → DELIVERED → READ) come from Realtime.
-        coroutineScope.launch {
-            delay(400)
-            messageDao.updateMessageStatus(messageId, MessageStatus.SENT.name)
-        }
+        // The MessageServiceImpl will re-call the send-message edge function.
+        // Status transitions come from Realtime, not from delay().
     }
 
     /**

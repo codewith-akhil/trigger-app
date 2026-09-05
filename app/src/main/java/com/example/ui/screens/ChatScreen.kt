@@ -137,7 +137,9 @@ fun ChatScreen(
                     type = MessageType.IMAGE,
                     fileName = file.name,
                     fileSize = file.length().coerceAtLeast(1024L),
-                    previewUrl = uri.toString()
+                    previewUrl = uri.toString(),
+                    filePath = uri.toString(),
+                    mimeType = "image/jpeg"
                 )
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -173,7 +175,9 @@ fun ChatScreen(
                 type = if (isVideo) MessageType.VIDEO else MessageType.IMAGE,
                 fileName = name,
                 fileSize = size,
-                previewUrl = uri.toString()
+                previewUrl = uri.toString(),
+                filePath = uri.toString(),
+                mimeType = mimeType
             )
         }
     }
@@ -184,11 +188,14 @@ fun ChatScreen(
     ) { uri: Uri? ->
         if (uri != null) {
             val (name, size) = queryFileInfo(context, uri, "document_${System.currentTimeMillis()}.pdf")
+            val docMime = context.contentResolver.getType(uri) ?: "application/octet-stream"
             viewModel.selectMediaForPreview(
                 type = MessageType.DOCUMENT,
                 fileName = name,
                 fileSize = size,
-                previewUrl = uri.toString()
+                previewUrl = uri.toString(),
+                filePath = uri.toString(),
+                mimeType = docMime
             )
         }
     }
@@ -199,11 +206,14 @@ fun ChatScreen(
     ) { uri: Uri? ->
         if (uri != null) {
             val (name, size) = queryFileInfo(context, uri, "audio_${System.currentTimeMillis()}.mp3")
+            val audioMime = context.contentResolver.getType(uri) ?: "audio/mpeg"
             viewModel.selectMediaForPreview(
                 type = MessageType.AUDIO,
                 fileName = name,
                 fileSize = size,
-                previewUrl = uri.toString()
+                previewUrl = uri.toString(),
+                filePath = uri.toString(),
+                mimeType = audioMime
             )
         }
     }
