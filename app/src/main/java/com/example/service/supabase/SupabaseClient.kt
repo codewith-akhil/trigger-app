@@ -220,7 +220,9 @@ class SupabaseClient(
     suspend fun signUp(email: String, password: String, fullName: String): SupabaseResult<SupabaseUser> =
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
-                return@withContext SupabaseResult.Error("Supabase is not configured")
+                return@withContext SupabaseResult.Error(
+                    BackendConfig.configurationError ?: "Supabase is not configured"
+                )
             }
 
             try {
@@ -266,7 +268,7 @@ class SupabaseClient(
     suspend fun signInWithPassword(email: String, password: String): SupabaseResult<SupabaseSession> =
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
-                return@withContext SupabaseResult.Error("Supabase is not configured")
+                return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: "Supabase is not configured")
             }
 
             try {
@@ -308,7 +310,7 @@ class SupabaseClient(
     suspend fun verifyOtp(email: String, token: String, type: String = "signup"): SupabaseResult<SupabaseSession> =
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
-                return@withContext SupabaseResult.Error("Supabase is not configured")
+                return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: "Supabase is not configured")
             }
 
             try {
@@ -351,7 +353,9 @@ class SupabaseClient(
     suspend fun recoverPassword(email: String): SupabaseResult<Boolean> =
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
-                return@withContext SupabaseResult.Success(true)
+                return@withContext SupabaseResult.Error(
+                    BackendConfig.configurationError ?: "Supabase is not configured"
+                )
             }
 
             try {
@@ -381,7 +385,9 @@ class SupabaseClient(
     suspend fun updatePassword(newPassword: String): SupabaseResult<Boolean> =
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
-                return@withContext SupabaseResult.Success(true)
+                return@withContext SupabaseResult.Error(
+                    BackendConfig.configurationError ?: "Supabase is not configured"
+                )
             }
 
             try {
@@ -555,7 +561,7 @@ class SupabaseClient(
         upsert: Boolean = false
     ): SupabaseResult<String> = withContext(Dispatchers.IO) {
         if (!BackendConfig.isSupabaseConfigured) {
-            return@withContext SupabaseResult.Error("Supabase is not configured")
+            return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: "Supabase is not configured")
         }
 
         try {
@@ -599,7 +605,7 @@ class SupabaseClient(
         payload: JSONObject = JSONObject()
     ): SupabaseResult<JSONObject> = withContext(Dispatchers.IO) {
         if (!BackendConfig.isSupabaseConfigured) {
-            return@withContext SupabaseResult.Error("Supabase is not configured")
+            return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: "Supabase is not configured")
         }
 
         try {
