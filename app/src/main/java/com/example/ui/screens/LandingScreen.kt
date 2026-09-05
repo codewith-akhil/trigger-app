@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccessibilityNew
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MoreVert
@@ -30,7 +29,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
-import com.example.ui.components.HelpModalBottomSheet
 import com.example.ui.components.TriggerBottomNavInset
 import com.example.ui.components.TriggerTopHeader
 import com.example.ui.theme.*
@@ -40,10 +38,10 @@ fun LandingScreen(
     currentLanguageName: String,
     onNavigateToLanguage: () -> Unit,
     onAgreeAndContinue: () -> Unit,
+    onNavigateToHelp: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    var showHelpSheet by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier
@@ -53,27 +51,8 @@ fun LandingScreen(
         containerColor = GeometricCanvasBg,
         topBar = {
             TriggerTopHeader(
-                title = "Trigger App",
+                title = "",
                 actions = {
-                    // Accessibility button
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.2f))
-                            .testTag("accessibility_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.AccessibilityNew,
-                            contentDescription = "Accessibility",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(4.dp))
-
                     Box {
                         IconButton(
                             onClick = { showMenu = true },
@@ -103,7 +82,7 @@ fun LandingScreen(
                                 },
                                 onClick = {
                                     showMenu = false
-                                    showHelpSheet = true
+                                    onNavigateToHelp()
                                 },
                                 modifier = Modifier.testTag("menu_help_item")
                             )
@@ -125,10 +104,10 @@ fun LandingScreen(
         ) {
             Spacer(modifier = Modifier.weight(0.15f))
 
-            // Center Illustration with balanced geometric circular frame
+            // Center Illustration with balanced geometric circular frame (reduced to 50%)
             Box(
                 modifier = Modifier
-                    .size(260.dp)
+                    .size(130.dp)
                     .clip(CircleShape)
                     .background(GeometricSurfaceVariant)
                     .border(1.dp, GeometricBorder, CircleShape),
@@ -242,10 +221,6 @@ fun LandingScreen(
             }
 
             Spacer(modifier = Modifier.height(28.dp))
-        }
-
-        if (showHelpSheet) {
-            HelpModalBottomSheet(onDismiss = { showHelpSheet = false })
         }
     }
 }

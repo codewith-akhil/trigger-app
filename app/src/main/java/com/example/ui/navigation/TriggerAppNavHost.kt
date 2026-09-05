@@ -39,6 +39,7 @@ object TriggerDestinations {
     const val SETTINGS_NOTIFICATIONS = "settings_notifications"
     const val SETTINGS_STORAGE = "settings_storage"
     const val SETTINGS_HELP = "settings_help"
+    const val HELP = "help"
     const val SCHEDULE_STREAM = "schedule_stream"
     const val STREAM_HISTORY = "stream_history"
     const val WALLET = "wallet"
@@ -111,6 +112,9 @@ fun TriggerAppNavHost(
                 },
                 onAgreeAndContinue = {
                     showNotificationDialogOnLandingToAuth = true
+                },
+                onNavigateToHelp = {
+                    navController.navigate(TriggerDestinations.HELP)
                 }
             )
 
@@ -388,6 +392,12 @@ fun TriggerAppNavHost(
         }
 
         composable(TriggerDestinations.SETTINGS_HELP) {
+            HelpSettingsScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(TriggerDestinations.HELP) {
             HelpSettingsScreen(
                 onBack = { navController.popBackStack() }
             )

@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,10 +21,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.BuildConfig
+import com.example.R
 import com.example.di.AppServiceContainer
 import com.example.service.supabase.SupabaseResult
 import kotlinx.coroutines.launch
@@ -51,6 +54,7 @@ fun HelpSettingsScreen(
     var showContactDialog by remember { mutableStateOf(false) }
     var showAppInfoDialog by remember { mutableStateOf(false) }
     var showTermsDialog by remember { mutableStateOf(false) }
+    var showFaqDialog by remember { mutableStateOf(false) }
     var showSupportSentSnackbar by remember { mutableStateOf(false) }
 
     val appVersionName = BuildConfig.VERSION_NAME
@@ -64,7 +68,7 @@ fun HelpSettingsScreen(
         containerColor = ScreenBg,
         topBar = {
             com.example.ui.components.TriggerTopHeader(
-                title = "Help & Support",
+                title = "Help",
                 onBack = onBack
             )
         },
@@ -182,25 +186,25 @@ fun HelpSettingsScreen(
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     HelpActionRow(
-                        icon = Icons.Outlined.HelpOutline,
-                        title = "Help Center",
-                        subtitle = "FAQs, troubleshooting, guides",
-                        onClick = { showTermsDialog = true }
+                        icon = Icons.AutoMirrored.Outlined.HelpOutline,
+                        title = stringResource(R.string.help_faq),
+                        subtitle = "Read quick guides and troubleshoot issues",
+                        onClick = { showFaqDialog = true }
                     )
                     HorizontalDivider(color = DividerColor, modifier = Modifier.padding(start = 56.dp))
 
                     HelpActionRow(
-                        icon = Icons.Outlined.Email,
-                        title = "Contact Trigger App Team",
-                        subtitle = "Email: info@triggerapp.com",
+                        icon = Icons.Outlined.SupportAgent,
+                        title = stringResource(R.string.help_contact_support),
+                        subtitle = "Reach our 24/7 dedicated support team",
                         onClick = { showContactDialog = true }
                     )
                     HorizontalDivider(color = DividerColor, modifier = Modifier.padding(start = 56.dp))
 
                     HelpActionRow(
-                        icon = Icons.Outlined.Gavel,
-                        title = "Terms and Privacy Policy",
-                        subtitle = "Read our terms of service and privacy guarantees",
+                        icon = Icons.Outlined.Policy,
+                        title = stringResource(R.string.help_terms),
+                        subtitle = "Review policies and security measures",
                         onClick = { showTermsDialog = true }
                     )
                     HorizontalDivider(color = DividerColor, modifier = Modifier.padding(start = 56.dp))
@@ -208,12 +212,58 @@ fun HelpSettingsScreen(
                     HelpActionRow(
                         icon = Icons.Outlined.Info,
                         title = "App info",
-                        subtitle = "Trigger App v$appVersionName",
+                        subtitle = "Trigger App v$appVersionName • Secure & Private",
                         onClick = { showAppInfoDialog = true }
                     )
                 }
             }
         }
+    }
+
+    // FAQ Dialog
+    if (showFaqDialog) {
+        AlertDialog(
+            onDismissRequest = { showFaqDialog = false },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
+            title = {
+                Text("Frequently Asked Questions", fontWeight = FontWeight.Bold, color = TextPrimary)
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .verticalScroll(rememberScrollState())
+                        .padding(vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Column {
+                        Text("How do I verify my account?", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = TextPrimary)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text("Enter your email address to receive an instant 6-digit one-time code. Enter the code on the verification screen to complete sign in.", fontSize = 13.sp, color = TextSecondary, lineHeight = 18.sp)
+                    }
+                    Column {
+                        Text("How does voice & video calling work?", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = TextPrimary)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text("Trigger App leverages Agora WebRTC technology to deliver low-latency, crystal-clear audio and video streams between connected users.", fontSize = 13.sp, color = TextSecondary, lineHeight = 18.sp)
+                    }
+                    Column {
+                        Text("Are messages and calls secure?", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = TextPrimary)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text("Yes. All messaging sessions use tokenized real-time sockets and local encrypted storage so your personal communications stay private.", fontSize = 13.sp, color = TextSecondary, lineHeight = 18.sp)
+                    }
+                    Column {
+                        Text("How do I contact support directly?", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = TextPrimary)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text("You can use the 'Contact Support' option below to send an inquiry ticket or email our engineering team directly at info@triggerapp.com.", fontSize = 13.sp, color = TextSecondary, lineHeight = 18.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showFaqDialog = false }) {
+                    Text("Close", color = ScreenGreenHeader)
+                }
+            }
+        )
     }
 
     // Contact Us Dialog
