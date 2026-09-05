@@ -8,6 +8,8 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.ContactsContract
 import android.provider.OpenableColumns
+import android.view.inputmethod.InputMethodManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
@@ -16,6 +18,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -52,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
@@ -387,20 +391,44 @@ fun ChatScreen(
     val focusRequester = remember { FocusRequester() }
     val density = LocalDensity.current
     val imeBottom = WindowInsets.ime.getBottom(density)
+    val isImeOpen = imeBottom > 0
+    val view = LocalView.current
+    val imm = remember { context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager }
 
-    // When software keyboard opens, close custom emoji and GIF pickers
+    var maxHeightWithoutIme by remember { mutableStateOf(0.dp) }
+
+    // Intercept back button when custom emoji or GIF picker is open to dismiss it first
+    BackHandler(enabled = isEmojiPickerOpen || isGifPickerOpen) {
+        isEmojiPickerOpen = false
+        isGifPickerOpen = false
+    }
+
+    // When software keyboard opens, close custom emoji and GIF pickers & scroll to bottom
     LaunchedEffect(imeBottom) {
         if (imeBottom > 0) {
             if (isEmojiPickerOpen) isEmojiPickerOpen = false
             if (isGifPickerOpen) isGifPickerOpen = false
+            if (messages.isNotEmpty()) {
+                listState.animateScrollToItem(messages.size - 1)
+            }
         }
     }
 
-    Scaffold(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .testTag("chat_screen"),
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            .testTag("chat_screen")
+    ) {
+        val currentHeight = maxHeight
+        if (!isImeOpen && currentHeight > maxHeightWithoutIme) {
+            maxHeightWithoutIme = currentHeight
+        }
+        val windowPhysicallyResized = isImeOpen && (maxHeightWithoutIme - currentHeight > 100.dp)
+
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = WhatsAppChatBg,
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             when {
                 selectedIds.isNotEmpty() -> {
@@ -534,7 +562,19 @@ fun ChatScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+                    .then(
+                        if (isImeOpen && windowPhysicallyResized) {
+                            // The system window was already resized by Android WindowManager (adjustResize).
+                            // No additional IME padding is needed — composer sits directly on top of keyboard with 0 gap!
+                            Modifier
+                        } else if (isImeOpen) {
+                            // The system window was not resized — apply IME padding so composer floats above keyboard
+                            Modifier.imePadding()
+                        } else {
+                            // Keyboard is closed — apply navigation bar padding so composer sits above the Android bottom nav
+                            Modifier.navigationBarsPadding()
+                        }
+                    )
             ) {
                 if (isBlocked) {
                     // Blocked contact notice banner
@@ -624,7 +664,8 @@ fun ChatScreen(
                                 isGifPickerOpen = false
                                 if (!isEmojiPickerOpen) {
                                     keyboardController?.hide()
-                                    focusManager.clearFocus()
+                                    focusManager.clearFocus(force = true)
+                                    imm?.hideSoftInputFromWindow(view.windowToken, 0)
                                     isEmojiPickerOpen = true
                                 } else {
                                     isEmojiPickerOpen = false
@@ -636,7 +677,8 @@ fun ChatScreen(
                                 isEmojiPickerOpen = false
                                 if (!isGifPickerOpen) {
                                     keyboardController?.hide()
-                                    focusManager.clearFocus()
+                                    focusManager.clearFocus(force = true)
+                                    imm?.hideSoftInputFromWindow(view.windowToken, 0)
                                     isGifPickerOpen = true
                                 } else {
                                     isGifPickerOpen = false
@@ -789,6 +831,7 @@ fun ChatScreen(
             }
         }
     }
+}
 
     // Attachment bottom sheet
     if (showAttachmentSheet) {
@@ -1839,6 +1882,15 @@ fun ChatComposerBar(
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 4.dp, vertical = 8.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {
+                            if (isEmojiPickerOpen || isGifPickerOpen) {
+                                onInputFocus()
+                            }
+                            focusRequester?.requestFocus()
+                        }
                 ) {
                     if (text.isEmpty()) {
                         Text(text = "Message", color = Color(0xFF8696A0), fontSize = 16.sp)
