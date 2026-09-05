@@ -401,7 +401,14 @@ fun DomainChatBubble(
             modifier = Modifier
                 .widthIn(min = 90.dp, max = 310.dp)
                 .combinedClickable(
-                    onClick = onClick,
+                    onClick = {
+                        // If the message FAILED, tapping the bubble retries.
+                        if (message.status == MessageStatus.FAILED) {
+                            onRetryUpload()
+                        } else {
+                            onClick()
+                        }
+                    },
                     onLongClick = onLongPress
                 )
                 .testTag("chat_bubble_${message.id}")
@@ -491,12 +498,33 @@ fun DomainChatBubble(
                                     modifier = Modifier.fillMaxSize()
                                 )
                             } else {
-                                Icon(
-                                    imageVector = Icons.Outlined.BrokenImage,
-                                    contentDescription = "Media unavailable",
-                                    tint = Color.White.copy(alpha = 0.7f),
-                                    modifier = Modifier.align(Alignment.Center)
-                                )
+                                // Media URL is null (upload failed or not yet uploaded).
+                                // Show a clear placeholder instead of an empty box.
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color(0xFF2A2A2A)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Icon(
+                                            imageVector = if (message.type == MessageType.VIDEO)
+                                                Icons.Filled.Videocam else Icons.Filled.Image,
+                                            contentDescription = "Media unavailable",
+                                            tint = Color.White.copy(alpha = 0.5f),
+                                            modifier = Modifier.size(40.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = if (message.status == MessageStatus.FAILED)
+                                                "Upload failed" else "Loading...",
+                                            color = Color.White.copy(alpha = 0.6f),
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                }
                             }
 
                             if (message.type == MessageType.VIDEO) {
@@ -733,6 +761,17 @@ fun DomainChatBubble(
                             onRetry = onRetryUpload
                         )
                     }
+                }
+
+                // "Tap to retry" hint for FAILED messages
+                if (message.status == MessageStatus.FAILED) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Tap to retry",
+                        color = Color(0xFFEA4335),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
 
                 // Reactions badge pill attached to bubble corner

@@ -28,6 +28,8 @@ const VALID_TYPES = ["TEXT", "IMAGE", "VIDEO", "AUDIO", "VOICE_NOTE", "DOCUMENT"
 
 interface Body {
   conversation_id?: string;
+  peer_id?: string;
+  peer_name?: string;
   type?: string;
   text?: string;
   media_url?: string;
@@ -68,7 +70,10 @@ async function handler(req: Request): Promise<Response> {
   catch { return json({ error: "Invalid body", code: ErrorCode.VALIDATION_FAILED }, 400); }
 
   // --- Server-side validation ---
-  if (!body.conversation_id) return json({ error: "conversation_id is required", code: ErrorCode.VALIDATION_FAILED }, 422);
+  // Either conversation_id OR peer_id must be provided (peer_id auto-creates).
+  if (!body.conversation_id && !body.peer_id) {
+    return json({ error: "conversation_id or peer_id is required", code: ErrorCode.VALIDATION_FAILED }, 422);
+  }
   if (!body.type || !VALID_TYPES.includes(body.type)) return json({ error: "Invalid message type", code: ErrorCode.VALIDATION_FAILED }, 422);
 
   // Text validation
@@ -93,15 +98,58 @@ async function handler(req: Request): Promise<Response> {
     }
   }
 
-  // Verify the caller is a participant in the conversation
+  // Resolve the conversation: try by conversation_id first, then by (owner, peer),
+  // then auto-create if peer_id is provided.
   const supabase = createAdminClient();
-  const { data: conv } = await supabase
-    .from("conversations")
-    .select("id, owner_id, peer_id, request_status")
-    .eq("id", body.conversation_id)
-    .maybeSingle();
+  let conv: { id: string; owner_id: string; peer_id: string | null; request_status: string | null } | null = null;
+  let conversationId = body.conversation_id ?? "";
 
-  if (!conv) return json({ error: "Conversation not found", code: ErrorCode.NOT_FOUND }, 404);
+  if (conversationId) {
+    const { data: found } = await supabase
+      .from("conversations")
+      .select("id, owner_id, peer_id, request_status")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (found) conv = found;
+  }
+
+  // If not found by conversation_id, try find-or-create by peer_id
+  if (!conv && body.peer_id) {
+    // Look for an existing conversation between this user and the peer
+    const { data: existing } = await supabase
+      .from("conversations")
+      .select("id, owner_id, peer_id, request_status")
+      .or(`owner_id.eq.${userId},peer_id.eq.${userId}`)
+      .eq("peer_id", body.peer_id)
+      .limit(1);
+    if (existing && existing.length > 0) {
+      conv = existing[0];
+      conversationId = conv.id;
+    } else {
+      // Auto-create a new conversation
+      const { data: newConv, error: createErr } = await supabase
+        .from("conversations")
+        .insert({
+          owner_id: userId,
+          peer_id: body.peer_id,
+          peer_name: body.peer_name ?? "Unknown",
+          request_status: "accepted",
+          is_group: false,
+        })
+        .select("id, owner_id, peer_id, request_status")
+        .single();
+      if (createErr || !newConv) {
+        console.error("send-message: failed to auto-create conversation", createErr);
+        return json({ error: "Conversation not found and could not be created. Provide a valid conversation_id or peer_id.", code: ErrorCode.NOT_FOUND }, 404);
+      }
+      conv = newConv;
+      conversationId = newConv.id;
+    }
+  }
+
+  if (!conv) {
+    return json({ error: "Conversation not found. Provide a valid conversation_id or peer_id.", code: ErrorCode.NOT_FOUND }, 404);
+  }
   if (conv.owner_id !== userId && conv.peer_id !== userId) {
     return json({ error: "Not a participant in this conversation", code: ErrorCode.FORBIDDEN }, 403);
   }
@@ -125,7 +173,7 @@ async function handler(req: Request): Promise<Response> {
 
   // --- Insert the message ---
   const insertData: Record<string, unknown> = {
-    conversation_id: body.conversation_id,
+    conversation_id: conversationId,
     sender_id: userId,
     type: body.type,
     text: (body.text ?? "").slice(0, 10000),
@@ -176,7 +224,7 @@ async function handler(req: Request): Promise<Response> {
     last_message: lastMsgPreview,
     last_message_type: body.type,
     last_message_at: new Date().toISOString(),
-  }).eq("id", body.conversation_id);
+  }).eq("id", conversationId);
 
   // Increment unread_count for the receiver's conversation atomically.
   // The previous "direct SQL" update referenced `conv.unread_count`, which
@@ -190,7 +238,7 @@ async function handler(req: Request): Promise<Response> {
   const receiverId = conv.owner_id === userId ? conv.peer_id : conv.owner_id;
   if (receiverId) {
     await supabase.rpc("increment_unread_count", {
-      p_conversation_id: body.conversation_id,
+      p_conversation_id: conversationId,
       p_user_id: receiverId,
     });
   }
@@ -200,7 +248,7 @@ async function handler(req: Request): Promise<Response> {
     const senderName = msg.sender_name || "New message";
     const preview = lastMsgPreview;
     const notifPayload = {
-      conversationId: body.conversation_id,
+      conversationId: conversationId,
       recipientId: receiverId,
       senderName: senderName,
       messagePreview: preview,

@@ -235,7 +235,7 @@ class MessageServiceImpl(
         }
     }
 
-    override suspend fun sendMessage(message: DomainMessage) {
+    override suspend fun sendMessage(message: DomainMessage, peerId: String?, peerName: String?) {
         // 1. Insert locally (Room) immediately for instant UI
         repository.sendMessage(message, isOnline = true)
 
@@ -248,6 +248,11 @@ class MessageServiceImpl(
             put("text", message.text)
             put("timestamp_millis", message.timestampMillis)
             put("idempotency_key", idempotencyKey)
+            // peer_id + peer_name: the edge function auto-creates a conversation
+            // if conversation_id doesn't exist in Supabase. This is critical for
+            // first-time chats where the app only has the peer's user UUID.
+            if (!peerId.isNullOrEmpty()) put("peer_id", peerId)
+            if (!peerName.isNullOrEmpty()) put("peer_name", peerName)
             if (message.mediaUrl != null) put("media_url", message.mediaUrl)
             if (message.fileName != null) put("file_name", message.fileName)
             if (message.fileSize > 0) put("file_size", message.fileSize)
@@ -341,7 +346,9 @@ class MessageServiceImpl(
         // Re-call send-message with the same message data
         val msg = repository.getMessageById(messageId) ?: return
         repository.updateMessageStatus(messageId, MessageStatus.SENDING)
-        sendMessage(msg)
+        // Pass conversationId as peerId — the edge function will find-or-create
+        // the conversation by peer_id if conversation_id doesn't exist.
+        sendMessage(msg, peerId = msg.conversationId, peerName = null)
     }
 
     override suspend fun retryAllFailedMessages() {
@@ -350,7 +357,7 @@ class MessageServiceImpl(
         Log.i(TAG, "Retrying ${failed.size} failed messages")
         failed.forEach { msg ->
             try {
-                sendMessage(msg)
+                sendMessage(msg, peerId = msg.conversationId, peerName = null)
             } catch (e: Exception) {
                 Log.w(TAG, "Retry failed for ${msg.id}: ${e.message}")
             }

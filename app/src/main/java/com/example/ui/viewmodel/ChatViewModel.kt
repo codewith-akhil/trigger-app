@@ -201,7 +201,7 @@ class ChatViewModel(
         )
 
         viewModelScope.launch {
-            messageService.sendMessage(message)
+            messageService.sendMessage(message, peerId = contactId, peerName = contactName)
             inputText.value = ""
             replyingTo.value = null
             // NO fake/simulated bot reply — real chat uses Supabase Realtime.
@@ -318,7 +318,7 @@ class ChatViewModel(
         )
 
         viewModelScope.launch {
-            messageService.sendMessage(message)
+            messageService.sendMessage(message, peerId = contactId, peerName = contactName)
             // Enqueue real upload with the actual voice file path
             val fileSize = voiceFile?.length() ?: (duration.toLong() * 16000L).coerceAtLeast(1024L)
             val task = UploadTask(
@@ -400,7 +400,7 @@ class ChatViewModel(
         )
 
         viewModelScope.launch {
-            messageService.sendMessage(message)
+            messageService.sendMessage(message, peerId = contactId, peerName = contactName)
             val task = UploadTask(
                 id = "upload_$msgId",
                 messageId = msgId,
@@ -435,7 +435,7 @@ class ChatViewModel(
             isOutgoing = true
         )
         viewModelScope.launch {
-            messageService.sendMessage(msg)
+            messageService.sendMessage(msg, peerId = contactId, peerName = contactName)
         }
     }
 
@@ -461,7 +461,7 @@ class ChatViewModel(
             isOutgoing = true
         )
         viewModelScope.launch {
-            messageService.sendMessage(msg)
+            messageService.sendMessage(msg, peerId = contactId, peerName = contactName)
         }
     }
 
@@ -497,7 +497,7 @@ class ChatViewModel(
             isOutgoing = true
         )
         viewModelScope.launch {
-            messageService.sendMessage(msg)
+            messageService.sendMessage(msg, peerId = contactId, peerName = contactName)
         }
     }
 
@@ -594,7 +594,7 @@ class ChatViewModel(
                 timestampMillis = System.currentTimeMillis(),
                 isOutgoing = false
             )
-            messageService.sendMessage(systemMsg)
+            messageService.sendMessage(systemMsg, peerId = contactId, peerName = contactName)
         }
     }
 

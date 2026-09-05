@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.Flow
 
 interface MessageService {
     fun observeMessages(conversationId: String): Flow<List<DomainMessage>>
-    suspend fun sendMessage(message: DomainMessage)
+    suspend fun sendMessage(message: DomainMessage, peerId: String? = null, peerName: String? = null)
     suspend fun updateMessageStatus(messageId: String, status: MessageStatus)
     suspend fun toggleReaction(messageId: String, emoji: String)
     suspend fun markViewOnceOpened(messageId: String)
