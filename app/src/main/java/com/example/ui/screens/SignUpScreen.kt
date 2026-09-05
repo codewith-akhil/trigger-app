@@ -99,7 +99,21 @@ fun SignUpScreen(
 
         isSubmitting = true
         coroutineScope.launch {
+            // Step 0: Check backend if email is already registered BEFORE signup
+            val checkPayload = org.json.JSONObject().apply { put("email", trimmedEmail) }
+            val checkResult = AppServiceContainer.supabaseClient.invokeFunction("check-email", checkPayload)
+            if (checkResult is SupabaseResult.Success) {
+                val exists = checkResult.data.optBoolean("exists", false)
+                if (exists) {
+                    isSubmitting = false
+                    errorMessage = "This email is already registered with an account. Try another email or reset your password."
+                    return@launch
+                }
+            }
+            // If check fails (network), proceed anyway — Supabase Auth will catch duplicates
+
             // Step 1: Sign up the user via Supabase Auth.
+            // Supabase Auth uses bcrypt for password hashing — no plaintext stored.
             when (val result = AppServiceContainer.supabaseClient.signUp(trimmedEmail, password, trimmedName)) {
                 is SupabaseResult.Success -> {
                     // Step 2: Request the server to send a 6-digit OTP email via the

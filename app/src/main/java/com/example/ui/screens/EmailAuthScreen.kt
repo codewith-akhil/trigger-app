@@ -59,9 +59,18 @@ fun EmailAuthScreen(
 
     fun handleLogin() {
         errorMessage = null
-        val trimmedEmail = email.trim()
-        if (trimmedEmail.isEmpty() || !trimmedEmail.contains("@") || !trimmedEmail.contains(".")) {
+        val trimmedEmail = email.trim().lowercase()
+        if (trimmedEmail.isEmpty()) {
+            errorMessage = "Email is required"
+            return
+        }
+        val emailRegex = Regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")
+        if (!emailRegex.matches(trimmedEmail)) {
             errorMessage = "Please enter a valid email address"
+            return
+        }
+        if (password.isEmpty()) {
+            errorMessage = "Password is required"
             return
         }
         if (password.length < 6) {
@@ -84,7 +93,23 @@ fun EmailAuthScreen(
                 }
                 is SupabaseResult.Error -> {
                     isLoading = false
-                    errorMessage = result.message
+                    val msg = result.message ?: "Login failed"
+                    errorMessage = when {
+                        msg.contains("Invalid login credentials", ignoreCase = true) ||
+                        msg.contains("invalid_credentials", ignoreCase = true) ->
+                            "Invalid email or password. Please check your credentials and try again."
+                        msg.contains("Email not confirmed", ignoreCase = true) ||
+                        msg.contains("email_not_confirmed", ignoreCase = true) ->
+                            "Your email is not verified yet. Please check your inbox for the verification code."
+                        msg.contains("rate limit", ignoreCase = true) ||
+                        msg.contains("Too many", ignoreCase = true) ->
+                            "Too many login attempts. Please wait a moment and try again."
+                        msg.contains("network", ignoreCase = true) ||
+                        msg.contains("timeout", ignoreCase = true) ||
+                        msg.contains("failed to connect", ignoreCase = true) ->
+                            "Network error. Please check your internet connection and try again."
+                        else -> msg
+                    }
                 }
             }
         }

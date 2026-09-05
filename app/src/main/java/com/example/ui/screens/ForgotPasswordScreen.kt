@@ -62,9 +62,23 @@ fun ForgotPasswordScreen(
 
         isSubmitting = true
         coroutineScope.launch {
-            // Request the server to send a 6-digit OTP email via the send-email-otp
-            // edge function (Resend SMTP). The OTP is generated + stored server-side
-            // as a salted hash — NEVER on the client.
+            // Step 1: Check if the email is registered in the backend
+            val checkPayload = org.json.JSONObject().apply { put("email", trimmedEmail) }
+            val checkResult = AppServiceContainer.supabaseClient.invokeFunction("check-email", checkPayload)
+            if (checkResult is SupabaseResult.Success) {
+                val exists = checkResult.data.optBoolean("exists", false)
+                if (!exists) {
+                    isSubmitting = false
+                    errorMessage = "No user account registered with this email"
+                    return@launch
+                }
+            } else {
+                isSubmitting = false
+                errorMessage = "Failed to verify email. Please check your connection and try again."
+                return@launch
+            }
+
+            // Step 2: Email exists — send the 6-digit OTP via Resend SMTP
             val otpPayload = org.json.JSONObject().apply {
                 put("email", trimmedEmail)
                 put("purpose", "recovery")
