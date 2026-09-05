@@ -13,6 +13,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.launch
 import com.example.model.LanguageRepository
+import com.example.di.AppServiceContainer
 import com.example.ui.components.NotificationPermissionDialog
 import com.example.ui.screens.*
 
@@ -81,7 +82,13 @@ fun TriggerAppNavHost(
 
     NavHost(
         navController = navController,
-        startDestination = TriggerDestinations.LANDING,
+        // Auto-login: skip onboarding when a persisted Supabase session exists
+        // (session restore happens in SupabaseClient.init from MODE_PRIVATE prefs)
+        startDestination = if (AppServiceContainer.supabaseClient.hasActiveSession()) {
+            TriggerDestinations.DASHBOARD
+        } else {
+            TriggerDestinations.LANDING
+        },
         modifier = modifier,
         enterTransition = {
             slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(280)) + fadeIn(tween(280))

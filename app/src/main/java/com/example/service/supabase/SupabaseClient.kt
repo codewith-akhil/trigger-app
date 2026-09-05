@@ -1,11 +1,18 @@
 package com.example.service.supabase
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import com.example.config.BackendConfig
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -30,7 +37,9 @@ data class SupabaseUser(
 data class SupabaseSession(
     val accessToken: String,
     val refreshToken: String,
-    val user: SupabaseUser
+    val user: SupabaseUser,
+    /** Epoch millis when accessToken expires. 0 = unknown (treated as stale). */
+    val expiresAt: Long = 0L
 )
 
 sealed class SupabaseResult<out T> {
@@ -53,11 +62,17 @@ data class RealtimeEvent(
 )
 
 class SupabaseClient(
+    private val appContext: Context? = null,
     private val baseUrl: String = BackendConfig.SUPABASE_URL,
     private val anonKey: String = BackendConfig.SUPABASE_ANON_KEY
 ) {
     companion object {
         private const val TAG = "SupabaseClient"
+        private const val SESSION_PREFS = "trigger_auth_session"
+        private const val SESSION_KEY = "session_json"
+        /** Refresh when the access token has less than this long to live. */
+        private const val EXPIRY_MARGIN_MS = 120_000L
+        private const val DEFAULT_TTL_MS = 3_600_000L
     }
 
     private val httpClient = OkHttpClient.Builder()
@@ -70,6 +85,151 @@ class SupabaseClient(
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     var currentSession: SupabaseSession? = null
+        private set
+
+    // ---- Session persistence + refresh ----
+    // The session is persisted to MODE_PRIVATE prefs so the user stays logged in
+    // across process death, and the access token is transparently refreshed via
+    // the refresh_token grant before it expires. Without this, Supabase's 1-hour
+    // token TTL made every authenticated call fail with 401 / storage-RLS
+    // violations roughly an hour after login ("Unauthorized", "new row violates
+    // row-level security policy", "Unable to verify availability").
+    private val prefs: SharedPreferences? =
+        appContext?.getSharedPreferences(SESSION_PREFS, Context.MODE_PRIVATE)
+
+    private val clientScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Serializes token refresh so concurrent calls refresh exactly once. */
+    private val authMutex = Mutex()
+
+    init {
+        restorePersistedSession()
+    }
+
+    private fun restorePersistedSession() {
+        val raw = prefs?.getString(SESSION_KEY, null) ?: return
+        try {
+            val json = JSONObject(raw)
+            val userJson = json.optJSONObject("user") ?: return
+            val session = SupabaseSession(
+                accessToken = json.getString("access_token"),
+                refreshToken = json.optString("refresh_token", ""),
+                user = SupabaseUser(
+                    id = userJson.optString("id"),
+                    email = userJson.optString("email"),
+                    fullName = if (userJson.isNull("full_name")) null else userJson.optString("full_name"),
+                    avatarUrl = if (userJson.isNull("avatar_url")) null else userJson.optString("avatar_url")
+                ),
+                expiresAt = json.optLong("expires_at", 0L)
+            )
+            if (session.accessToken.isNotBlank() && session.user.id.isNotBlank()) {
+                currentSession = session
+                Log.i(TAG, "Restored persisted session for user ${session.user.id}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to restore session: ${e.message}")
+            prefs.edit().remove(SESSION_KEY).apply()
+        }
+    }
+
+    private fun persistSession(session: SupabaseSession?) {
+        val p = prefs ?: return
+        if (session == null) {
+            p.edit().remove(SESSION_KEY).apply()
+            return
+        }
+        try {
+            val userJson = JSONObject().apply {
+                put("id", session.user.id)
+                put("email", session.user.email)
+                session.user.fullName?.let { put("full_name", it) }
+                session.user.avatarUrl?.let { put("avatar_url", it) }
+            }
+            val json = JSONObject().apply {
+                put("access_token", session.accessToken)
+                put("refresh_token", session.refreshToken)
+                put("expires_at", session.expiresAt)
+                put("user", userJson)
+            }
+            p.edit().putString(SESSION_KEY, json.toString()).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to persist session: ${e.message}")
+        }
+    }
+
+    private fun applySession(session: SupabaseSession?) {
+        currentSession = session
+        persistSession(session)
+    }
+
+    private fun buildSession(json: JSONObject, user: SupabaseUser): SupabaseSession {
+        val expiresInSec = json.optString("expires_in", "3600").toLongOrNull() ?: 3600L
+        return SupabaseSession(
+            accessToken = json.getString("access_token"),
+            refreshToken = json.optString("refresh_token", ""),
+            user = user,
+            expiresAt = System.currentTimeMillis() + expiresInSec * 1000
+        )
+    }
+
+    /**
+     * Returns a valid access token for authenticated calls, refreshing it via
+     * the refresh_token grant when it is missing or about to expire. Returns
+     * null when there is no session (caller may fall back to the anon key).
+     */
+    suspend fun ensureFreshAccessToken(): String? = authMutex.withLock {
+        val session = currentSession ?: return null
+
+        val stillFresh = session.accessToken.isNotBlank() &&
+            session.expiresAt > 0 &&
+            session.expiresAt - System.currentTimeMillis() > EXPIRY_MARGIN_MS
+        if (stillFresh) return session.accessToken
+
+        if (session.refreshToken.isBlank()) {
+            Log.w(TAG, "Token stale and no refresh token available")
+            return session.accessToken.ifBlank { null }
+        }
+
+        try {
+            val bodyJson = JSONObject().put("refresh_token", session.refreshToken)
+            val request = Request.Builder()
+                .url("$baseUrl/auth/v1/token?grant_type=refresh_token")
+                .addHeader("apikey", anonKey)
+                .addHeader("Content-Type", "application/json")
+                .post(bodyJson.toString().toRequestBody(jsonMediaType))
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            val responseBody = response.body?.string() ?: ""
+
+            if (response.isSuccessful) {
+                val json = JSONObject(responseBody)
+                val userJson = json.optJSONObject("user")
+                val user = if (userJson != null) parseUser(userJson, fallbackEmail = session.user.email) else session.user
+                val fresh = buildSession(json, user).copy(refreshToken = json.optString("refresh_token", session.refreshToken))
+                applySession(fresh)
+                Log.i(TAG, "Access token refreshed")
+                return fresh.accessToken
+            }
+
+            // 400/401 = refresh token revoked/invalid -> force re-login
+            if (response.code == 400 || response.code == 401) {
+                Log.w(TAG, "Refresh token rejected (${response.code}) — clearing session")
+                applySession(null)
+                return null
+            }
+
+            // Transient server error — keep the old token as best effort
+            Log.w(TAG, "Token refresh failed (${response.code}) — using existing token")
+            return session.accessToken.ifBlank { null }
+        } catch (e: Exception) {
+            Log.w(TAG, "Token refresh network error: ${e.message}")
+            return session.accessToken.ifBlank { null }
+        }
+    }
+
+    /** True when a session is present (used for auto-login on app start). */
+    fun hasActiveSession(): Boolean = currentSession != null
 
     // ---- Realtime WebSocket ----
     private var realtimeSocket: WebSocket? = null
@@ -107,10 +267,17 @@ class SupabaseClient(
         // Close any existing connection
         realtimeSocket?.close(1000, "Reconnecting")
 
+        // Refresh the token first (async), then open the socket with a live JWT
+        clientScope.launch {
+            val token = ensureFreshAccessToken() ?: anonKey
+            openRealtimeSocket(token, tables, filter)
+        }
+    }
+
+    private fun openRealtimeSocket(token: String, tables: List<String>, filter: String?) {
         val wsUrl = "${baseUrl.replace("https", "wss")}/realtime/v1/websocket" +
             "?apikey=$anonKey&vsn=1.0.0"
 
-        val token = currentSession?.accessToken ?: anonKey
         val request = Request.Builder()
             .url(wsUrl)
             .addHeader("Authorization", "Bearer $token")
@@ -249,11 +416,7 @@ class SupabaseClient(
                     val userJson = if (json.has("user")) json.getJSONObject("user") else json
                     val user = parseUser(userJson, fallbackEmail = email, fallbackName = fullName)
                     if (json.has("access_token")) {
-                        currentSession = SupabaseSession(
-                            accessToken = json.getString("access_token"),
-                            refreshToken = json.optString("refresh_token", ""),
-                            user = user
-                        )
+                        applySession(buildSession(json, user))
                     }
                     SupabaseResult.Success(user)
                 } else {
@@ -291,12 +454,8 @@ class SupabaseClient(
                     val json = JSONObject(responseBody)
                     val userJson = json.getJSONObject("user")
                     val user = parseUser(userJson, fallbackEmail = email)
-                    val session = SupabaseSession(
-                        accessToken = json.getString("access_token"),
-                        refreshToken = json.optString("refresh_token", ""),
-                        user = user
-                    )
-                    currentSession = session
+                    val session = buildSession(json, user)
+                    applySession(session)
                     SupabaseResult.Success(session)
                 } else {
                     val errorMsg = parseErrorMessage(responseBody, "Invalid email or password")
@@ -334,12 +493,8 @@ class SupabaseClient(
                     val json = JSONObject(responseBody)
                     val userJson = if (json.has("user")) json.getJSONObject("user") else json
                     val user = parseUser(userJson, fallbackEmail = email)
-                    val session = SupabaseSession(
-                        accessToken = json.optString("access_token", ""),
-                        refreshToken = json.optString("refresh_token", ""),
-                        user = user
-                    )
-                    currentSession = session
+                    val session = buildSession(json, user)
+                    applySession(session)
                     SupabaseResult.Success(session)
                 } else {
                     val errorMsg = parseErrorMessage(responseBody, "Invalid verification code")
@@ -395,7 +550,7 @@ class SupabaseClient(
                     put("password", newPassword)
                 }
 
-                val token = currentSession?.accessToken ?: anonKey
+                val token = ensureFreshAccessToken() ?: anonKey
                 val request = Request.Builder()
                     .url("$baseUrl/auth/v1/user")
                     .addHeader("apikey", anonKey)
@@ -419,7 +574,7 @@ class SupabaseClient(
     suspend fun signOut(): SupabaseResult<Boolean> =
         withContext(Dispatchers.IO) {
             try {
-                val token = currentSession?.accessToken
+                val token = ensureFreshAccessToken()
                 if (token != null && BackendConfig.isSupabaseConfigured) {
                     val request = Request.Builder()
                         .url("$baseUrl/auth/v1/logout")
@@ -430,7 +585,7 @@ class SupabaseClient(
                     httpClient.newCall(request).execute()
                 }
             } catch (_: Exception) {}
-            currentSession = null
+            applySession(null)
             SupabaseResult.Success(true)
         }
 
@@ -445,7 +600,7 @@ class SupabaseClient(
             }
 
             try {
-                val token = currentSession?.accessToken ?: anonKey
+                val token = ensureFreshAccessToken() ?: anonKey
                 val url = "$baseUrl/rest/v1/$tableName?$queryParams"
 
                 val request = Request.Builder()
@@ -480,7 +635,7 @@ class SupabaseClient(
             }
 
             try {
-                val token = currentSession?.accessToken ?: anonKey
+                val token = ensureFreshAccessToken() ?: anonKey
                 val request = Request.Builder()
                     .url("$baseUrl/rest/v1/$tableName")
                     .addHeader("apikey", anonKey)
@@ -518,7 +673,7 @@ class SupabaseClient(
             }
 
             try {
-                val token = currentSession?.accessToken ?: anonKey
+                val token = ensureFreshAccessToken() ?: anonKey
                 val request = Request.Builder()
                     .url("$baseUrl/rest/v1/$tableName?on_conflict=$onConflict")
                     .addHeader("apikey", anonKey)
@@ -565,7 +720,7 @@ class SupabaseClient(
         }
 
         try {
-            val token = currentSession?.accessToken ?: anonKey
+            val token = ensureFreshAccessToken() ?: anonKey
             val mediaType = mimeType.toMediaType()
             val requestBody = fileBytes.toRequestBody(mediaType)
 
@@ -609,7 +764,7 @@ class SupabaseClient(
         }
 
         try {
-            val token = currentSession?.accessToken ?: anonKey
+            val token = ensureFreshAccessToken() ?: anonKey
             val request = Request.Builder()
                 .url("$baseUrl/functions/v1/$functionName")
                 .addHeader("apikey", anonKey)

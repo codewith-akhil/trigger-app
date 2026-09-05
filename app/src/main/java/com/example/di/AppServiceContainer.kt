@@ -65,7 +65,8 @@ object AppServiceContainer {
 
         this.context = context
 
-        supabaseClient = SupabaseClient()
+        // Pass context so the Supabase session persists across process death
+        supabaseClient = SupabaseClient(context)
         agoraTokenService = com.example.service.agora.SupabaseEdgeFunctionTokenService(supabaseClient)
         agoraRtcEngineManager = com.example.service.agora.AgoraRtcEngineManager(context, agoraTokenService)
 
