@@ -16,9 +16,20 @@ class DashboardViewModel : ViewModel() {
 
     val connectionState: StateFlow<PresenceStatus> = presenceService.connectionState
 
+    // Surfaces any failure from the initial `sync-conversations` pull so the
+    // UI can render a retry banner instead of silently eating the error.
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    // True while the initial `sync-conversations` pull is in flight — lets the
+    // dashboard render a non-zero state instead of an empty list flash.
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
     init {
         // Sync conversations from Supabase on app launch (multi-device sync)
         viewModelScope.launch {
+            _isSyncing.value = true
             try {
                 val payload = org.json.JSONObject().apply {
                     put("action", "pull")
@@ -48,8 +59,66 @@ class DashboardViewModel : ViewModel() {
                         )
                         repository.insertConversation(conv)
                     }
+                } else if (result is com.example.service.supabase.SupabaseResult.Error) {
+                    _errorMessage.value = result.message.ifBlank { "Failed to sync conversations." }
                 }
-            } catch (_: Exception) { }
+            } catch (e: Exception) {
+                _errorMessage.value = e.message ?: "Failed to sync conversations."
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+    }
+
+    /** Clears [errorMessage] after the UI has shown it (e.g. user dismissed
+     *  the retry banner or successfully retried). */
+    fun clearError() {
+        _errorMessage.value = null
+    }
+
+    /** Re-runs the initial `sync-conversations` pull. Wired to the dashboard's
+     *  retry banner so users can recover from a transient network failure. */
+    fun retrySync() {
+        if (_isSyncing.value) return
+        _errorMessage.value = null
+        viewModelScope.launch {
+            _isSyncing.value = true
+            try {
+                val payload = org.json.JSONObject().apply {
+                    put("action", "pull")
+                }
+                val result = supabaseClient.invokeFunction("sync-conversations", payload)
+                if (result is com.example.service.supabase.SupabaseResult.Success) {
+                    val arr = result.data.optJSONArray("conversations") ?: return@launch
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        val conv = com.example.data.local.ConversationEntity(
+                            id = obj.getString("id"),
+                            name = obj.optString("peer_name", "Unknown"),
+                            avatarRes = null,
+                            initialColor = obj.optLong("peer_avatar_color", 0xFF00A884),
+                            lastMessage = obj.optString("last_message", ""),
+                            timestamp = obj.optString("last_message_at", ""),
+                            unreadCount = obj.optInt("unread_count", 0),
+                            isPinned = obj.optBoolean("is_pinned", false),
+                            hasStatusUpdate = false,
+                            isGroup = obj.optBoolean("is_group", false),
+                            isOnline = false,
+                            lastSeenText = "offline",
+                            disappearingDuration = obj.optString("disappearing_duration", "OFF"),
+                            isMuted = obj.optBoolean("is_muted", false),
+                            isBlocked = obj.optBoolean("is_blocked", false)
+                        )
+                        repository.insertConversation(conv)
+                    }
+                } else if (result is com.example.service.supabase.SupabaseResult.Error) {
+                    _errorMessage.value = result.message.ifBlank { "Failed to sync conversations." }
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = e.message ?: "Failed to sync conversations."
+            } finally {
+                _isSyncing.value = false
+            }
         }
     }
 

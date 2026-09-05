@@ -188,6 +188,7 @@ fun EmailOtpVerificationScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .imePadding()
         ) {
             Column(
                 modifier = Modifier

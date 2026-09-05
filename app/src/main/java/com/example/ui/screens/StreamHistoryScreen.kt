@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.di.AppServiceContainer
@@ -40,11 +41,27 @@ fun StreamHistoryScreen(
     var selectedFilter by remember { mutableStateOf("All") }
     val coroutineScope = rememberCoroutineScope()
 
+    // Loading + error state for refreshStreamHistory() — exposed to the UI
+    // so the user sees a spinner while fetching, an empty state when nothing
+    // has been broadcast yet, and a retry banner on failure.
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
     // Hydrate from `live_streams` (status=ended, host_id=caller) on entry.
-    LaunchedEffect(Unit) {
-        coroutineScope.launch {
+    suspend fun loadHistory() {
+        isLoading = true
+        errorMessage = null
+        try {
             AppServiceContainer.streamScheduleService.refreshStreamHistory()
+        } catch (e: Exception) {
+            errorMessage = e.message ?: "Failed to load stream history."
+        } finally {
+            isLoading = false
         }
+    }
+
+    LaunchedEffect(Unit) {
+        loadHistory()
     }
 
     val filteredList = remember(historyItems, selectedFilter) {
@@ -74,6 +91,113 @@ fun StreamHistoryScreen(
             com.example.ui.components.TriggerBottomNavInset()
         }
     ) { innerPadding ->
+        // Error state with retry — surfaces any failure to fetch stream history.
+        val currentError = errorMessage
+        if (currentError != null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.CloudOff,
+                    contentDescription = null,
+                    tint = TextSub,
+                    modifier = Modifier.size(56.dp)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Couldn't load stream history",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextMain,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = currentError,
+                    fontSize = 13.sp,
+                    color = TextSub,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+                Button(
+                    onClick = { coroutineScope.launch { loadHistory() } },
+                    colors = ButtonDefaults.buttonColors(containerColor = HeaderGreen),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Text("Retry", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+            return@Scaffold
+        }
+
+        // Loading state — initial fetch in progress.
+        if (isLoading && historyItems.isEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                CircularProgressIndicator(color = HeaderGreen, strokeWidth = 3.dp)
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    text = "Loading stream history…",
+                    fontSize = 14.sp,
+                    color = TextSub
+                )
+            }
+            return@Scaffold
+        }
+
+        // Empty state — no broadcasts yet.
+        if (historyItems.isEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Videocam,
+                    contentDescription = null,
+                    tint = TextSub,
+                    modifier = Modifier.size(56.dp)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "No broadcasts yet",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextMain,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Schedule a stream to see it appear here after it ends.",
+                    fontSize = 13.sp,
+                    color = TextSub,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+                Button(
+                    onClick = onScheduleNew,
+                    colors = ButtonDefaults.buttonColors(containerColor = HeaderGreen),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Text("Schedule a Stream", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+            return@Scaffold
+        }
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()

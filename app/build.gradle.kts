@@ -10,6 +10,8 @@ plugins {
 }
 
 android {
+  // TODO: rename namespace to com.trigger.app in a dedicated refactor PR (renaming requires
+  //  updating every `package com.example.*` declaration + R class references; out of scope here.)
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
@@ -41,7 +43,8 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
@@ -73,6 +76,8 @@ secrets {
   ignoreList.add("SUPABASE_SERVICE_ROLE_KEY")
   ignoreList.add("RAZORPAY_KEY_SECRET")
   ignoreList.add("RAZORPAY_WEBHOOK_SECRET")
+  ignoreList.add("RAZORPAY_KEY_ID")
+  ignoreList.add("AGORA_PRIMARY_CERTIFICATE")
   ignoreList.add("RESEND_API_KEY")
 }
 
@@ -106,9 +111,9 @@ dependencies {
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
   implementation(libs.agora.rtc)
-  implementation(libs.converter.moshi)
-  implementation(libs.firebase.ai)
-    implementation(libs.firebase.messaging)
+  // Retrofit / Moshi / OkHttp logging-interceptor were declared but never imported — removed in audit-E.
+  // (okhttp itself IS still used by SupabaseClient + UploadServiceImpl.)
+  implementation(libs.firebase.messaging)
   // Uncomment to use Firestore:
   // implementation(libs.firebase.firestore)
 
@@ -118,15 +123,10 @@ dependencies {
   // implementation(libs.androidx.credentials)
   // implementation(libs.androidx.credentials.play.services)
   // implementation(libs.googleid)
-  implementation(libs.firebase.appcheck.recaptcha)
-  implementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  implementation(libs.logging.interceptor)
-  implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
-  implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
@@ -144,5 +144,4 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
-  "ksp"(libs.moshi.kotlin.codegen)
 }

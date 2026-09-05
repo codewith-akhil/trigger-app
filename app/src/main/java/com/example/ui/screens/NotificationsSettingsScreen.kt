@@ -52,29 +52,27 @@ fun NotificationsSettingsScreen(
     // object. If absent (current edge fn returns only `profile`), defaults
     // remain — the persistence write side still works via update-user-settings.
     LaunchedEffect(Unit) {
-        coroutineScope.launch {
-            when (val res = client.invokeFunction("get-my-profile")) {
-                is SupabaseResult.Success -> {
-                    val settings = res.data.optJSONObject("settings")
-                    if (settings != null) {
-                        if (settings.has("conversationTones"))
-                            conversationTones = settings.getBoolean("conversationTones")
-                        if (settings.has("highPriorityMessages"))
-                            highPriorityMessages = settings.getBoolean("highPriorityMessages")
-                        if (settings.has("messageTone"))
-                            messageTone = settings.optString("messageTone", messageTone)
-                        if (settings.has("messageVibrate")) {
-                            // Server stores boolean; UI uses string labels.
-                            messageVibrate = if (settings.getBoolean("messageVibrate")) "Default" else "Off"
-                        }
-                        if (settings.has("groupTone"))
-                            groupTone = settings.optString("groupTone", groupTone)
-                        if (settings.has("callRingtone"))
-                            callRingtone = settings.optString("callRingtone", callRingtone)
+        when (val res = client.invokeFunction("get-my-profile")) {
+            is SupabaseResult.Success -> {
+                val settings = res.data.optJSONObject("settings")
+                if (settings != null) {
+                    if (settings.has("conversationTones"))
+                        conversationTones = settings.getBoolean("conversationTones")
+                    if (settings.has("highPriorityMessages"))
+                        highPriorityMessages = settings.getBoolean("highPriorityMessages")
+                    if (settings.has("messageTone"))
+                        messageTone = settings.optString("messageTone", messageTone)
+                    if (settings.has("messageVibrate")) {
+                        // Server stores boolean; UI uses string labels.
+                        messageVibrate = if (settings.getBoolean("messageVibrate")) "Default" else "Off"
                     }
+                    if (settings.has("groupTone"))
+                        groupTone = settings.optString("groupTone", groupTone)
+                    if (settings.has("callRingtone"))
+                        callRingtone = settings.optString("callRingtone", callRingtone)
                 }
-                is SupabaseResult.Error -> Unit
             }
+            is SupabaseResult.Error -> Unit
         }
     }
 

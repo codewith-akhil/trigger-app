@@ -85,23 +85,21 @@ fun StorageSettingsScreen(
 
     // Hydrate from server.
     LaunchedEffect(Unit) {
-        coroutineScope.launch {
-            when (val res = client.invokeFunction("get-my-profile")) {
-                is SupabaseResult.Success -> {
-                    val settings = res.data.optJSONObject("settings")
-                    if (settings != null) {
-                        if (settings.has("useLessDataForCalls"))
-                            useLessDataForCalls = settings.getBoolean("useLessDataForCalls")
-                        if (settings.has("mobileDataMedia"))
-                            mobileDataMedia = serverMediaModeToLabel(settings.optString("mobileDataMedia"))
-                        if (settings.has("wifiMedia"))
-                            wifiMedia = serverMediaModeToLabel(settings.optString("wifiMedia"))
-                        if (settings.has("roamingMedia"))
-                            roamingMedia = if (settings.getBoolean("roamingMedia")) "All media" else "No media"
-                    }
+        when (val res = client.invokeFunction("get-my-profile")) {
+            is SupabaseResult.Success -> {
+                val settings = res.data.optJSONObject("settings")
+                if (settings != null) {
+                    if (settings.has("useLessDataForCalls"))
+                        useLessDataForCalls = settings.getBoolean("useLessDataForCalls")
+                    if (settings.has("mobileDataMedia"))
+                        mobileDataMedia = serverMediaModeToLabel(settings.optString("mobileDataMedia"))
+                    if (settings.has("wifiMedia"))
+                        wifiMedia = serverMediaModeToLabel(settings.optString("wifiMedia"))
+                    if (settings.has("roamingMedia"))
+                        roamingMedia = if (settings.getBoolean("roamingMedia")) "All media" else "No media"
                 }
-                is SupabaseResult.Error -> Unit
             }
+            is SupabaseResult.Error -> Unit
         }
     }
 

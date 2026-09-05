@@ -41,7 +41,7 @@ fun LiveStreamPlayerScreen(
     val currentStreamState by liveStreamService.currentStreamState.collectAsState()
     val engineState by AppServiceContainer.agoraRtcEngineManager.engineState.collectAsState()
 
-    val stream = currentStreamState.stream ?: return
+    val stream = currentStreamState.stream
     val isHost = currentStreamState.role == LiveStreamRole.HOST
 
     var commentInput by remember { mutableStateOf("") }
@@ -56,6 +56,29 @@ fun LiveStreamPlayerScreen(
         }
     }
 
+    if (stream == null) {
+        // Loading / unavailable stream placeholder — must still emit a node tree
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .testTag("live_stream_player_loading"),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Color(0xFF25D366), strokeWidth = 3.dp)
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    text = "Loading live stream…",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    } else {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -93,11 +116,12 @@ fun LiveStreamPlayerScreen(
                 }
             } else {
                 // Audience remote host video feed
-                if (engineState.remoteUid != null) {
+                val remoteUid = engineState.remoteUid
+                if (remoteUid != null) {
                     AndroidView(
                         factory = { ctx ->
                             SurfaceView(ctx).apply {
-                                AppServiceContainer.agoraRtcEngineManager.setupRemoteVideo(this, engineState.remoteUid!!)
+                                AppServiceContainer.agoraRtcEngineManager.setupRemoteVideo(this, remoteUid)
                             }
                         },
                         modifier = Modifier.fillMaxSize()
@@ -532,5 +556,6 @@ fun LiveStreamPlayerScreen(
                 }
             }
         )
+    }
     }
 }

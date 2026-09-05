@@ -69,27 +69,25 @@ fun PrivacySettingsScreen(
 
     // Hydrate from server (best-effort).
     LaunchedEffect(Unit) {
-        coroutineScope.launch {
-            when (val res = client.invokeFunction("get-my-profile")) {
-                is SupabaseResult.Success -> {
-                    val settings = res.data.optJSONObject("settings")
-                    if (settings != null) {
-                        if (settings.has("readReceipts"))
-                            readReceiptsEnabled = settings.getBoolean("readReceipts")
-                        if (settings.has("fingerprintLock"))
-                            fingerprintLockEnabled = settings.getBoolean("fingerprintLock")
-                        if (settings.has("lastSeen"))
-                            lastSeenChoice = serverVisibilityToLabel(settings.optString("lastSeen"))
-                        if (settings.has("profilePhotoVisibility"))
-                            profilePhotoChoice = serverVisibilityToLabel(settings.optString("profilePhotoVisibility"))
-                        if (settings.has("aboutVisibility"))
-                            aboutChoice = serverVisibilityToLabel(settings.optString("aboutVisibility"))
-                        if (settings.has("disappearingDefault"))
-                            disappearingTimerChoice = serverDisappearingToLabel(settings.optString("disappearingDefault"))
-                    }
+        when (val res = client.invokeFunction("get-my-profile")) {
+            is SupabaseResult.Success -> {
+                val settings = res.data.optJSONObject("settings")
+                if (settings != null) {
+                    if (settings.has("readReceipts"))
+                        readReceiptsEnabled = settings.getBoolean("readReceipts")
+                    if (settings.has("fingerprintLock"))
+                        fingerprintLockEnabled = settings.getBoolean("fingerprintLock")
+                    if (settings.has("lastSeen"))
+                        lastSeenChoice = serverVisibilityToLabel(settings.optString("lastSeen"))
+                    if (settings.has("profilePhotoVisibility"))
+                        profilePhotoChoice = serverVisibilityToLabel(settings.optString("profilePhotoVisibility"))
+                    if (settings.has("aboutVisibility"))
+                        aboutChoice = serverVisibilityToLabel(settings.optString("aboutVisibility"))
+                    if (settings.has("disappearingDefault"))
+                        disappearingTimerChoice = serverDisappearingToLabel(settings.optString("disappearingDefault"))
                 }
-                is SupabaseResult.Error -> Unit
             }
+            is SupabaseResult.Error -> Unit
         }
     }
 

@@ -71,53 +71,51 @@ fun ChatsSettingsScreen(
 
     // --- Hydrate toggles + last-backup time on screen entry --------------------
     LaunchedEffect(Unit) {
-        coroutineScope.launch {
-            // 1) Current user settings via get-my-profile. The function returns
-            //    the profile row, but `user_settings` fields may be embedded as a
-            //    `settings` object or as top-level fields. We check both shapes
-            //    defensively so the screen still works if the backend evolves.
-            val profileResult = AppServiceContainer.supabaseClient.invokeFunction("get-my-profile", JSONObject())
-            if (profileResult is SupabaseResult.Success) {
-                val profile = profileResult.data.optJSONObject("profile")
-                val settings = profile?.optJSONObject("settings") ?: profile
-                if (settings != null) {
-                    if (settings.has("enterIsSend")) {
-                        enterIsSend = settings.optBoolean("enterIsSend", enterIsSend)
-                    } else if (settings.has("enter_is_send")) {
-                        enterIsSend = settings.optBoolean("enter_is_send", enterIsSend)
-                    }
-                    val mediaVis = settings.optString("mediaVisibility", settings.optString("media_visibility", ""))
-                    if (mediaVis.isNotEmpty()) {
-                        mediaVisibility = (mediaVis == "on")
-                    }
-                    val fontRaw = settings.optString("fontSize", settings.optString("font_size", ""))
-                    if (fontRaw.isNotEmpty()) {
-                        fontSizeChoice = when (fontRaw.lowercase(Locale.ROOT)) {
-                            "small" -> "Small"
-                            "large" -> "Large"
-                            else -> "Medium"
-                        }
+        // 1) Current user settings via get-my-profile. The function returns
+        //    the profile row, but `user_settings` fields may be embedded as a
+        //    `settings` object or as top-level fields. We check both shapes
+        //    defensively so the screen still works if the backend evolves.
+        val profileResult = AppServiceContainer.supabaseClient.invokeFunction("get-my-profile", JSONObject())
+        if (profileResult is SupabaseResult.Success) {
+            val profile = profileResult.data.optJSONObject("profile")
+            val settings = profile?.optJSONObject("settings") ?: profile
+            if (settings != null) {
+                if (settings.has("enterIsSend")) {
+                    enterIsSend = settings.optBoolean("enterIsSend", enterIsSend)
+                } else if (settings.has("enter_is_send")) {
+                    enterIsSend = settings.optBoolean("enter_is_send", enterIsSend)
+                }
+                val mediaVis = settings.optString("mediaVisibility", settings.optString("media_visibility", ""))
+                if (mediaVis.isNotEmpty()) {
+                    mediaVisibility = (mediaVis == "on")
+                }
+                val fontRaw = settings.optString("fontSize", settings.optString("font_size", ""))
+                if (fontRaw.isNotEmpty()) {
+                    fontSizeChoice = when (fontRaw.lowercase(Locale.ROOT)) {
+                        "small" -> "Small"
+                        "large" -> "Large"
+                        else -> "Medium"
                     }
                 }
             }
+        }
 
-            // 2) Latest backup metadata (if any) via backup-messages action=list.
-            val listPayload = JSONObject().put("action", "list").put("limit", 1)
-            val backupResult = AppServiceContainer.supabaseClient.invokeFunction("backup-messages", listPayload)
-            if (backupResult is SupabaseResult.Success) {
-                val latest = backupResult.data.optJSONObject("latest")
-                if (latest != null) {
-                    val createdAt = latest.optString("created_at", "")
-                    val sizeBytes = latest.optLong("file_size", 0L)
-                    val sizeText = if (sizeBytes > 0) formatBackupSize(sizeBytes) else ""
-                    backupStatusText = if (createdAt.isNotEmpty()) {
-                        "${formatBackupDate(createdAt)}${if (sizeText.isNotEmpty()) " ($sizeText)" else ""}"
-                    } else {
-                        "Never"
-                    }
+        // 2) Latest backup metadata (if any) via backup-messages action=list.
+        val listPayload = JSONObject().put("action", "list").put("limit", 1)
+        val backupResult = AppServiceContainer.supabaseClient.invokeFunction("backup-messages", listPayload)
+        if (backupResult is SupabaseResult.Success) {
+            val latest = backupResult.data.optJSONObject("latest")
+            if (latest != null) {
+                val createdAt = latest.optString("created_at", "")
+                val sizeBytes = latest.optLong("file_size", 0L)
+                val sizeText = if (sizeBytes > 0) formatBackupSize(sizeBytes) else ""
+                backupStatusText = if (createdAt.isNotEmpty()) {
+                    "${formatBackupDate(createdAt)}${if (sizeText.isNotEmpty()) " ($sizeText)" else ""}"
                 } else {
-                    backupStatusText = "Never"
+                    "Never"
                 }
+            } else {
+                backupStatusText = "Never"
             }
         }
     }

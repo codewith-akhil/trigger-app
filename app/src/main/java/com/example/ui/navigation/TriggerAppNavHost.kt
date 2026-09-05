@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -48,31 +49,33 @@ fun TriggerAppNavHost(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController()
 ) {
+    val navScope = rememberCoroutineScope()
+
     var selectedLanguage by remember {
         mutableStateOf(LanguageRepository.languages.first())
     }
-    var currentEmail by remember {
+    var currentEmail by rememberSaveable {
         mutableStateOf("")
     }
-    var currentOtp by remember {
+    var currentOtp by rememberSaveable {
         mutableStateOf("")
     }
-    var currentVerifiedOtpCode by remember {
+    var currentVerifiedOtpCode by rememberSaveable {
         mutableStateOf("")
     }
-    var otpPurpose by remember {
+    var otpPurpose by rememberSaveable {
         mutableStateOf(OtpPurpose.SIGN_UP)
     }
-    var showNotificationDialogOnLandingToAuth by remember {
+    var showNotificationDialogOnLandingToAuth by rememberSaveable {
         mutableStateOf(false)
     }
-    var activeChatContactId by remember {
+    var activeChatContactId by rememberSaveable {
         mutableStateOf("")
     }
-    var activeChatContactName by remember {
+    var activeChatContactName by rememberSaveable {
         mutableStateOf("")
     }
-    var activeChatAvatarRes by remember {
+    var activeChatAvatarRes by rememberSaveable {
         mutableStateOf<Int?>(null)
     }
 
@@ -264,7 +267,7 @@ fun TriggerAppNavHost(
                     navController.popBackStack()
                 },
                 onLogout = {
-                    kotlinx.coroutines.MainScope().launch {
+                    navScope.launch {
                         // Disconnect Realtime WebSocket + stop presence heartbeat
                         (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppBackground()
                         com.example.di.AppServiceContainer.supabaseClient.disconnectRealtime()
@@ -285,7 +288,7 @@ fun TriggerAppNavHost(
             DeleteAccountScreen(
                 onBack = { navController.popBackStack() },
                 onDeleted = {
-                    kotlinx.coroutines.MainScope().launch {
+                    navScope.launch {
                         (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppBackground()
                         com.example.di.AppServiceContainer.supabaseClient.disconnectRealtime()
                         com.example.di.AppServiceContainer.supabaseClient.signOut()

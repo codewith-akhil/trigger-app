@@ -92,7 +92,7 @@ fun ChatGifPicker(
                     .padding(horizontal = 8.dp),
                 contentPadding = PaddingValues(vertical = 4.dp)
             ) {
-                items(gifStickers) { sticker ->
+                items(gifStickers, key = { sticker -> sticker }) { sticker ->
                     Box(
                         modifier = Modifier
                             .size(80.dp)

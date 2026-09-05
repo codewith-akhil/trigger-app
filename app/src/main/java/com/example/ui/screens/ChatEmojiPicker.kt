@@ -182,7 +182,7 @@ fun ChatEmojiPicker(
                     .padding(horizontal = 8.dp),
                 contentPadding = PaddingValues(vertical = 4.dp)
             ) {
-                items(currentCategory.emojis) { emoji ->
+                items(currentCategory.emojis, key = { emoji -> emoji }) { emoji ->
                     Box(
                         modifier = Modifier
                             .size(if (currentCategory.isStickerCategory) 64.dp else 44.dp)

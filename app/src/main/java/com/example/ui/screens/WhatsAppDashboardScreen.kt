@@ -1945,11 +1945,12 @@ fun AgoraActiveCallDialog(
                             .background(Color(0xFF1E2830)),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (engineState.remoteUid != null) {
+                        val remoteUid = engineState.remoteUid
+                        if (remoteUid != null) {
                             androidx.compose.ui.viewinterop.AndroidView(
                                 factory = { ctx ->
                                     android.view.SurfaceView(ctx).apply {
-                                        com.example.di.AppServiceContainer.agoraRtcEngineManager.setupRemoteVideo(this, engineState.remoteUid!!)
+                                        com.example.di.AppServiceContainer.agoraRtcEngineManager.setupRemoteVideo(this, remoteUid)
                                     }
                                 },
                                 modifier = Modifier.fillMaxSize()

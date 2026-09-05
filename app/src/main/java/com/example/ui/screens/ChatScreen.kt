@@ -794,9 +794,10 @@ fun ChatScreen(
     }
 
     // Media Pre-send preview dialog
-    if (pendingAttachment != null) {
+    val pendingAttachmentValue = pendingAttachment
+    if (pendingAttachmentValue != null) {
         ChatMediaPreviewDialog(
-            pending = pendingAttachment!!,
+            pending = pendingAttachmentValue,
             errorMessage = fileSizeError,
             onCaptionChanged = { viewModel.updatePendingCaption(it) },
             onToggleViewOnce = { viewModel.togglePendingViewOnce() },
@@ -806,9 +807,10 @@ fun ChatScreen(
     }
 
     // Full screen Calling overlay
-    if (activeCall != null) {
+    val activeCallValue = activeCall
+    if (activeCallValue != null) {
         ChatCallingOverlay(
-            session = activeCall!!,
+            session = activeCallValue,
             onEndCall = { AppServiceContainer.callService.endCall() },
             onToggleMute = { AppServiceContainer.callService.toggleMute() },
             onToggleSpeaker = { AppServiceContainer.callService.toggleSpeaker() },
@@ -818,21 +820,22 @@ fun ChatScreen(
     }
 
     // Full screen Media Viewer
-    if (activeViewerMessage != null) {
+    val activeViewerMessageValue = activeViewerMessage
+    if (activeViewerMessageValue != null) {
         ChatMediaViewer(
-            message = activeViewerMessage!!,
+            message = activeViewerMessageValue,
             onClose = { viewModel.activeViewerMessage.value = null },
             onDelete = {
                 viewModel.deleteSelectedForMe()
                 viewModel.activeViewerMessage.value = null
             },
             onShare = {
-                val mediaUrl = activeViewerMessage?.mediaUrl
+                val mediaUrl = activeViewerMessageValue.mediaUrl
                 if (!mediaUrl.isNullOrEmpty()) {
                     try {
                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                            type = if (activeViewerMessage?.type == MessageType.VIDEO) "video/*"
-                                   else if (activeViewerMessage?.type == MessageType.DOCUMENT) "*/*"
+                            type = if (activeViewerMessageValue.type == MessageType.VIDEO) "video/*"
+                                   else if (activeViewerMessageValue.type == MessageType.DOCUMENT) "*/*"
                                    else "image/*"
                             putExtra(Intent.EXTRA_STREAM, Uri.parse(mediaUrl))
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -1134,7 +1137,7 @@ fun ChatScreen(
                                 .fillMaxWidth()
                                 .heightIn(max = 320.dp)
                         ) {
-                            items(otherConversations) { conv ->
+                            items(otherConversations, key = { conv -> conv.id }) { conv ->
                                 val isChecked = selectedForwardIds.contains(conv.id)
                                 Row(
                                     modifier = Modifier
