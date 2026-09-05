@@ -26,6 +26,7 @@ object TriggerDestinations {
     const val DASHBOARD = "dashboard"
     const val CHAT = "chat"
     const val PROFILE = "profile"
+    const val DELETE_ACCOUNT = "delete_account"
     const val SELECT_CONTACT = "select_contact"
     const val HOME = "home"
     const val SETTINGS = "settings"
@@ -256,8 +257,24 @@ fun TriggerAppNavHost(
                     navController.popBackStack()
                 },
                 onLogout = {
-                    // SECURITY FIX: actually revoke the Supabase session + clear
-                    // local user data (previously a no-op — JWT stayed valid).
+                    kotlinx.coroutines.MainScope().launch {
+                        com.example.di.AppServiceContainer.supabaseClient.signOut()
+                        com.example.model.UserRepository.clear()
+                    }
+                    navController.navigate(TriggerDestinations.LANDING) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+                onNavigateToDeleteAccount = {
+                    navController.navigate(TriggerDestinations.DELETE_ACCOUNT)
+                }
+            )
+        }
+
+        composable(TriggerDestinations.DELETE_ACCOUNT) {
+            DeleteAccountScreen(
+                onBack = { navController.popBackStack() },
+                onDeleted = {
                     kotlinx.coroutines.MainScope().launch {
                         com.example.di.AppServiceContainer.supabaseClient.signOut()
                         com.example.model.UserRepository.clear()

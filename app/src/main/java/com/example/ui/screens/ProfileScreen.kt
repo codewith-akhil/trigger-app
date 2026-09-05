@@ -36,22 +36,26 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.outlined.AlternateEmail
+import androidx.compose.material.icons.outlined.Cake
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -60,12 +64,15 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -116,14 +123,16 @@ private val TriggerDanger = Color(0xFFD32F2F)
 // Username validation rules — mirrored from the check-username-availability
 // edge function so we can give the user instant client-side feedback.
 // ============================================================================
-private const val MIN_USERNAME = 3
-private const val MAX_USERNAME = 20
+private const val MIN_USERNAME = 5
+private const val MAX_USERNAME = 25
 private val USERNAME_REGEX = Regex("^[a-z0-9_.]+$")
 private val RESERVED_USERNAMES = setOf(
     "admin", "root", "support", "help", "api", "trigger", "official",
     "system", "moderator", "mod", "staff", "team", "info", "contact",
     "about", "settings", "login", "signup", "register", "auth", "user",
-    "profile", "me", "self"
+    "profile", "me", "self", "superuser", "operator", "service", "bot",
+    "anonymous", "guest", "null", "undefined", "test", "demo", "example",
+    "sample", "owner", "master"
 )
 
 // ============================================================================
@@ -198,6 +207,7 @@ fun ProfileTopHeader(
 fun ProfileScreen(
     onBack: () -> Unit,
     onLogout: () -> Unit = {},
+    onNavigateToDeleteAccount: () -> Unit = {},
     showHeader: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -213,6 +223,9 @@ fun ProfileScreen(
     var showEditLinksDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showPhotoSheet by remember { mutableStateOf(false) }
+    var showEditGenderDialog by remember { mutableStateOf(false) }
+    var showEditCountryDialog by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     // Per-field saving flags — drive the saving UI in each dialog + on the avatar
     var isAvatarSaving by remember { mutableStateOf(false) }
@@ -220,6 +233,38 @@ fun ProfileScreen(
     var isAboutSaving by remember { mutableStateOf(false) }
     var isUsernameSaving by remember { mutableStateOf(false) }
     var isLinksSaving by remember { mutableStateOf(false) }
+    var isGenderSaving by remember { mutableStateOf(false) }
+    var isCountrySaving by remember { mutableStateOf(false) }
+    var isDobSaving by remember { mutableStateOf(false) }
+
+    // Genders + Countries fetched from backend (via REST API)
+    var genders by remember { mutableStateOf(listOf("Male", "Female", "Transmen", "Transwomen")) }
+    var countries by remember { mutableStateOf(listOf<Pair<String, String>>()) }
+
+    // Fetch genders + countries from DB on first launch
+    LaunchedEffect(Unit) {
+        try {
+            val sr = AppServiceContainer.supabaseClient.getTable("genders", "select=name&order=sort_order.asc")
+            if (sr is SupabaseResult.Success) {
+                val list = mutableListOf<String>()
+                for (i in 0 until sr.data.length()) {
+                    list.add(sr.data.getJSONObject(i).getString("name"))
+                }
+                if (list.isNotEmpty()) genders = list
+            }
+        } catch (_: Exception) { }
+        try {
+            val cr = AppServiceContainer.supabaseClient.getTable("countries", "select=currency_code,country_name&order=country_name.asc")
+            if (cr is SupabaseResult.Success) {
+                val list = mutableListOf<Pair<String, String>>()
+                for (i in 0 until cr.data.length()) {
+                    val obj = cr.data.getJSONObject(i)
+                    list.add(Pair(obj.getString("currency_code"), obj.getString("country_name")))
+                }
+                if (list.isNotEmpty()) countries = list
+            }
+        } catch (_: Exception) { }
+    }
 
     // Holds the content:// URI handed to TakePicture() so the result callback
     // knows which file was being captured.
@@ -454,10 +499,77 @@ fun ProfileScreen(
                         onClick = null,
                         testTag = "profile_email_item"
                     )
+
+                    HorizontalDivider(color = TriggerDivider, thickness = 1.dp)
+
+                    // 5) Gender — opens a dropdown dialog
+                    ProfileDetailItem(
+                        icon = Icons.Outlined.Person,
+                        label = "Gender",
+                        value = profile.gender ?: "Select gender",
+                        isValueGreen = profile.gender == null,
+                        onClick = { showEditGenderDialog = true },
+                        testTag = "profile_gender_item"
+                    )
+
+                    HorizontalDivider(color = TriggerDivider, thickness = 1.dp)
+
+                    // 6) Country — opens a dropdown dialog
+                    ProfileDetailItem(
+                        icon = Icons.Outlined.Public,
+                        label = "Country",
+                        value = profile.countryName ?: "Select country",
+                        isValueGreen = profile.countryName == null,
+                        onClick = { showEditCountryDialog = true },
+                        testTag = "profile_country_item"
+                    )
+
+                    HorizontalDivider(color = TriggerDivider, thickness = 1.dp)
+
+                    // 7) DOB — opens a date picker
+                    ProfileDetailItem(
+                        icon = Icons.Outlined.Cake,
+                        label = "Date of Birth",
+                        value = profile.dob ?: "Select date of birth",
+                        isValueGreen = profile.dob == null,
+                        onClick = { showDatePicker = true },
+                        testTag = "profile_dob_item"
+                    )
                 }
             }
 
-            Spacer(modifier = Modifier.height(28.dp))
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ---- Delete Account button (above Logout) ----
+            OutlinedButton(
+                onClick = onNavigateToDeleteAccount,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("delete_account_button"),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = Color.White,
+                    contentColor = TriggerDanger
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.2.dp, Color(0xFFFFCDD2))
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Delete account",
+                    tint = TriggerDanger,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Delete my account",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TriggerDanger
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             // ---- Logout button ----
             OutlinedButton(
@@ -693,6 +805,204 @@ fun ProfileScreen(
                     } else {
                         Toast.makeText(context, "Failed to save links", Toast.LENGTH_SHORT).show()
                     }
+                }
+            }
+        )
+    }
+
+    // ------------------------------------------------------------------------
+    // Gender dropdown dialog
+    // ------------------------------------------------------------------------
+    if (showEditGenderDialog) {
+        var selectedGender by remember { mutableStateOf(profile.gender ?: "") }
+        AlertDialog(
+            onDismissRequest = { if (!isGenderSaving) showEditGenderDialog = false },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
+            title = { Text("Select Gender", color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
+            text = {
+                Column {
+                    genders.forEach { g ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedGender = g }
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = selectedGender == g,
+                                onClick = { selectedGender = g },
+                                colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = TriggerGreenAccent)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(g, fontSize = 15.sp, color = TriggerTextPrimary)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (selectedGender.isBlank()) return@Button
+                        isGenderSaving = true
+                        coroutineScope.launch {
+                            val payload = JSONObject().put("gender", selectedGender)
+                            val result = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
+                            isGenderSaving = false
+                            if (result is SupabaseResult.Success) {
+                                UserRepository.updateGender(selectedGender)
+                                Toast.makeText(context, "Gender saved", Toast.LENGTH_SHORT).show()
+                                showEditGenderDialog = false
+                            } else {
+                                Toast.makeText(context, "Failed to save gender", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    enabled = !isGenderSaving && selectedGender.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = TriggerGreenAccent),
+                    shape = RoundedCornerShape(8.dp)
+                ) { SaveButtonContent(isSaving = isGenderSaving) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditGenderDialog = false }, enabled = !isGenderSaving) {
+                    Text("Cancel", color = TriggerTextSecondary)
+                }
+            }
+        )
+    }
+
+    // ------------------------------------------------------------------------
+    // Country dropdown dialog
+    // ------------------------------------------------------------------------
+    if (showEditCountryDialog) {
+        var searchQuery by remember { mutableStateOf("") }
+        var selectedCountry by remember { mutableStateOf<Pair<String, String>?>(null) }
+        val filtered = if (searchQuery.isBlank()) countries else countries.filter { it.second.contains(searchQuery, ignoreCase = true) || it.first.contains(searchQuery, ignoreCase = true) }
+        AlertDialog(
+            onDismissRequest = { if (!isCountrySaving) showEditCountryDialog = false },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
+            title = { Text("Select Country", color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Search country...") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = TriggerGreenAccent,
+                            unfocusedBorderColor = Color(0xFFCFD8DC),
+                            cursorColor = TriggerGreenAccent
+                        ),
+                        enabled = !isCountrySaving,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    // Scrollable country list
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(300.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        filtered.forEach { (code, name) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedCountry = Pair(code, name) }
+                                    .padding(vertical = 8.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = selectedCountry?.first == code,
+                                    onClick = { selectedCountry = Pair(code, name) },
+                                    colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = TriggerGreenAccent)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("$name ($code)", fontSize = 14.sp, color = TriggerTextPrimary)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val cc = selectedCountry ?: return@Button
+                        isCountrySaving = true
+                        coroutineScope.launch {
+                            val payload = JSONObject().put("country_code", cc.first)
+                            val result = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
+                            isCountrySaving = false
+                            if (result is SupabaseResult.Success) {
+                                UserRepository.updateCountry(cc.second, cc.first)
+                                Toast.makeText(context, "Country saved", Toast.LENGTH_SHORT).show()
+                                showEditCountryDialog = false
+                            } else {
+                                Toast.makeText(context, "Failed to save country", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    enabled = !isCountrySaving && selectedCountry != null,
+                    colors = ButtonDefaults.buttonColors(containerColor = TriggerGreenAccent),
+                    shape = RoundedCornerShape(8.dp)
+                ) { SaveButtonContent(isSaving = isCountrySaving) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditCountryDialog = false }, enabled = !isCountrySaving) {
+                    Text("Cancel", color = TriggerTextSecondary)
+                }
+            }
+        )
+    }
+
+    // ------------------------------------------------------------------------
+    // DOB date picker
+    // ------------------------------------------------------------------------
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = profile.dob?.let {
+                try { java.text.SimpleDateFormat("yyyy-MM-dd").parse(it)?.time } catch (_: Exception) { null }
+            },
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                    return utcTimeMillis <= System.currentTimeMillis() // no future dates
+                }
+            }
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val millis = datePickerState.selectedDateMillis
+                        if (millis != null) {
+                            val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(millis))
+                            isDobSaving = true
+                            coroutineScope.launch {
+                                val payload = JSONObject().put("dob", dateStr)
+                                val result = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
+                                isDobSaving = false
+                                if (result is SupabaseResult.Success) {
+                                    UserRepository.updateDob(dateStr)
+                                    Toast.makeText(context, "Date of birth saved", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Failed to save date of birth", Toast.LENGTH_SHORT).show()
+                                }
+                                showDatePicker = false
+                            }
+                        }
+                    },
+                    enabled = !isDobSaving,
+                    colors = ButtonDefaults.buttonColors(containerColor = TriggerGreenAccent)
+                ) { SaveButtonContent(isSaving = isDobSaving) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text("Cancel", color = TriggerTextSecondary)
                 }
             }
         )
@@ -976,15 +1286,24 @@ fun UsernameEditDialog(
                     availability == UsernameAvailability.Checking ->
                         Text("Checking...", color = TriggerTextSecondary, fontSize = 12.sp)
                     availability == UsernameAvailability.Available ->
-                        Text(
-                            "Available ✓",
-                            color = TriggerFabGreen,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                tint = Color(0xFF2196F3), // blue tick
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                "Available",
+                                color = Color(0xFF2196F3),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     availability == UsernameAvailability.Taken ->
                         Text(
-                            "Taken ✗",
+                            "$cleanUsername is already taken",
                             color = TriggerDanger,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium

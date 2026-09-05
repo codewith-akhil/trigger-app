@@ -11,7 +11,11 @@ data class UserProfile(
     val username: String = "",
     val about: String = "Hey there! I am using Trigger App.",
     val links: String = "",
-    val avatarUri: String? = null
+    val avatarUri: String? = null,
+    val gender: String? = null,
+    val dob: String? = null,
+    val countryName: String? = null,
+    val countryCode: String? = null
 )
 
 object UserRepository {
@@ -44,6 +48,18 @@ object UserRepository {
         _profile.value = _profile.value.copy(avatarUri = uri)
     }
 
+    fun updateGender(gender: String) {
+        _profile.value = _profile.value.copy(gender = gender)
+    }
+
+    fun updateDob(dob: String) {
+        _profile.value = _profile.value.copy(dob = dob)
+    }
+
+    fun updateCountry(name: String, code: String) {
+        _profile.value = _profile.value.copy(countryName = name, countryCode = code)
+    }
+
     fun setUser(name: String, email: String, id: String = "") {
         _profile.value = _profile.value.copy(name = name, email = email, id = id)
     }
@@ -52,4 +68,3 @@ object UserRepository {
         _profile.value = UserProfile()
     }
 }
-
