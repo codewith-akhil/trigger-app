@@ -21,6 +21,9 @@ object AppServiceContainer {
 
     private var initialized = false
 
+    lateinit var context: android.content.Context
+        private set
+
     lateinit var database: ChatDatabase
         private set
     lateinit var chatRepository: ChatRepositoryImpl
@@ -59,6 +62,8 @@ object AppServiceContainer {
 
     fun initialize(context: Context) {
         if (initialized) return
+
+        this.context = context
 
         supabaseClient = SupabaseClient()
         agoraTokenService = com.example.service.agora.SupabaseEdgeFunctionTokenService(supabaseClient)

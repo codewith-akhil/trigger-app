@@ -149,13 +149,34 @@ class ChatRepositoryImpl(
     suspend fun retryFailedMessage(messageId: String) {
         val msg = messageDao.getMessageById(messageId) ?: return
         messageDao.updateMessageStatus(messageId, MessageStatus.SENDING.name)
+        // In production, the retry calls send-message edge function again.
+        // The status transitions (SENT → DELIVERED → READ) come from Realtime.
         coroutineScope.launch {
             delay(400)
             messageDao.updateMessageStatus(messageId, MessageStatus.SENT.name)
-            delay(500)
-            messageDao.updateMessageStatus(messageId, MessageStatus.DELIVERED.name)
-            delay(800)
-            messageDao.updateMessageStatus(messageId, MessageStatus.READ.name)
         }
+    }
+
+    /**
+     * Toggles the starred flag on a message.
+     */
+    suspend fun toggleStar(messageId: String) {
+        val msg = messageDao.getMessageById(messageId) ?: return
+        val newStarred = !msg.isStarred
+        messageDao.updateMessageStarred(messageId, newStarred)
+    }
+
+    /**
+     * Updates message text (for edit feature).
+     */
+    suspend fun updateMessageText(messageId: String, newText: String) {
+        messageDao.updateMessageText(messageId, newText)
+    }
+
+    /**
+     * Inserts a message directly (for incoming Realtime messages).
+     */
+    suspend fun insertMessage(message: DomainMessage) {
+        messageDao.insertMessage(MessageEntity.fromDomain(message))
     }
 }

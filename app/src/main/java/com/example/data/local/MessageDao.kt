@@ -47,4 +47,10 @@ interface MessageDao {
 
     @Query("DELETE FROM messages WHERE conversationId = :conversationId AND timestampMillis < :expireBeforeMillis")
     suspend fun deleteExpiredDisappearingMessages(conversationId: String, expireBeforeMillis: Long)
+
+    @Query("UPDATE messages SET isStarred = :isStarred WHERE id = :messageId")
+    suspend fun updateMessageStarred(messageId: String, isStarred: Boolean)
+
+    @Query("UPDATE messages SET text = :newText WHERE id = :messageId")
+    suspend fun updateMessageText(messageId: String, newText: String)
 }

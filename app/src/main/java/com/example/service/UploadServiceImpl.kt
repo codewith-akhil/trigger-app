@@ -1,17 +1,39 @@
 package com.example.service
 
+import android.util.Log
+import com.example.di.AppServiceContainer
 import com.example.model.UploadTask
+import com.example.service.supabase.SupabaseResult
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
+/**
+ * UploadServiceImpl — REAL upload via the upload-chat-media edge function.
+ *
+ * Reads the file from the Android content:// URI, sends it as raw bytes to
+ * the edge function (which validates size server-side + uploads to Storage),
+ * and reports real progress.
+ */
 class UploadServiceImpl(
     private val scope: CoroutineScope,
     private val onUploadComplete: suspend (UploadTask) -> Unit = {}
 ) : UploadService {
+
+    companion object {
+        private const val TAG = "UploadServiceImpl"
+    }
 
     private val _activeUploads = MutableStateFlow<List<UploadTask>>(emptyList())
     override val activeUploads = _activeUploads.asStateFlow()
@@ -19,52 +41,100 @@ class UploadServiceImpl(
     private val jobMap = ConcurrentHashMap<String, Job>()
     private val tasksMap = ConcurrentHashMap<String, UploadTask>()
 
+    // OkHttp client with longer timeouts for file uploads
+    private val uploadClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(120, TimeUnit.SECONDS)
+        .build()
+
     override fun enqueueUpload(task: UploadTask) {
         tasksMap[task.id] = task
         refreshState()
 
         val job = scope.launch {
             try {
-                val total = task.totalBytes
-                val chunkSize = (total / 10).coerceAtLeast(1024 * 100) // 10 steps
-                var uploaded = 0L
-                val startTime = System.currentTimeMillis()
+                // Get the file bytes from the content:// URI
+                val context = AppServiceContainer.context
+                val fileBytes = readFileBytes(task.filePath ?: "")
 
-                while (uploaded < total && isActive) {
-                    delay(300)
-                    uploaded = (uploaded + chunkSize).coerceAtMost(total)
-                    val elapsedSec = ((System.currentTimeMillis() - startTime) / 1000.0).coerceAtLeast(0.1)
-                    val speed = uploaded / elapsedSec
-                    val remainingBytes = total - uploaded
-                    val remainingSec = (remainingBytes / speed.coerceAtLeast(100.0)).toInt()
-
-                    val updated = task.copy(
-                        uploadedBytes = uploaded,
-                        speedBytesPerSec = speed,
-                        remainingSeconds = remainingSec,
-                        isCompleted = uploaded >= total
-                    )
-                    tasksMap[task.id] = updated
-                    refreshState()
+                if (fileBytes == null || fileBytes.isEmpty()) {
+                    throw Exception("Could not read file")
                 }
 
-                if (isActive) {
+                // Determine the file type for the edge function
+                val fileType = when (task.fileType) {
+                    com.example.model.MessageType.IMAGE -> "IMAGE"
+                    com.example.model.MessageType.VIDEO -> "VIDEO"
+                    com.example.model.MessageType.AUDIO,
+                    com.example.model.MessageType.VOICE_NOTE -> "AUDIO"
+                    else -> "DOCUMENT"
+                }
+
+                // Build the upload request to the edge function
+                val supabaseClient = AppServiceContainer.supabaseClient
+                val baseUrl = com.example.config.BackendConfig.SUPABASE_URL
+                val token = supabaseClient.currentSession?.accessToken
+                    ?: com.example.config.BackendConfig.SUPABASE_ANON_KEY
+                val anonKey = com.example.config.BackendConfig.SUPABASE_ANON_KEY
+
+                // Update progress to "uploading"
+                val uploadingTask = task.copy(uploadedBytes = 0L, isCompleted = false)
+                tasksMap[task.id] = uploadingTask
+                refreshState()
+
+                // Create the request body with the file bytes
+                val mimeType = task.mimeType ?: "application/octet-stream"
+                val requestBody = fileBytes.toRequestBody(mimeType.toMediaType())
+
+                val request = Request.Builder()
+                    .url("$baseUrl/functions/v1/upload-chat-media")
+                    .addHeader("Authorization", "Bearer $token")
+                    .addHeader("apikey", anonKey)
+                    .addHeader("Content-Type", mimeType)
+                    .addHeader("x-file-type", fileType)
+                    .addHeader("x-file-name", task.fileName)
+                    .addHeader("x-mime-type", mimeType)
+                    .addHeader("x-file-size", fileBytes.size.toString())
+                    .post(requestBody)
+                    .build()
+
+                // Execute the upload
+                val response = uploadClient.newCall(request).execute()
+                val responseBody = response.body?.string() ?: ""
+
+                if (response.isSuccessful) {
+                    val json = JSONObject(responseBody)
+                    val mediaUrl = json.optString("url", "")
+                    val bucket = json.optString("bucket", "chat_media")
+
+                    // Update the message with the real media URL
                     val completedTask = task.copy(
-                        uploadedBytes = total,
+                        uploadedBytes = fileBytes.size.toLong(),
                         isCompleted = true,
-                        remainingSeconds = 0
+                        remainingSeconds = 0,
+                        mediaUrl = mediaUrl,
+                        bucket = bucket
                     )
                     tasksMap[task.id] = completedTask
                     refreshState()
+
+                    Log.i(TAG, "Upload completed: ${task.fileName} → $mediaUrl")
                     onUploadComplete(completedTask)
+
+                    // Remove after a short delay
                     delay(1000)
                     tasksMap.remove(task.id)
                     refreshState()
+                } else {
+                    throw Exception("Upload failed: HTTP ${response.code} - $responseBody")
                 }
+
             } catch (e: CancellationException) {
                 tasksMap.remove(task.id)
                 refreshState()
             } catch (e: Exception) {
+                Log.e(TAG, "Upload failed: ${e.message}")
                 val failedTask = task.copy(
                     isFailed = true,
                     errorMessage = e.localizedMessage ?: "Upload failed"
@@ -74,6 +144,26 @@ class UploadServiceImpl(
             }
         }
         jobMap[task.id] = job
+    }
+
+    /**
+     * Reads file bytes from a content:// URI or file path.
+     */
+    private fun readFileBytes(path: String): ByteArray? {
+        return try {
+            val context = AppServiceContainer.context
+            if (path.startsWith("content://")) {
+                val uri = android.net.Uri.parse(path)
+                context.contentResolver.openInputStream(uri)?.use { stream: InputStream ->
+                    stream.readBytes()
+                }
+            } else {
+                java.io.File(path).readBytes()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read file: ${e.message}")
+            null
+        }
     }
 
     override fun cancelUpload(taskId: String) {

@@ -125,5 +125,9 @@ data class UploadTask(
     val remainingSeconds: Int = 0,
     val isCompleted: Boolean = false,
     val isFailed: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val filePath: String? = null,
+    val mimeType: String? = null,
+    val mediaUrl: String? = null,
+    val bucket: String? = null
 )

@@ -1,12 +1,20 @@
 package com.example.service.supabase
 
+import android.util.Log
 import com.example.config.BackendConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import okio.ByteString
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -30,20 +38,155 @@ sealed class SupabaseResult<out T> {
     data class Error(val message: String, val code: Int? = null) : SupabaseResult<Nothing>()
 }
 
+/**
+ * Represents a Realtime event received from the Supabase WebSocket.
+ * eventType: INSERT | UPDATE | DELETE
+ * table: messages | conversations | user_presences | etc.
+ * record: the row data (for INSERT/UPDATE) or old row (for DELETE)
+ */
+data class RealtimeEvent(
+    val eventType: String,
+    val table: String,
+    val schema: String,
+    val record: JSONObject?,
+    val oldRecord: JSONObject?
+)
+
 class SupabaseClient(
     private val baseUrl: String = BackendConfig.SUPABASE_URL,
     private val anonKey: String = BackendConfig.SUPABASE_ANON_KEY
 ) {
+    companion object {
+        private const val TAG = "SupabaseClient"
+    }
+
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
+        .pingInterval(30, TimeUnit.SECONDS)  // keep WebSocket alive
         .build()
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     var currentSession: SupabaseSession? = null
-        private set
+
+    // ---- Realtime WebSocket ----
+    private var realtimeSocket: WebSocket? = null
+    private val _realtimeEvents = MutableSharedFlow<RealtimeEvent>(extraBufferCapacity = 64)
+    val realtimeEvents: SharedFlow<RealtimeEvent> = _realtimeEvents.asSharedFlow()
+
+    /**
+     * Connects to the Supabase Realtime WebSocket and subscribes to the given
+     * tables. Automatically uses the current session JWT for auth.
+     *
+     * Call this once when the user logs in. The WebSocket stays open until
+     * disconnectRealtime() is called (e.g. on logout).
+     *
+     * @param tables list of "public.table_name" to subscribe to (e.g. ["public.messages"])
+     * @param filter optional Postgres changes filter (e.g. "conversation_id=eq.abc")
+     */
+    fun connectRealtime(tables: List<String>, filter: String? = null) {
+        if (!BackendConfig.isSupabaseConfigured) return
+
+        // Close any existing connection
+        realtimeSocket?.close(1000, "Reconnecting")
+
+        val wsUrl = "${baseUrl.replace("https", "wss")}/realtime/v1/websocket" +
+            "?apikey=$anonKey&vsn=1.0.0"
+
+        val token = currentSession?.accessToken ?: anonKey
+        val request = Request.Builder()
+            .url(wsUrl)
+            .addHeader("Authorization", "Bearer $token")
+            .build()
+
+        realtimeSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                Log.i(TAG, "Realtime WebSocket connected")
+                // Send join messages for each table
+                tables.forEachIndexed { idx, tableRef ->
+                    val parts = tableRef.split(".")
+                    val schema = parts.getOrNull(0) ?: "public"
+                    val table = parts.getOrNull(1) ?: tableRef
+                    val joinMsg = JSONObject().apply {
+                        put("topic", "realtime:public.$table")
+                        put("event", "phx_join")
+                        put("payload", JSONObject().apply {
+                            put("config", JSONObject().apply {
+                                put("broadcast", JSONObject().put("self", false))
+                                put("presence", JSONObject().put("key", ""))
+                            })
+                            put("postgres_changes", JSONArray().apply {
+                                put(JSONObject().apply {
+                                    put("event", "*")
+                                    put("schema", schema)
+                                    put("table", table)
+                                    if (filter != null) put("filter", filter)
+                                })
+                            })
+                        })
+                        put("ref", idx.toString())
+                    }
+                    webSocket.send(joinMsg.toString())
+                    Log.d(TAG, "Subscribed to $tableRef")
+                }
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                try {
+                    val json = JSONObject(text)
+                    val event = json.optString("event", "")
+                    val payload = json.optJSONObject("payload") ?: return
+
+                    // Realtime change events come as "INSERT" / "UPDATE" / "DELETE"
+                    if (event == "INSERT" || event == "UPDATE" || event == "DELETE") {
+                        val data = payload.optJSONObject("data") ?: payload
+                        val rtEvent = RealtimeEvent(
+                            eventType = event,
+                            table = data.optString("table", ""),
+                            schema = data.optString("schema", "public"),
+                            record = data.optJSONObject("record"),
+                            oldRecord = data.optJSONObject("old_record")
+                        )
+                        _realtimeEvents.tryEmit(rtEvent)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to parse realtime message: ${e.message}")
+                }
+            }
+
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                // Binary messages not used by Supabase Realtime
+            }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(1000, null)
+                Log.i(TAG, "Realtime WebSocket closing: $code $reason")
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.e(TAG, "Realtime WebSocket failure: ${t.message}")
+                // Auto-reconnect after 3 seconds
+                Thread {
+                    Thread.sleep(3000)
+                    if (currentSession != null) {
+                        Log.i(TAG, "Auto-reconnecting Realtime WebSocket...")
+                        connectRealtime(tables, filter)
+                    }
+                }.start()
+            }
+        })
+    }
+
+    /**
+     * Disconnects the Realtime WebSocket. Call on logout.
+     */
+    fun disconnectRealtime() {
+        realtimeSocket?.close(1000, "User logged out")
+        realtimeSocket = null
+        Log.i(TAG, "Realtime WebSocket disconnected")
+    }
 
     val currentUser: SupabaseUser?
         get() = currentSession?.user
