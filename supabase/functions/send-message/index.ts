@@ -47,6 +47,7 @@ interface Body {
   contact_phone?: string;
   call_type?: string;
   call_duration_sec?: number;
+  idempotency_key?: string;
 }
 
 async function handler(req: Request): Promise<Response> {
@@ -108,6 +109,20 @@ async function handler(req: Request): Promise<Response> {
     return json({ error: "This conversation is blocked", code: ErrorCode.FORBIDDEN }, 403);
   }
 
+  // --- Idempotency check: if this idempotency_key was already used, return the existing message ---
+  if (body.idempotency_key) {
+    const { data: existing } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("idempotency_key", body.idempotency_key)
+      .eq("sender_id", userId)
+      .limit(1);
+    if (existing && existing.length > 0) {
+      // Duplicate request — return the existing message instead of inserting a new one
+      return json({ sent: true, message: existing[0], idempotent: true });
+    }
+  }
+
   // --- Insert the message ---
   const insertData: Record<string, unknown> = {
     conversation_id: body.conversation_id,
@@ -133,6 +148,7 @@ async function handler(req: Request): Promise<Response> {
     contact_phone: body.contact_phone ?? null,
     call_type: body.call_type ?? null,
     call_duration_sec: body.call_duration_sec ?? 0,
+    idempotency_key: body.idempotency_key ?? null,
   };
 
   const { data: msg, error: insertError } = await supabase
