@@ -70,7 +70,6 @@ fun ChatCallingOverlay(
                     // Real Remote Video Feed from Agora — keyed on remoteUid so
                     // the AndroidView is recreated when the remote user changes.
                     AndroidView(
-                        key = { remoteUid },
                         factory = { ctx ->
                             SurfaceView(ctx).apply {
                                 AppServiceContainer.agoraRtcEngineManager.setupRemoteVideo(this, remoteUid)

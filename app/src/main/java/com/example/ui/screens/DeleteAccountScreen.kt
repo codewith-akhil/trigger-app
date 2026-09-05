@@ -219,7 +219,7 @@ fun DeleteAccountScreen(
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         placeholder = { Text("6-digit code") },
-                        textStyle = androidx.compose.ui.text.style.LocalTextStyle.current.copy(
+                        textStyle = androidx.compose.material3.LocalTextStyle.current.copy(
                             textAlign = TextAlign.Center,
                             fontSize = 24.sp,
                             letterSpacing = 8.sp
