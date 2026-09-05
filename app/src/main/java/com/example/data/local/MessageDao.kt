@@ -6,11 +6,26 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface MessageDao {
 
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestampMillis ASC")
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY seq ASC, timestampMillis ASC")
     fun getMessagesForConversation(conversationId: String): Flow<List<MessageEntity>>
+
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND timestampMillis < :beforeTimestamp ORDER BY timestampMillis DESC LIMIT :limit")
+    suspend fun getMessagesPage(conversationId: String, beforeTimestamp: Long, limit: Int): List<MessageEntity>
 
     @Query("SELECT * FROM messages WHERE id = :id LIMIT 1")
     suspend fun getMessageById(id: String): MessageEntity?
+
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND status = 'FAILED'")
+    suspend fun getFailedMessages(conversationId: String): List<MessageEntity>
+
+    @Query("SELECT * FROM messages WHERE status = 'FAILED'")
+    suspend fun getAllFailedMessages(): List<MessageEntity>
+
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND isStarred = 1 ORDER BY timestampMillis DESC")
+    suspend fun getStarredMessages(conversationId: String): List<MessageEntity>
+
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND isPinned = 1 ORDER BY timestampMillis DESC")
+    suspend fun getPinnedMessages(conversationId: String): List<MessageEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessage(message: MessageEntity)
@@ -51,6 +66,9 @@ interface MessageDao {
     @Query("UPDATE messages SET isStarred = :isStarred WHERE id = :messageId")
     suspend fun updateMessageStarred(messageId: String, isStarred: Boolean)
 
-    @Query("UPDATE messages SET text = :newText WHERE id = :messageId")
-    suspend fun updateMessageText(messageId: String, newText: String)
+    @Query("UPDATE messages SET isPinned = :isPinned WHERE id = :messageId")
+    suspend fun updateMessagePinned(messageId: String, isPinned: Boolean)
+
+    @Query("UPDATE messages SET text = :newText, editedAt = :editedAt WHERE id = :messageId")
+    suspend fun updateMessageText(messageId: String, newText: String, editedAt: Long)
 }

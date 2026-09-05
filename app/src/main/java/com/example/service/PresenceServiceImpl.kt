@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.isActive
 
 /**
  * PresenceServiceImpl — REAL presence via Supabase.
@@ -82,6 +83,12 @@ class PresenceServiceImpl(
                 _connectionState.value = PresenceStatus.ONLINE
                 sendPresenceUpdate(true)
                 startHeartbeat()
+                // Network is back — retry any messages that failed while offline
+                try {
+                    AppServiceContainer.messageService.retryAllFailedMessages()
+                } catch (e: Exception) {
+                    Log.w(TAG, "retryAllFailedMessages after reconnect failed: ${e.message}")
+                }
             }
         }
     }

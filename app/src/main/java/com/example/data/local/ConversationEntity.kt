@@ -23,7 +23,8 @@ data class ConversationEntity(
     val lastSeenText: String = "online",
     val disappearingDuration: String = "OFF",
     val isMuted: Boolean = false,
-    val isBlocked: Boolean = false
+    val isBlocked: Boolean = false,
+    val isArchived: Boolean = false
 ) {
     fun toDomain(): DomainConversation {
         return DomainConversation(
@@ -46,7 +47,8 @@ data class ConversationEntity(
                 DisappearingDuration.OFF
             },
             isMuted = isMuted,
-            isBlocked = isBlocked
+            isBlocked = isBlocked,
+            isArchived = isArchived
         )
     }
 
@@ -67,7 +69,8 @@ data class ConversationEntity(
                 lastSeenText = d.lastSeenText,
                 disappearingDuration = d.disappearingDuration.name,
                 isMuted = d.isMuted,
-                isBlocked = d.isBlocked
+                isBlocked = d.isBlocked,
+                isArchived = d.isArchived
             )
         }
     }

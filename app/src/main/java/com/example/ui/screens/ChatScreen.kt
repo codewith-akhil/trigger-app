@@ -2,9 +2,11 @@ package com.example.ui.screens
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
+import android.provider.ContactsContract
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -30,6 +33,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.EmojiEmotions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,6 +62,7 @@ import com.example.di.AppServiceContainer
 import com.example.model.*
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.ChatViewModel
+import com.example.ui.viewmodel.SearchFilter
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -117,6 +122,20 @@ fun ChatScreen(
     var showMuteDialog by remember { mutableStateOf(false) }
     var showReactionPickerForId by remember { mutableStateOf<String?>(null) }
     var isEmojiPickerOpen by remember { mutableStateOf(false) }
+    var isGifPickerOpen by remember { mutableStateOf(false) }
+    var showArchiveConfirmDialog by remember { mutableStateOf(false) }
+
+    // Track the long-pressed message so we can show Edit/Pin/Star/Forward/Delete
+    // actions in the selection action bar.
+    val activeMessageIds by viewModel.selectedMessageIds.collectAsState()
+    val editingMessage by viewModel.editingMessage.collectAsState()
+    val editingText by viewModel.editingText.collectAsState()
+    val searchFilter by viewModel.searchFilter.collectAsState()
+    val searchResultsEx by viewModel.searchResultsEx.collectAsState()
+    val allConversations by viewModel.allConversations.collectAsState()
+    val starredMessages by viewModel.starredMessages.collectAsState()
+    val sharedLinks by viewModel.sharedLinks.collectAsState()
+    val conversationArchived = conversationInfo?.isArchived ?: false
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -235,6 +254,86 @@ fun ChatScreen(
         }
     }
 
+    // ---- Contact picker (for sharing a contact in chat) ----
+    // Reads Android's contact picker — requires READ_CONTACTS permission on
+    // some OEMs, but most accept it without via PickContact contract.
+    val contactPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickContact()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val cursor = context.contentResolver.query(uri, null, null, null, null)
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        val idIndex = it.getColumnIndex(ContactsContract.Contacts._ID)
+                        val nameIndex = it.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME)
+                        val hasPhoneIndex = it.getColumnIndex(ContactsContract.Contacts.HAS_PHONE_NUMBER)
+                        val contactId = if (idIndex >= 0) it.getString(idIndex) else ""
+                        val contactName = if (nameIndex >= 0) it.getString(nameIndex) ?: "" else ""
+                        val hasPhone = if (hasPhoneIndex >= 0) it.getInt(hasPhoneIndex) > 0 else false
+                        var phone = ""
+                        if (hasPhone && contactId.isNotEmpty()) {
+                            val phones = context.contentResolver.query(
+                                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                                null,
+                                "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                                arrayOf(contactId),
+                                null
+                            )
+                            phones?.use { p ->
+                                if (p.moveToFirst()) {
+                                    val pIdx = p.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                                    if (pIdx >= 0) phone = p.getString(pIdx) ?: ""
+                                }
+                            }
+                        }
+                        if (contactName.isNotBlank()) {
+                            viewModel.shareContact(contactName, phone)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Permission denied or contact not readable — ignore
+            }
+        }
+    }
+
+    val readContactsPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            try { contactPickerLauncher.launch(null) } catch (_: Exception) {}
+        }
+    }
+
+    fun launchContactPicker() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+            try { contactPickerLauncher.launch(null) } catch (_: Exception) {}
+        } else {
+            readContactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+        }
+    }
+
+    // ---- Pagination: load more when user scrolls to the top ----
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collect { firstIdx ->
+                if (firstIdx <= 2 && messages.isNotEmpty()) {
+                    viewModel.loadMoreMessages()
+                }
+            }
+    }
+
+    // ---- Scroll-to-message: jump to a specific message id (used by search & reply) ----
+    fun scrollToMessageId(messageId: String) {
+        val idx = messages.indexOfFirst { it.id == messageId }
+        if (idx >= 0) {
+            coroutineScope.launch {
+                listState.animateScrollToItem(idx)
+            }
+        }
+    }
+
     // Search message matching indices in chat
     val matchingIndices = remember(messages, inChatSearchQuery) {
         if (inChatSearchQuery.isBlank()) emptyList()
@@ -270,7 +369,12 @@ fun ChatScreen(
         topBar = {
             when {
                 selectedIds.isNotEmpty() -> {
-                    // Selection Mode Action Bar
+                    // Selection Mode Action Bar — with Edit, Pin, Star, Forward, Delete, Copy
+                    val firstSelected = messages.find { it.id == selectedIds.first() }
+                    val canEdit = selectedIds.size == 1 && firstSelected != null &&
+                        firstSelected.isOutgoing &&
+                        firstSelected.type == MessageType.TEXT &&
+                        (System.currentTimeMillis() - firstSelected.timestampMillis) <= 15L * 60 * 1000
                     ChatSelectionTopBar(
                         selectedCount = selectedIds.size,
                         onClearSelection = { viewModel.clearSelection() },
@@ -286,22 +390,44 @@ fun ChatScreen(
                                 .joinToString("\n") { it.text }
                             clipboardManager.setText(AnnotatedString(selectedTexts))
                             viewModel.clearSelection()
-                        }
+                        },
+                        onEdit = if (canEdit && firstSelected != null) {
+                            { viewModel.startEditing(firstSelected) }
+                        } else null,
+                        onPin = if (selectedIds.size == 1 && firstSelected != null) {
+                            {
+                                viewModel.togglePinMessage(firstSelected)
+                                viewModel.clearSelection()
+                            }
+                        } else null,
+                        onStar = if (selectedIds.size == 1 && firstSelected != null) {
+                            {
+                                viewModel.toggleStarMessage(firstSelected)
+                                viewModel.clearSelection()
+                            }
+                        } else null
                     )
                 }
 
                 isSearchMode -> {
-                    // In-Chat Search Bar
+                    // In-Chat Search Bar with filter chips
                     ChatSearchTopBar(
                         query = inChatSearchQuery,
                         onQueryChanged = {
                             viewModel.inChatSearchQuery.value = it
+                            // Re-run server-side search when query changes
+                            if (it.isNotBlank()) {
+                                viewModel.runSearchEx(searchFilter, query = it)
+                            } else {
+                                viewModel.searchResultsEx.value = emptyList()
+                            }
                         },
                         matchCount = matchingIndices.size,
                         currentIndex = if (matchingIndices.isEmpty()) 0 else currentMatchIndex + 1,
                         onCloseSearch = {
                             viewModel.isSearchMode.value = false
                             viewModel.inChatSearchQuery.value = ""
+                            viewModel.searchResultsEx.value = emptyList()
                         },
                         onNextMatch = {
                             if (matchingIndices.isNotEmpty()) {
@@ -312,6 +438,10 @@ fun ChatScreen(
                             if (matchingIndices.isNotEmpty()) {
                                 currentMatchIndex = if (currentMatchIndex <= 0) matchingIndices.size - 1 else currentMatchIndex - 1
                             }
+                        },
+                        searchFilter = searchFilter,
+                        onFilterSelected = { filter ->
+                            viewModel.runSearchEx(filter, query = inChatSearchQuery)
                         }
                     )
                 }
@@ -338,6 +468,7 @@ fun ChatScreen(
                         onDismissMenu = { showOptionsMenu = false },
                         onViewContact = {
                             showOptionsMenu = false
+                            viewModel.refreshChatInfo()
                             showContactInfoSheet = true
                         },
                         onClearChat = {
@@ -354,6 +485,11 @@ fun ChatScreen(
                             if (isBlocked) showUnblockDialog = true
                             else showBlockDialog = true
                         },
+                        onArchiveClick = {
+                            showOptionsMenu = false
+                            showArchiveConfirmDialog = true
+                        },
+                        isArchived = conversationArchived,
                         isBlocked = isBlocked
                     )
                 }
@@ -398,32 +534,52 @@ fun ChatScreen(
                             onCancel = { viewModel.cancelVoiceRecording() },
                             onSend = { viewModel.sendVoiceMessage() }
                         )
+                    } else if (editingMessage != null) {
+                        // Inline edit bar — replaces the composer while editing
+                        ChatEditBar(
+                            originalText = editingMessage?.text ?: "",
+                            editedText = editingText,
+                            onTextChanged = { viewModel.editingText.value = it },
+                            onCancel = { viewModel.cancelEditing() },
+                            onSave = { viewModel.saveEdit() }
+                        )
                     } else {
                         ChatComposerBar(
                             text = inputText,
                             onTextChanged = {
                                 isEmojiPickerOpen = false
+                                isGifPickerOpen = false
                                 viewModel.onInputTextChanged(it)
                             },
                             onSend = {
                                 isEmojiPickerOpen = false
+                                isGifPickerOpen = false
                                 viewModel.sendTextMessage()
                             },
                             onAttachClick = {
                                 isEmojiPickerOpen = false
+                                isGifPickerOpen = false
                                 showAttachmentSheet = true
                             },
                             onCameraClick = {
                                 isEmojiPickerOpen = false
+                                isGifPickerOpen = false
                                 launchCamera()
                             },
                             onStartVoiceRecording = {
                                 isEmojiPickerOpen = false
+                                isGifPickerOpen = false
                                 startVoiceRecordingWithPermission()
                             },
                             isEmojiPickerOpen = isEmojiPickerOpen,
+                            isGifPickerOpen = isGifPickerOpen,
                             onEmojiClick = {
+                                isGifPickerOpen = false
                                 isEmojiPickerOpen = !isEmojiPickerOpen
+                            },
+                            onGifClick = {
+                                isEmojiPickerOpen = false
+                                isGifPickerOpen = !isGifPickerOpen
                             }
                         )
 
@@ -437,6 +593,22 @@ fun ChatScreen(
                                     if (inputText.isNotEmpty()) {
                                         viewModel.onInputTextChanged(inputText.dropLast(1))
                                     }
+                                },
+                                onStickerSelected = { sticker ->
+                                    // Sticker taps send the emoji immediately as a TEXT message
+                                    viewModel.onInputTextChanged(sticker)
+                                    viewModel.sendTextMessage()
+                                }
+                            )
+                        }
+
+                        // GIF picker
+                        if (isGifPickerOpen) {
+                            ChatGifPicker(
+                                onGifSelected = { gif ->
+                                    // GIF/sticker taps send the emoji immediately as a TEXT message
+                                    viewModel.onInputTextChanged(gif)
+                                    viewModel.sendTextMessage()
                                 }
                             )
                         }
@@ -584,6 +756,7 @@ fun ChatScreen(
                 },
                 onContactSelected = {
                     showAttachmentSheet = false
+                    launchContactPicker()
                 }
             )
         }
@@ -648,6 +821,8 @@ fun ChatScreen(
             contactAvatarRes = contactAvatarRes,
             mediaMessages = mediaMessages,
             documentMessages = documentMessages,
+            starredMessages = starredMessages,
+            sharedLinks = sharedLinks,
             onClose = { showContactInfoSheet = false },
             onVoiceCall = {
                 showContactInfoSheet = false
@@ -671,6 +846,17 @@ fun ChatScreen(
             },
             onUnblockContact = {
                 viewModel.setBlocked(false)
+            },
+            onReportUser = { reason ->
+                // Report the contact (peer) — we use the contactId as the reported user id
+                viewModel.reportUser(contactId, reason) {
+                    showContactInfoSheet = false
+                }
+            },
+            onJumpToMessage = { messageId ->
+                // Close the sheet then scroll to the message
+                showContactInfoSheet = false
+                scrollToMessageId(messageId)
             }
         )
     }
@@ -890,24 +1076,132 @@ fun ChatScreen(
         )
     }
 
-    // Forward dialog (Select contact to forward to)
+    // Forward dialog (Select contact to forward to) — uses Room conversations
     if (showForwardDialog) {
+        val otherConversations = allConversations.filter { it.id != contactId }
+        var selectedForwardIds by remember { mutableStateOf(setOf<String>()) }
         AlertDialog(
-            onDismissRequest = { showForwardDialog = false },
+            onDismissRequest = {
+                showForwardDialog = false
+                selectedForwardIds = emptySet()
+            },
             containerColor = Color.White,
             title = { Text("Forward to...", color = Color(0xFF111B21), fontWeight = FontWeight.Bold) },
             text = {
-                Column {
-                    Text(
-                        text = "No other conversations available",
-                        color = Color(0xFF667781),
-                        fontSize = 14.sp
-                    )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    if (otherConversations.isEmpty()) {
+                        Text(
+                            text = "No other conversations available",
+                            color = Color(0xFF667781),
+                            fontSize = 14.sp
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 320.dp)
+                        ) {
+                            items(otherConversations) { conv ->
+                                val isChecked = selectedForwardIds.contains(conv.id)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            selectedForwardIds = if (isChecked) {
+                                                selectedForwardIds - conv.id
+                                            } else {
+                                                selectedForwardIds + conv.id
+                                            }
+                                        }
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = isChecked,
+                                        onCheckedChange = {
+                                            selectedForwardIds = if (isChecked) {
+                                                selectedForwardIds - conv.id
+                                            } else {
+                                                selectedForwardIds + conv.id
+                                            }
+                                        },
+                                        colors = CheckboxDefaults.colors(checkedColor = WhatsAppFabGreen)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = conv.name,
+                                        fontSize = 15.sp,
+                                        color = Color(0xFF111B21)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showForwardDialog = false }) {
-                    Text("Cancel", color = WhatsAppFabGreen)
+                Row {
+                    TextButton(onClick = {
+                        showForwardDialog = false
+                        selectedForwardIds = emptySet()
+                    }) {
+                        Text("Cancel", color = Color(0xFF667781))
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    if (selectedForwardIds.isNotEmpty()) {
+                        Button(
+                            onClick = {
+                                viewModel.forwardSelectedTo(selectedForwardIds.toList())
+                                showForwardDialog = false
+                                selectedForwardIds = emptySet()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = WhatsAppFabGreen)
+                        ) {
+                            Text("Forward (${selectedForwardIds.size})", color = Color.White)
+                        }
+                    }
+                }
+            }
+        )
+    }
+
+    // Archive chat confirm dialog
+    if (showArchiveConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showArchiveConfirmDialog = false },
+            containerColor = Color.White,
+            title = {
+                Text(
+                    text = if (conversationArchived) "Unarchive chat?" else "Archive chat?",
+                    color = Color(0xFF111B21),
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = if (conversationArchived) {
+                        "This chat will be moved back to your main chat list."
+                    } else {
+                        "This chat will be archived. You can unarchive it any time from the menu."
+                    },
+                    color = Color(0xFF667781),
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showArchiveConfirmDialog = false
+                        viewModel.setArchived(!conversationArchived)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = WhatsAppFabGreen)
+                ) {
+                    Text(if (conversationArchived) "Unarchive" else "Archive", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showArchiveConfirmDialog = false }) {
+                    Text("Cancel", color = Color(0xFF667781))
                 }
             }
         )
@@ -933,6 +1227,8 @@ fun ChatMainTopBar(
     onMuteClick: () -> Unit = {},
     onDisappearingClick: () -> Unit = {},
     onBlockToggleClick: () -> Unit = {},
+    onArchiveClick: () -> Unit = {},
+    isArchived: Boolean = false,
     isBlocked: Boolean = false
 ) {
     Surface(
@@ -1068,6 +1364,18 @@ fun ChatMainTopBar(
                         }
                     )
                     DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = if (isArchived) "Unarchive chat" else "Archive chat",
+                                color = GeometricTextDark
+                            )
+                        },
+                        onClick = {
+                            onDismissMenu()
+                            onArchiveClick()
+                        }
+                    )
+                    DropdownMenuItem(
                         text = { Text("Clear chat", color = Color(0xFFD32F2F)) },
                         onClick = {
                             onDismissMenu()
@@ -1099,7 +1407,10 @@ fun ChatSelectionTopBar(
     onReply: () -> Unit,
     onDelete: () -> Unit,
     onForward: () -> Unit,
-    onCopy: () -> Unit
+    onCopy: () -> Unit,
+    onEdit: (() -> Unit)? = null,
+    onPin: (() -> Unit)? = null,
+    onStar: (() -> Unit)? = null
 ) {
     Surface(
         color = WhatsAppChatDarkTeal,
@@ -1123,6 +1434,21 @@ fun ChatSelectionTopBar(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f)
             )
+            if (onEdit != null) {
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White)
+                }
+            }
+            if (onPin != null) {
+                IconButton(onClick = onPin) {
+                    Icon(Icons.Filled.PushPin, contentDescription = "Pin", tint = Color.White)
+                }
+            }
+            if (onStar != null) {
+                IconButton(onClick = onStar) {
+                    Icon(Icons.Filled.Star, contentDescription = "Star", tint = Color.White)
+                }
+            }
             IconButton(onClick = onReply) {
                 Icon(Icons.Filled.Reply, contentDescription = "Reply", tint = Color.White)
             }
@@ -1147,47 +1473,84 @@ fun ChatSearchTopBar(
     currentIndex: Int,
     onCloseSearch: () -> Unit,
     onNextMatch: () -> Unit,
-    onPreviousMatch: () -> Unit
+    onPreviousMatch: () -> Unit,
+    searchFilter: SearchFilter = SearchFilter.ALL,
+    onFilterSelected: (SearchFilter) -> Unit = {}
 ) {
-    Surface(
-        color = Color.White,
-        shadowElevation = 4.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .height(60.dp)
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+    Column {
+        Surface(
+            color = Color.White,
+            shadowElevation = 4.dp
         ) {
-            IconButton(onClick = onCloseSearch) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search", tint = Color(0xFF111B21))
-            }
-            BasicTextField(
-                value = query,
-                onValueChange = onQueryChanged,
-                textStyle = TextStyle(color = Color(0xFF111B21), fontSize = 16.sp),
-                cursorBrush = SolidColor(WhatsAppFabGreen),
-                modifier = Modifier.weight(1f),
-                decorationBox = { innerTextField ->
-                    if (query.isEmpty()) {
-                        Text("Search in chat...", color = Color(0xFF8696A0), fontSize = 16.sp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .height(60.dp)
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onCloseSearch) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search", tint = Color(0xFF111B21))
+                }
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChanged,
+                    textStyle = TextStyle(color = Color(0xFF111B21), fontSize = 16.sp),
+                    cursorBrush = SolidColor(WhatsAppFabGreen),
+                    modifier = Modifier.weight(1f),
+                    decorationBox = { innerTextField ->
+                        if (query.isEmpty()) {
+                            Text("Search in chat...", color = Color(0xFF8696A0), fontSize = 16.sp)
+                        }
+                        innerTextField()
                     }
-                    innerTextField()
-                }
-            )
-            if (query.isNotEmpty()) {
-                Text(
-                    text = if (matchCount > 0) "$currentIndex of $matchCount" else "0 of 0",
-                    fontSize = 12.sp,
-                    color = Color(0xFF667781)
                 )
-                IconButton(onClick = onPreviousMatch) {
-                    Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Previous", tint = Color(0xFF111B21))
+                if (query.isNotEmpty()) {
+                    Text(
+                        text = if (matchCount > 0) "$currentIndex of $matchCount" else "0 of 0",
+                        fontSize = 12.sp,
+                        color = Color(0xFF667781)
+                    )
+                    IconButton(onClick = onPreviousMatch) {
+                        Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Previous", tint = Color(0xFF111B21))
+                    }
+                    IconButton(onClick = onNextMatch) {
+                        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Next", tint = Color(0xFF111B21))
+                    }
                 }
-                IconButton(onClick = onNextMatch) {
-                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Next", tint = Color(0xFF111B21))
+            }
+        }
+        // Filter chips row
+        Surface(color = Color(0xFFF0F2F5)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                SearchFilter.values().forEach { filter ->
+                    val isSelected = filter == searchFilter
+                    val label = when (filter) {
+                        SearchFilter.ALL -> "All"
+                        SearchFilter.MEDIA -> "Media"
+                        SearchFilter.DOCUMENTS -> "Docs"
+                        SearchFilter.LINKS -> "Links"
+                        SearchFilter.DATE -> "Date"
+                    }
+                    Surface(
+                        color = if (isSelected) WhatsAppFilterActiveBg else Color.White,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .clickable { onFilterSelected(filter) }
+                    ) {
+                        Text(
+                            text = label,
+                            fontSize = 12.sp,
+                            color = if (isSelected) WhatsAppFilterActiveText else WhatsAppFilterInactiveText,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
                 }
             }
         }
@@ -1341,7 +1704,9 @@ fun ChatComposerBar(
     onCameraClick: () -> Unit,
     onStartVoiceRecording: () -> Unit,
     isEmojiPickerOpen: Boolean = false,
-    onEmojiClick: () -> Unit = {}
+    isGifPickerOpen: Boolean = false,
+    onEmojiClick: () -> Unit = {},
+    onGifClick: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
@@ -1389,6 +1754,16 @@ fun ChatComposerBar(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("chat_input_field")
+                    )
+                }
+
+                // GIF picker button
+                IconButton(onClick = onGifClick, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.Gif,
+                        contentDescription = "GIF",
+                        tint = if (isGifPickerOpen) WhatsAppFabGreen else Color(0xFF8696A0),
+                        modifier = Modifier.size(24.dp)
                     )
                 }
 
@@ -1607,3 +1982,73 @@ fun queryFileInfo(context: Context, uri: Uri, fallbackName: String): Pair<String
     }
     return Pair(name, size)
 }
+
+/**
+ * Inline edit bar — replaces the ChatComposerBar while the user is editing a
+ * previously sent TEXT message. Shows the original text + Save / Cancel
+ * buttons. The Save button calls viewModel.saveEdit() which invokes the
+ * edit-message edge function.
+ */
+@Composable
+fun ChatEditBar(
+    originalText: String,
+    editedText: String,
+    onTextChanged: (String) -> Unit,
+    onCancel: () -> Unit,
+    onSave: () -> Unit
+) {
+    Surface(
+        color = Color(0xFFF0F2F5),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 6.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onCancel, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Cancel edit",
+                    tint = Color(0xFF8696A0),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 6.dp)
+            ) {
+                BasicTextField(
+                    value = editedText,
+                    onValueChange = onTextChanged,
+                    textStyle = TextStyle(color = Color(0xFF111B21), fontSize = 16.sp),
+                    cursorBrush = SolidColor(WhatsAppFabGreen),
+                    maxLines = 5,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (editedText.isEmpty()) {
+                    Text(text = originalText, color = Color(0xFF8696A0), fontSize = 16.sp)
+                }
+            }
+            FloatingActionButton(
+                onClick = onSave,
+                shape = CircleShape,
+                containerColor = WhatsAppFabGreen,
+                contentColor = Color.White,
+                modifier = Modifier.size(44.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = "Save edit",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+    }
+}
+

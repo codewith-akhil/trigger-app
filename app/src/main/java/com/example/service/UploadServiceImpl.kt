@@ -18,6 +18,7 @@ import org.json.JSONObject
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.withContext
 
 /**
  * UploadServiceImpl — REAL upload via the upload-chat-media edge function.
@@ -66,8 +67,7 @@ class UploadServiceImpl(
                 val fileType = when (task.fileType) {
                     com.example.model.MessageType.IMAGE -> "IMAGE"
                     com.example.model.MessageType.VIDEO -> "VIDEO"
-                    com.example.model.MessageType.AUDIO,
-                    com.example.model.MessageType.VOICE_NOTE -> "AUDIO"
+                    com.example.model.MessageType.AUDIO -> "AUDIO"
                     else -> "DOCUMENT"
                 }
 
@@ -108,18 +108,29 @@ class UploadServiceImpl(
                     val mediaUrl = json.optString("url", "")
                     val bucket = json.optString("bucket", "chat_media")
 
+                    // For private buckets (voice_notes, documents), generate a
+                    // signed URL via the Supabase Storage API so the recipient
+                    // can read the file. Public buckets (chat_media) keep the
+                    // public URL returned by the edge function.
+                    val finalUrl = if (bucket != "chat_media" && mediaUrl.isNotEmpty()) {
+                        fetchSignedUrl(bucket, extractObjectPath(mediaUrl, bucket))
+                            ?: mediaUrl
+                    } else {
+                        mediaUrl
+                    }
+
                     // Update the message with the real media URL
                     val completedTask = task.copy(
                         uploadedBytes = fileBytes.size.toLong(),
                         isCompleted = true,
                         remainingSeconds = 0,
-                        mediaUrl = mediaUrl,
+                        mediaUrl = finalUrl,
                         bucket = bucket
                     )
                     tasksMap[task.id] = completedTask
                     refreshState()
 
-                    Log.i(TAG, "Upload completed: ${task.fileName} → $mediaUrl")
+                    Log.i(TAG, "Upload completed: ${task.fileName} → $finalUrl")
                     onUploadComplete(completedTask)
 
                     // Remove after a short delay
@@ -163,6 +174,70 @@ class UploadServiceImpl(
         } catch (e: Exception) {
             Log.e(TAG, "Failed to read file: ${e.message}")
             null
+        }
+    }
+
+    /**
+     * Extracts the object path (the part after /object/public/{bucket}/) from
+     * a Supabase public URL.
+     */
+    private fun extractObjectPath(publicUrl: String, bucket: String): String {
+        val marker = "/storage/v1/object/public/$bucket/"
+        val idx = publicUrl.indexOf(marker)
+        return if (idx >= 0) {
+            publicUrl.substring(idx + marker.length)
+        } else {
+            // Fallback: assume the URL is just the path.
+            publicUrl.substringAfterLast("/")
+        }
+    }
+
+    /**
+     * Calls the Supabase Storage API to create a signed URL for a private-bucket
+     * object. Returns null on failure.
+     *
+     *   POST /storage/v1/object/sign/{bucket}/{path}
+     *   Body: { "expiresIn": 3600 }
+     *   Response: { "signedURL": "/storage/v1/object/sign/...?token=..." }
+     */
+    private suspend fun fetchSignedUrl(bucket: String, objectPath: String): String? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val supabaseClient = AppServiceContainer.supabaseClient
+                val baseUrl = com.example.config.BackendConfig.SUPABASE_URL
+                val token = supabaseClient.currentSession?.accessToken
+                    ?: com.example.config.BackendConfig.SUPABASE_ANON_KEY
+                val anonKey = com.example.config.BackendConfig.SUPABASE_ANON_KEY
+
+                val body = JSONObject().put("expiresIn", 3600).toString()
+                    .toRequestBody("application/json".toMediaType())
+
+                val request = Request.Builder()
+                    .url("$baseUrl/storage/v1/object/sign/$bucket/$objectPath")
+                    .addHeader("Authorization", "Bearer $token")
+                    .addHeader("apikey", anonKey)
+                    .addHeader("Content-Type", "application/json")
+                    .post(body)
+                    .build()
+
+                val response = uploadClient.newCall(request).execute()
+                val responseBody = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    val json = JSONObject(responseBody)
+                    val signedPath = json.optString("signedURL", "")
+                    if (signedPath.isNotEmpty()) {
+                        // signedURL is a relative path — prepend the base URL
+                        if (signedPath.startsWith("http")) signedPath
+                        else "$baseUrl$signedPath"
+                    } else null
+                } else {
+                    Log.w(TAG, "Signed URL request failed: ${response.code} - $responseBody")
+                    null
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "fetchSignedUrl failed: ${e.message}")
+                null
+            }
         }
     }
 

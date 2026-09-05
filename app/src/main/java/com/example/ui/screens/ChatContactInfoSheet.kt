@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -11,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -20,16 +23,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.model.DisappearingDuration
 import com.example.model.DomainConversation
 import com.example.model.DomainMessage
+import com.example.service.SharedLink
 import com.example.ui.theme.*
 import coil.compose.AsyncImage
 
@@ -41,6 +50,8 @@ fun ChatContactInfoSheet(
     contactAvatarRes: Int?,
     mediaMessages: List<DomainMessage>,
     documentMessages: List<DomainMessage>,
+    starredMessages: List<DomainMessage> = emptyList(),
+    sharedLinks: List<SharedLink> = emptyList(),
     onClose: () -> Unit,
     onVoiceCall: () -> Unit,
     onVideoCall: () -> Unit,
@@ -48,16 +59,20 @@ fun ChatContactInfoSheet(
     onClearChat: () -> Unit,
     onToggleMute: (Boolean) -> Unit = {},
     onBlockContact: () -> Unit = {},
-    onUnblockContact: () -> Unit = {}
+    onUnblockContact: () -> Unit = {},
+    onReportUser: (String) -> Unit = {},
+    onJumpToMessage: (String) -> Unit = {}
 ) {
-    var selectedMediaTab by remember { mutableStateOf(0) } // 0: Media, 1: Docs
+    var selectedMediaTab by remember { mutableStateOf(0) } // 0: Media, 1: Docs, 2: Links, 3: Starred
     var showDisappearingDialog by remember { mutableStateOf(false) }
     var showClearChatDialog by remember { mutableStateOf(false) }
     var showBlockDialog by remember { mutableStateOf(false) }
     var showUnblockDialog by remember { mutableStateOf(false) }
     var showMuteDialog by remember { mutableStateOf(false) }
+    var showReportDialog by remember { mutableStateOf(false) }
     var isMuted by remember { mutableStateOf(conversation?.isMuted ?: false) }
     val isBlocked = conversation?.isBlocked ?: false
+    val context = LocalContext.current
 
     Surface(
         modifier = Modifier
@@ -299,62 +314,164 @@ fun ChatContactInfoSheet(
                                     onClick = { selectedMediaTab = 1 },
                                     text = { Text("Docs (${documentMessages.size})") }
                                 )
+                                Tab(
+                                    selected = selectedMediaTab == 2,
+                                    onClick = { selectedMediaTab = 2 },
+                                    text = { Text("Links (${sharedLinks.size})") }
+                                )
+                                Tab(
+                                    selected = selectedMediaTab == 3,
+                                    onClick = { selectedMediaTab = 3 },
+                                    text = { Text("Starred (${starredMessages.size})") }
+                                )
                             }
 
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            if (selectedMediaTab == 0) {
-                                if (mediaMessages.isEmpty()) {
-                                    Text(
-                                        text = "No shared media yet",
-                                        color = Color(0xFF8696A0),
-                                        fontSize = 14.sp,
-                                        modifier = Modifier.padding(vertical = 20.dp)
-                                    )
-                                } else {
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        mediaMessages.take(4).forEach {
-                                            AsyncImage(
-                                                model = it.mediaThumbnail ?: it.mediaUrl,
-                                                contentDescription = "Shared media",
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier
-                                                    .size(72.dp)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                            )
+                            when (selectedMediaTab) {
+                                0 -> {
+                                    if (mediaMessages.isEmpty()) {
+                                        Text(
+                                            text = "No shared media yet",
+                                            color = Color(0xFF8696A0),
+                                            fontSize = 14.sp,
+                                            modifier = Modifier.padding(vertical = 20.dp)
+                                        )
+                                    } else {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            mediaMessages.take(4).forEach {
+                                                AsyncImage(
+                                                    model = it.mediaThumbnail ?: it.mediaUrl,
+                                                    contentDescription = "Shared media",
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier
+                                                        .size(72.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                )
+                                            }
                                         }
                                     }
                                 }
-                            } else {
-                                if (documentMessages.isEmpty()) {
-                                    Text(
-                                        text = "No shared documents yet",
-                                        color = Color(0xFF8696A0),
-                                        fontSize = 14.sp,
-                                        modifier = Modifier.padding(vertical = 20.dp)
-                                    )
-                                } else {
-                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        documentMessages.forEach { doc ->
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.Description,
-                                                    contentDescription = null,
-                                                    tint = Color(0xFF7F66FF),
-                                                    modifier = Modifier.size(24.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(8.dp))
-                                                Text(
-                                                    text = doc.fileName ?: "Document.pdf",
-                                                    fontSize = 14.sp,
-                                                    color = Color(0xFF111B21),
-                                                    modifier = Modifier.weight(1f)
-                                                )
+                                1 -> {
+                                    if (documentMessages.isEmpty()) {
+                                        Text(
+                                            text = "No shared documents yet",
+                                            color = Color(0xFF8696A0),
+                                            fontSize = 14.sp,
+                                            modifier = Modifier.padding(vertical = 20.dp)
+                                        )
+                                    } else {
+                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            documentMessages.forEach { doc ->
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Description,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFF7F66FF),
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Text(
+                                                        text = doc.fileName ?: "Document.pdf",
+                                                        fontSize = 14.sp,
+                                                        color = Color(0xFF111B21),
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                2 -> {
+                                    // Shared links tab — queries the shared_links view
+                                    if (sharedLinks.isEmpty()) {
+                                        Text(
+                                            text = "No shared links yet",
+                                            color = Color(0xFF8696A0),
+                                            fontSize = 14.sp,
+                                            modifier = Modifier.padding(vertical = 20.dp)
+                                        )
+                                    } else {
+                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            sharedLinks.forEach { link ->
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .clickable {
+                                                            // Open the link in the browser
+                                                            val url = link.text.trim()
+                                                            if (url.startsWith("http://") || url.startsWith("https://")) {
+                                                                try {
+                                                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                                                    context.startActivity(intent)
+                                                                } catch (_: Exception) {}
+                                                            }
+                                                        }
+                                                        .padding(vertical = 4.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Link,
+                                                        contentDescription = null,
+                                                        tint = WhatsAppFabGreen,
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Text(
+                                                        text = link.text,
+                                                        fontSize = 14.sp,
+                                                        color = WhatsAppChatTeal,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                3 -> {
+                                    // Starred messages tab — tap to jump to the message
+                                    if (starredMessages.isEmpty()) {
+                                        Text(
+                                            text = "No starred messages yet",
+                                            color = Color(0xFF8696A0),
+                                            fontSize = 14.sp,
+                                            modifier = Modifier.padding(vertical = 20.dp)
+                                        )
+                                    } else {
+                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            starredMessages.forEach { msg ->
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .clickable { onJumpToMessage(msg.id) }
+                                                        .padding(vertical = 4.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Star,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFFFFC107),
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Text(
+                                                        text = msg.text,
+                                                        fontSize = 14.sp,
+                                                        color = Color(0xFF111B21),
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -417,6 +534,30 @@ fun ChatContactInfoSheet(
                                     text = if (isBlocked) "Unblock $contactName" else "Block $contactName",
                                     fontSize = 16.sp,
                                     color = if (isBlocked) WhatsAppFabGreen else Color(0xFFEA4335),
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+
+                            HorizontalDivider(color = Color(0xFFF0F2F5))
+
+                            // Report user action
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showReportDialog = true }
+                                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Report,
+                                    contentDescription = null,
+                                    tint = Color(0xFFEA4335)
+                                )
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Text(
+                                    text = "Report $contactName",
+                                    fontSize = 16.sp,
+                                    color = Color(0xFFEA4335),
                                     fontWeight = FontWeight.Medium
                                 )
                             }
@@ -655,6 +796,72 @@ fun ChatContactInfoSheet(
             },
             dismissButton = {
                 TextButton(onClick = { showMuteDialog = false }) {
+                    Text("Cancel", color = Color(0xFF667781))
+                }
+            }
+        )
+    }
+
+    // Report user dialog — opens a reason text field, calls report-user on submit
+    if (showReportDialog) {
+        var reportReason by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showReportDialog = false },
+            containerColor = Color.White,
+            title = {
+                Text(
+                    text = "Report $contactName?",
+                    color = Color(0xFF111B21),
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Please describe the issue. The reported user will be reviewed by our moderation team.",
+                        fontSize = 14.sp,
+                        color = Color(0xFF667781)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    BasicTextField(
+                        value = reportReason,
+                        onValueChange = { reportReason = it },
+                        textStyle = TextStyle(color = Color(0xFF111B21), fontSize = 15.sp),
+                        cursorBrush = SolidColor(WhatsAppFabGreen),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp),
+                        decorationBox = { innerTextField ->
+                            if (reportReason.isEmpty()) {
+                                Text(
+                                    text = "Reason for reporting...",
+                                    color = Color(0xFF8696A0),
+                                    fontSize = 15.sp
+                                )
+                            }
+                            innerTextField()
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val reason = reportReason.trim().ifEmpty { "Inappropriate behavior" }
+                        onReportUser(reason)
+                        showReportDialog = false
+                        reportReason = ""
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEA4335))
+                ) {
+                    Text("Report", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showReportDialog = false
+                    reportReason = ""
+                }) {
                     Text("Cancel", color = Color(0xFF667781))
                 }
             }

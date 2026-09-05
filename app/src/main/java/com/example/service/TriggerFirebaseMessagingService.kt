@@ -153,6 +153,12 @@ class TriggerFirebaseMessagingService : FirebaseMessagingService() {
      * The edge functions send a `notification` payload (title + body) so the
      * system notification is posted automatically in background. In foreground,
      * we post it manually so the user sees it immediately.
+     *
+     * Special handling for `type=chat_message`:
+     *   - Title = sender name (from `senderName` data field)
+     *   - Body  = message preview (from `messagePreview` data field)
+     *   - Tapping the notification deep-links into the chat conversation
+     *     (passed as `notif_conversationId`, `notif_contactName`).
      */
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
@@ -160,18 +166,27 @@ class TriggerFirebaseMessagingService : FirebaseMessagingService() {
         // Ensure channels exist (safe to call repeatedly).
         createNotificationChannels(this)
 
-        // Determine the notification content.
-        val title = remoteMessage.notification?.title
-            ?: remoteMessage.data["title"]
-            ?: "Trigger App"
-        val body = remoteMessage.notification?.body
-            ?: remoteMessage.data["body"]
-            ?: ""
-
-        // Route to the correct channel based on the `type` data field.
         val type = remoteMessage.data["type"] ?: "default"
+        val isChatMessage = type.contains("chat") || type.contains("message")
+
+        // For chat messages, prefer the structured payload sent by
+        // send-chat-notification edge function. Otherwise fall back to the
+        // generic title/body fields.
+        val title = if (isChatMessage) {
+            remoteMessage.data["senderName"] ?: remoteMessage.notification?.title
+            ?: remoteMessage.data["title"] ?: "Trigger App"
+        } else {
+            remoteMessage.notification?.title ?: remoteMessage.data["title"] ?: "Trigger App"
+        }
+        val body = if (isChatMessage) {
+            remoteMessage.data["messagePreview"] ?: remoteMessage.notification?.body
+            ?: remoteMessage.data["body"] ?: ""
+        } else {
+            remoteMessage.notification?.body ?: remoteMessage.data["body"] ?: ""
+        }
+
         val channelId = when {
-            type.contains("chat") || type.contains("message") -> CHANNEL_CHAT
+            isChatMessage -> CHANNEL_CHAT
             type.contains("call") -> CHANNEL_CALLS
             type.contains("stream") -> CHANNEL_STREAMS
             type.contains("wallet") -> CHANNEL_WALLET
@@ -181,7 +196,7 @@ class TriggerFirebaseMessagingService : FirebaseMessagingService() {
         // Unique notification ID (use a hash of the title+body so duplicates don't overwrite).
         val notifId = NOTIF_ID_BASE + (title + body).hashCode().and(0xFFF)
 
-        postNotification(this, channelId, notifId, title, body, remoteMessage.data)
+        postNotification(this, channelId, notifId, title, body, remoteMessage.data, isChatMessage)
     }
 
     /**
@@ -196,6 +211,10 @@ class TriggerFirebaseMessagingService : FirebaseMessagingService() {
 
     /**
      * Post a system notification. Opens MainActivity on tap.
+     *
+     * For chat_message notifications, the conversationId + contactName are
+     * passed as Intent extras (notif_conversationId, notif_contactName,
+     * notif_avatarRes) so MainActivity can deep-link straight into the chat.
      */
     private fun postNotification(
         context: Context,
@@ -203,13 +222,23 @@ class TriggerFirebaseMessagingService : FirebaseMessagingService() {
         notifId: Int,
         title: String,
         body: String,
-        data: Map<String, String>
+        data: Map<String, String>,
+        isChatMessage: Boolean = false
     ) {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            // Pass the data payload so MainActivity can deep-link if needed.
+            if (isChatMessage) {
+                // Mark this as a chat deep-link so MainActivity can route it
+                putExtra("deep_link_type", "chat_message")
+                putExtra("notif_conversationId", data["conversationId"] ?: "")
+                putExtra("notif_contactName", data["senderName"] ?: title)
+                putExtra("notif_messageType", data["messageType"] ?: "TEXT")
+            }
+            // Pass the full data payload too (for other deep-link types)
             for ((k, v) in data) {
-                putExtra("notif_$k", v)
+                if (k != "conversationId" && k != "senderName" && k != "messageType") {
+                    putExtra("notif_$k", v)
+                }
             }
         }
         val pendingIntent = PendingIntent.getActivity(

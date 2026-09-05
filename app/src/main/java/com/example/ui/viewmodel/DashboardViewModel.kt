@@ -21,12 +21,20 @@ class DashboardViewModel : ViewModel() {
     private val _selectedFilter = MutableStateFlow(ChatFilter.ALL)
     val selectedFilter = _selectedFilter.asStateFlow()
 
+    private val _showArchived = MutableStateFlow(false)
+    val showArchived = _showArchived.asStateFlow()
+
     val conversations: StateFlow<List<DomainConversation>> = combine(
         repository.getAllConversations(),
         _searchQuery,
-        _selectedFilter
-    ) { all, query, filter ->
+        _selectedFilter,
+        _showArchived
+    ) { all, query, filter, showArchived ->
         all.filter { conv ->
+            // Archived filter — when showArchived=false, hide archived chats;
+            // when showArchived=true, show only archived chats.
+            val matchesArchiveFilter = if (showArchived) conv.isArchived else !conv.isArchived
+
             val matchesQuery = query.isBlank() ||
                     conv.name.contains(query, ignoreCase = true) ||
                     conv.lastMessage.contains(query, ignoreCase = true)
@@ -37,7 +45,7 @@ class DashboardViewModel : ViewModel() {
                 ChatFilter.GROUPS -> conv.isGroup
             }
 
-            matchesQuery && matchesFilter
+            matchesArchiveFilter && matchesQuery && matchesFilter
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -55,6 +63,10 @@ class DashboardViewModel : ViewModel() {
 
     fun setFilter(filter: ChatFilter) {
         _selectedFilter.value = filter
+    }
+
+    fun setShowArchived(show: Boolean) {
+        _showArchived.value = show
     }
 
     fun markAsRead(id: String) {

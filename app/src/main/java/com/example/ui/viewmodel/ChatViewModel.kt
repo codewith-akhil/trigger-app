@@ -36,10 +36,28 @@ class ChatViewModel(
     private val callService = AppServiceContainer.callService
     private val storageService = AppServiceContainer.storageService
     private val repository = AppServiceContainer.chatRepository
+    private val supabaseClient = AppServiceContainer.supabaseClient
 
-    val messages: StateFlow<List<DomainMessage>> = messageService
+    // Live messages from Room (the local cache, kept in sync with Supabase
+    // Realtime by MessageServiceImpl).
+    private val _liveMessages: StateFlow<List<DomainMessage>> = messageService
         .observeMessages(contactId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Pagination cursor — the oldest timestamp currently loaded. Null means
+    // no pagination has happened yet.
+    private val paginationCursor = MutableStateFlow<Long?>(null)
+    private val _extraMessages = MutableStateFlow<List<DomainMessage>>(emptyList())
+
+    // Combined messages: extras (older page) + main flow (latest)
+    val messages: StateFlow<List<DomainMessage>> = combine(_liveMessages, _extraMessages) { main, extras ->
+        // Merge by id, then sort by seq + timestampMillis
+        val map = LinkedHashMap<String, DomainMessage>()
+        // Insert extras first (older), then main (newer will overwrite duplicates)
+        extras.sortedBy { it.seq }.forEach { map[it.id] = it }
+        main.forEach { map[it.id] = it }
+        map.values.sortedWith(compareBy({ it.seq }, { it.timestampMillis }))
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val contactPresence: StateFlow<Pair<PresenceStatus, String>> = presenceService
         .observeContactPresence(contactId)
@@ -63,14 +81,32 @@ class ChatViewModel(
     var replyingTo = MutableStateFlow<DomainMessage?>(null)
     var selectedMessageIds = MutableStateFlow<Set<String>>(emptySet())
 
-    // Search inside chat
+    // Search inside chat — server-side filter chips (All | Media | Documents | Links | Date)
     var isSearchMode = MutableStateFlow(false)
     var inChatSearchQuery = MutableStateFlow("")
+    var searchFilter = MutableStateFlow(SearchFilter.ALL)
+    var searchResultsEx = MutableStateFlow<List<DomainMessage>>(emptyList())
     val searchResults = inChatSearchQuery.flatMapLatest { query ->
         if (query.isBlank()) flowOf(emptyList())
         else messageService.searchMessages(contactId, query)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     var currentMatchIndex = MutableStateFlow(0)
+
+    // Conversations available for forwarding
+    val allConversations = repository.getAllConversations()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Starred messages (for Chat Info)
+    var starredMessages = MutableStateFlow<List<DomainMessage>>(emptyList())
+    var sharedLinks = MutableStateFlow<List<com.example.service.SharedLink>>(emptyList())
+
+    // Editing state — non-null when an inline edit field is shown for a message
+    var editingMessage = MutableStateFlow<DomainMessage?>(null)
+    var editingText = MutableStateFlow("")
+
+    // Multi-device sync state
+    private val prefs = AppServiceContainer.context.getSharedPreferences("trigger_chat_prefs", android.content.Context.MODE_PRIVATE)
+    private val KEY_LAST_SYNC_TS = "last_sync_ts"
 
     // Voice recording state
     var isRecordingVoice = MutableStateFlow(false)
@@ -92,9 +128,40 @@ class ChatViewModel(
     private var audioPlaybackJob: Job? = null
 
     init {
-        // Mark conversation as read on open
+        // Mark conversation as read on open (calls edge function)
         viewModelScope.launch {
-            repository.markConversationRead(contactId)
+            try {
+                messageService.markConversationRead(contactId)
+            } catch (e: Exception) {
+                // Fallback to Room-only mark-as-read
+                repository.markConversationRead(contactId)
+            }
+        }
+        // Multi-device sync: pull any messages we missed since the last sync.
+        viewModelScope.launch {
+            try {
+                val sinceTs = prefs.getLong(KEY_LAST_SYNC_TS, 0L)
+                messageService.syncMessages(conversationId = contactId, sinceTs = sinceTs)
+            } catch (e: Exception) {
+                // Non-fatal — Room is the local cache.
+            }
+        }
+        // Retry any failed messages (offline queue)
+        viewModelScope.launch {
+            try {
+                messageService.retryAllFailedMessages()
+            } catch (_: Exception) {}
+        }
+        // Load starred messages + shared links for Chat Info
+        viewModelScope.launch {
+            try {
+                starredMessages.value = repository.getStarredMessages(contactId)
+            } catch (_: Exception) {}
+        }
+        viewModelScope.launch {
+            try {
+                sharedLinks.value = messageService.getSharedLinks(contactId)
+            } catch (_: Exception) {}
         }
     }
 
@@ -112,6 +179,7 @@ class ChatViewModel(
         val reply = replyingTo.value
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
         val msgId = java.util.UUID.randomUUID().toString()
+        val idempotencyKey = java.util.UUID.randomUUID().toString()
 
         val message = DomainMessage(
             id = msgId,
@@ -126,7 +194,8 @@ class ChatViewModel(
             status = MessageStatus.SENDING,
             timestamp = time,
             timestampMillis = System.currentTimeMillis(),
-            isOutgoing = true
+            isOutgoing = true,
+            idempotencyKey = idempotencyKey
         )
 
         viewModelScope.launch {
@@ -471,6 +540,127 @@ class ChatViewModel(
         }
     }
 
+    // ---------- Edit message ----------
+    fun startEditing(message: DomainMessage) {
+        editingMessage.value = message
+        editingText.value = message.text
+    }
+
+    fun cancelEditing() {
+        editingMessage.value = null
+        editingText.value = ""
+    }
+
+    fun saveEdit() {
+        val msg = editingMessage.value ?: return
+        val newText = editingText.value.trim()
+        if (newText.isEmpty()) {
+            cancelEditing()
+            return
+        }
+        viewModelScope.launch {
+            messageService.editMessage(msg.id, newText)
+            cancelEditing()
+        }
+    }
+
+    // ---------- Pin message ----------
+    fun togglePinMessage(message: DomainMessage) {
+        viewModelScope.launch {
+            messageService.togglePinMessage(message.id)
+        }
+    }
+
+    // ---------- Star message (single, not via selection) ----------
+    fun toggleStarMessage(message: DomainMessage) {
+        viewModelScope.launch {
+            messageService.toggleStarMessage(message.id)
+            // Refresh starred list
+            try {
+                starredMessages.value = repository.getStarredMessages(contactId)
+            } catch (_: Exception) {}
+        }
+    }
+
+    // ---------- Report user ----------
+    fun reportUser(reportedUserId: String, reason: String, onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                messageService.reportUser(reportedUserId, reason)
+            } catch (_: Exception) {}
+            onDone()
+        }
+    }
+
+    // ---------- Archive chat ----------
+    fun setArchived(isArchived: Boolean) {
+        viewModelScope.launch {
+            messageService.toggleArchiveConversation(contactId, isArchived)
+        }
+    }
+
+    // ---------- Pagination ----------
+    fun loadMoreMessages() {
+        val currentList = messages.value
+        if (currentList.isEmpty()) return
+        // Already loading more? skip
+        if (paginationCursor.value != null &&
+            paginationCursor.value == currentList.first().timestampMillis) {
+            return
+        }
+        val oldestTs = currentList.first().timestampMillis
+        viewModelScope.launch {
+            try {
+                val page = repository.getMessagesPage(contactId, oldestTs, limit = 50)
+                if (page.isNotEmpty()) {
+                    _extraMessages.value = (_extraMessages.value + page).distinctBy { it.id }
+                    paginationCursor.value = oldestTs
+                }
+            } catch (e: Exception) {
+                // Non-fatal
+            }
+        }
+    }
+
+    // ---------- Server-side search via search-messages ----------
+    fun runSearchEx(filter: SearchFilter, query: String = "", dateFrom: String? = null, dateTo: String? = null) {
+        searchFilter.value = filter
+        inChatSearchQuery.value = query
+        viewModelScope.launch {
+            try {
+                val type = when (filter) {
+                    SearchFilter.ALL -> if (query.isBlank()) "text" else "text"
+                    SearchFilter.MEDIA -> "media"
+                    SearchFilter.DOCUMENTS -> "documents"
+                    SearchFilter.LINKS -> "links"
+                    SearchFilter.DATE -> "date"
+                }
+                val results = messageService.searchMessagesEx(
+                    conversationId = contactId,
+                    query = query,
+                    searchType = type,
+                    dateFrom = dateFrom,
+                    dateTo = dateTo
+                )
+                searchResultsEx.value = results
+            } catch (e: Exception) {
+                searchResultsEx.value = emptyList()
+            }
+        }
+    }
+
+    // ---------- Refresh starred + shared links (called when Chat Info opens) ----------
+    fun refreshChatInfo() {
+        viewModelScope.launch {
+            try {
+                starredMessages.value = repository.getStarredMessages(contactId)
+            } catch (_: Exception) {}
+            try {
+                sharedLinks.value = messageService.getSharedLinks(contactId)
+            } catch (_: Exception) {}
+        }
+    }
+
     // Audio voice playback simulation
     fun togglePlayVoice(messageId: String, durationSec: Int) {
         if (currentlyPlayingAudioId.value == messageId) {
@@ -496,3 +686,5 @@ class ChatViewModel(
         }
     }
 }
+
+enum class SearchFilter { ALL, MEDIA, DOCUMENTS, LINKS, DATE }

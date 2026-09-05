@@ -23,13 +23,15 @@ import androidx.compose.ui.unit.sp
 data class EmojiCategory(
     val title: String,
     val icon: String,
-    val emojis: List<String>
+    val emojis: List<String>,
+    val isStickerCategory: Boolean = false
 )
 
 @Composable
 fun ChatEmojiPicker(
     onEmojiSelected: (String) -> Unit,
     onBackspace: () -> Unit,
+    onStickerSelected: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val categories = remember {
@@ -112,6 +114,22 @@ fun ChatEmojiPicker(
                     "🈶", "🈚", "🈸", "🈺", "🈷️", "✴️", "❇️", "✳️", "‼️", "⁉️",
                     "💯", "✨", "🔥", "💥", "💫", "⭐️", "🌟", "⚡️", "☄️", "🎉"
                 )
+            ),
+            // Sticker tab — large emoji sent as stickers (sent as TEXT).
+            // Marked with isStickerCategory so the picker renders them at 2×.
+            EmojiCategory(
+                title = "Stickers",
+                icon = "🏷️",
+                emojis = listOf(
+                    "😀", "😂", "🤣", "😍", "🥰", "😎", "🤩", "🥳",
+                    "😭", "😱", "🤯", "🤔", "😴", "🤤", "🤗", "🤫",
+                    "👋", "👍", "👎", "👏", "🙌", "🤝", "🙏", "💪",
+                    "❤️", "🔥", "✨", "🎉", "🎁", "🏆", "💯", "⭐",
+                    "🐶", "🐱", "🦄", "🐸", "🐵", "🐼", "🦁", "🐯",
+                    "🍕", "🍔", "🍟", "🍩", "🍦", "🍺", "☕", "🍓",
+                    "⚽", "🏀", "🎮", "🎸", "🚀", "✈️", "🏖️", "🌸"
+                ),
+                isStickerCategory = true
             )
         )
     }
@@ -167,14 +185,20 @@ fun ChatEmojiPicker(
                 items(currentCategory.emojis) { emoji ->
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(if (currentCategory.isStickerCategory) 64.dp else 44.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable { onEmojiSelected(emoji) },
+                            .clickable {
+                                if (currentCategory.isStickerCategory && onStickerSelected != null) {
+                                    onStickerSelected(emoji)
+                                } else {
+                                    onEmojiSelected(emoji)
+                                }
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = emoji,
-                            fontSize = 24.sp
+                            fontSize = if (currentCategory.isStickerCategory) 36.sp else 24.sp
                         )
                     }
                 }

@@ -31,6 +31,36 @@ class ChatRepositoryImpl(
         }
     }
 
+    /**
+     * Loads one page of older messages ending before `beforeTimestamp`.
+     * Used for cursor-based pagination when the user scrolls to the top.
+     */
+    suspend fun getMessagesPage(conversationId: String, beforeTimestamp: Long, limit: Int = 50): List<DomainMessage> {
+        return messageDao.getMessagesPage(conversationId, beforeTimestamp, limit).map { it.toDomainMessage() }
+    }
+
+    /**
+     * Returns all messages with status FAILED (across all conversations) so the
+     * offline queue can retry them.
+     */
+    suspend fun getAllFailedMessages(): List<DomainMessage> {
+        return messageDao.getAllFailedMessages().map { it.toDomainMessage() }
+    }
+
+    /**
+     * Returns starred messages in a conversation.
+     */
+    suspend fun getStarredMessages(conversationId: String): List<DomainMessage> {
+        return messageDao.getStarredMessages(conversationId).map { it.toDomainMessage() }
+    }
+
+    /**
+     * Returns pinned messages in a conversation.
+     */
+    suspend fun getPinnedMessages(conversationId: String): List<DomainMessage> {
+        return messageDao.getPinnedMessages(conversationId).map { it.toDomainMessage() }
+    }
+
     suspend fun sendMessage(message: DomainMessage, isOnline: Boolean) {
         val initialStatus = if (!isOnline) MessageStatus.FAILED else MessageStatus.SENDING
         val entity = MessageEntity.fromDomain(message.copy(status = initialStatus))
@@ -159,10 +189,55 @@ class ChatRepositoryImpl(
     }
 
     /**
-     * Updates message text (for edit feature).
+     * Updates message text + edited_at timestamp (for edit feature).
      */
     suspend fun updateMessageText(messageId: String, newText: String) {
-        messageDao.updateMessageText(messageId, newText)
+        messageDao.updateMessageText(messageId, newText, System.currentTimeMillis())
+    }
+
+    /**
+     * Toggles the pinned flag on a message.
+     */
+    suspend fun togglePin(messageId: String) {
+        val msg = messageDao.getMessageById(messageId) ?: return
+        val newPinned = !msg.isPinned
+        messageDao.updateMessagePinned(messageId, newPinned)
+    }
+
+    /**
+     * Sets the archived flag on a conversation.
+     */
+    suspend fun setConversationArchived(conversationId: String, isArchived: Boolean) {
+        conversationDao.updateArchived(conversationId, isArchived)
+    }
+
+    /**
+     * Returns a single message by ID.
+     */
+    suspend fun getMessageById(messageId: String): DomainMessage? {
+        return messageDao.getMessageById(messageId)?.toDomainMessage()
+    }
+
+    /**
+     * Sets the pinned flag on a message.
+     */
+    suspend fun setMessagePinned(messageId: String, isPinned: Boolean) {
+        messageDao.updateMessagePinned(messageId, isPinned)
+    }
+
+    /**
+     * Sets the starred flag on a message.
+     */
+    suspend fun setMessageStarred(messageId: String, isStarred: Boolean) {
+        messageDao.updateMessageStarred(messageId, isStarred)
+    }
+
+    /**
+     * Updates the seq field on a message.
+     */
+    suspend fun updateMessageSeq(messageId: String, seq: Long) {
+        val msg = messageDao.getMessageById(messageId) ?: return
+        messageDao.insertMessage(msg.copy(seq = seq))
     }
 
     /**

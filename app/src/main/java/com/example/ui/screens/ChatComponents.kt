@@ -688,17 +688,44 @@ fun DomainChatBubble(
                     }
                 }
 
-                // Bottom row with timestamp & ticks
+                // Bottom row with timestamp & ticks (+ edited label + pinned/starred icons)
                 Row(
                     modifier = Modifier.align(Alignment.End),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (message.isPinned) {
+                        Icon(
+                            imageVector = androidx.compose.material.icons.Icons.Filled.PushPin,
+                            contentDescription = "Pinned",
+                            tint = Color(0xFF667781),
+                            modifier = Modifier.size(11.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                    }
+                    if (message.isStarred) {
+                        Icon(
+                            imageVector = androidx.compose.material.icons.Icons.Filled.Star,
+                            contentDescription = "Starred",
+                            tint = Color(0xFFFFC107),
+                            modifier = Modifier.size(11.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                    }
                     Text(
                         text = message.timestamp,
                         color = Color(0xFF667781),
                         fontSize = 11.sp,
                         letterSpacing = 0.2.sp
                     )
+                    if (message.editedAt != null) {
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = "edited",
+                            color = Color(0xFF667781),
+                            fontSize = 10.sp,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        )
+                    }
 
                     if (isOutgoing) {
                         Spacer(modifier = Modifier.width(4.dp))

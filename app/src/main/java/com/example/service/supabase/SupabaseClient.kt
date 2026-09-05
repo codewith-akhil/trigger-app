@@ -76,6 +76,17 @@ class SupabaseClient(
     private val _realtimeEvents = MutableSharedFlow<RealtimeEvent>(extraBufferCapacity = 64)
     val realtimeEvents: SharedFlow<RealtimeEvent> = _realtimeEvents.asSharedFlow()
 
+    // Emitted whenever the Realtime WebSocket (re)connects after a disconnect.
+    // MessageServiceImpl listens to this and pulls any messages missed while
+    // the socket was down.
+    private val _reconnectSignals = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+    val reconnectSignals: SharedFlow<Unit> = _reconnectSignals.asSharedFlow()
+
+    // Tracks the last connectRealtime args so auto-reconnect can re-subscribe.
+    private var lastRealtimeTables: List<String> = emptyList()
+    private var lastRealtimeFilter: String? = null
+    private var hasConnectedBefore = false
+
     /**
      * Connects to the Supabase Realtime WebSocket and subscribes to the given
      * tables. Automatically uses the current session JWT for auth.
@@ -88,6 +99,10 @@ class SupabaseClient(
      */
     fun connectRealtime(tables: List<String>, filter: String? = null) {
         if (!BackendConfig.isSupabaseConfigured) return
+
+        // Remember the args so auto-reconnect can re-subscribe.
+        lastRealtimeTables = tables
+        lastRealtimeFilter = filter
 
         // Close any existing connection
         realtimeSocket?.close(1000, "Reconnecting")
@@ -104,6 +119,13 @@ class SupabaseClient(
         realtimeSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.i(TAG, "Realtime WebSocket connected")
+                // If this is a reconnect (not the first connection), emit a signal
+                // so listeners can sync any messages they missed during the gap.
+                if (hasConnectedBefore) {
+                    _reconnectSignals.tryEmit(Unit)
+                }
+                hasConnectedBefore = true
+
                 // Send join messages for each table
                 tables.forEachIndexed { idx, tableRef ->
                     val parts = tableRef.split(".")
@@ -172,7 +194,7 @@ class SupabaseClient(
                     Thread.sleep(3000)
                     if (currentSession != null) {
                         Log.i(TAG, "Auto-reconnecting Realtime WebSocket...")
-                        connectRealtime(tables, filter)
+                        connectRealtime(lastRealtimeTables, lastRealtimeFilter)
                     }
                 }.start()
             }
