@@ -53,3 +53,6 @@ trigger-upload-key.jks
 keystore.properties
 keystore-credentials.txt
 my-upload-key.jks
+
+# Local build artifacts (never commit binaries)
+artifacts/
