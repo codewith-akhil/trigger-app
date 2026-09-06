@@ -418,14 +418,17 @@ fun ProfileScreen(
                     ?: java.util.UUID.randomUUID().toString()
                 val fileName = "$userId/${System.currentTimeMillis()}.$ext"
 
-                // 6) Upload to the 'avatars' Storage bucket (upsert = true so
-                //    re-uploads overwrite cleanly)
+                // 6) Upload to the 'avatars' Storage bucket.
+                //    upsert MUST stay false: the deployed storage RLS has no working
+                //    UPDATE policy, so any x-upsert:true request 403s with
+                //    "new row violates row-level security policy". Upsert is also
+                //    unnecessary here — every upload uses a fresh
+                //    {userId}/{timestamp}.{ext} path, so collisions never happen.
                 val uploadResult = AppServiceContainer.supabaseClient.uploadFile(
                     bucketName = "avatars",
                     fileName = fileName,
                     fileBytes = bytes,
-                    mimeType = mimeType,
-                    upsert = true
+                    mimeType = mimeType
                 )
 
                 if (uploadResult is SupabaseResult.Error) {
