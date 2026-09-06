@@ -23,6 +23,13 @@ import androidx.compose.ui.unit.sp
 import com.example.model.DomainMessage
 import com.example.model.MessageType
 import coil.compose.AsyncImage
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalContext
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import java.util.Locale
 
 @Composable
 fun ChatMediaViewer(
@@ -31,8 +38,8 @@ fun ChatMediaViewer(
     onDelete: () -> Unit = {},
     onShare: () -> Unit = {}
 ) {
-    var isVideoPlaying by remember { mutableStateOf(false) }
-    var videoProgress by remember { mutableStateOf(0.35f) }
+    // H7: REAL video playback via media3/ExoPlayer. Previously a static
+    // thumbnail with a fake progress slider and hardcoded "0:14"/"0:42".
 
     Box(
         modifier = Modifier
@@ -103,73 +110,10 @@ fun ChatMediaViewer(
             contentAlignment = Alignment.Center
         ) {
             if (message.type == MessageType.VIDEO) {
-                // Video preview with player controls
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .background(Color(0xFF1F2C34)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (!message.mediaUrl.isNullOrEmpty()) {
-                        AsyncImage(
-                            model = message.mediaThumbnail ?: message.mediaUrl,
-                            contentDescription = "Video Thumbnail",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-
-                    // Play / Pause central button
-                    Box(
-                        modifier = Modifier
-                            .size(64.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.65f))
-                            .clickable { isVideoPlaying = !isVideoPlaying },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isVideoPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            contentDescription = if (isVideoPlaying) "Pause" else "Play",
-                            tint = Color.White,
-                            modifier = Modifier.size(38.dp)
-                        )
-                    }
-
-                    // Bottom video scrubber
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .background(Color.Black.copy(alpha = 0.5f))
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
-                    ) {
-                        Slider(
-                            value = videoProgress,
-                            onValueChange = { videoProgress = it },
-                            colors = SliderDefaults.colors(
-                                thumbColor = Color(0xFF25D366),
-                                activeTrackColor = Color(0xFF25D366)
-                            )
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "0:14",
-                                color = Color.White,
-                                fontSize = 11.sp
-                            )
-                            Text(
-                                text = "0:42",
-                                color = Color(0xFF8696A0),
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
-                }
+                RealVideoPlayer(
+                    mediaUrl = message.mediaUrl,
+                    thumbnailUrl = message.mediaThumbnail
+                )
             } else {
                 // Image viewer
                 if (!message.mediaUrl.isNullOrEmpty()) {
@@ -203,6 +147,73 @@ fun ChatMediaViewer(
                     color = Color.White,
                     fontSize = 15.sp,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * H7: real video playback — media3 ExoPlayer driving a PlayerView with the
+ * standard transport controls (play/pause, seek, real duration/position).
+ * The player is created once per message and released when the viewer closes
+ * (DisposableEffect), so no decoder/audio session ever leaks.
+ */
+@Composable
+private fun RealVideoPlayer(
+    mediaUrl: String?,
+    thumbnailUrl: String?
+) {
+    val context = LocalContext.current
+    val player = remember(mediaUrl) {
+        mediaUrl?.takeIf { it.startsWith("http") }?.let { url ->
+            ExoPlayer.Builder(context).build().apply {
+                setMediaItem(MediaItem.fromUri(url))
+                playWhenReady = false
+                prepare()
+            }
+        }
+    }
+
+    DisposableEffect(player) {
+        onDispose { player?.release() }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 9f)
+            .background(Color(0xFF1F2C34)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (player != null) {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        useController = true
+                        setShowSubtitleButton(false)
+                        controllerShowTimeoutMs = 0 // keep controls visible
+                        this.player = player
+                    }
+                },
+                update = { view -> view.player = player },
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            // No loadable URL — show the thumbnail (if any) or a broken icon.
+            if (!thumbnailUrl.isNullOrEmpty() || !mediaUrl.isNullOrEmpty()) {
+                AsyncImage(
+                    model = thumbnailUrl ?: mediaUrl,
+                    contentDescription = "Video Thumbnail",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.BrokenImage,
+                    contentDescription = "Video unavailable",
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(64.dp)
                 )
             }
         }

@@ -69,6 +69,11 @@ data class DomainMessage(
     val text: String = "",
     val mediaUrl: String? = null,
     val mediaThumbnail: String? = null,
+    // Storage coordinates persisted alongside the URL so any device can
+    // rebuild a fresh URL (public form / re-signed) after the stored one
+    // expires. Previously only the (signed, expiring) URL was kept.
+    val mediaBucket: String? = null,
+    val mediaPath: String? = null,
     val fileName: String? = null,
     val fileSize: Long = 0L,
     val mediaDurationSec: Int = 0,
@@ -102,6 +107,9 @@ data class DomainMessage(
 
 data class DomainConversation(
     val id: String,
+    /** The OTHER user's auth UUID (for a 1:1 chat). Null on legacy rows that
+     *  were never synced with owner/peer info — refreshed on every sync. */
+    val peerId: String? = null,
     val name: String,
     val avatarRes: Int? = null,
     val initialColor: Long = 0xFF00A884,
@@ -137,6 +145,9 @@ data class UploadTask(
     val mimeType: String? = null,
     val mediaUrl: String? = null,
     val bucket: String? = null,
+    /** Object path INSIDE the bucket ("u/<userId>/<file>.jpg") — persisted to
+     *  Room so expired URLs can be rebuilt forever. */
+    val mediaPath: String? = null,
     // Routing metadata carried through the upload so the message can be
     // sent to the server AFTER the upload completes with the real URL.
     val peerId: String? = null,

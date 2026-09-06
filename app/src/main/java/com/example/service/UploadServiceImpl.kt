@@ -3,6 +3,7 @@ package com.example.service
 import android.util.Log
 import com.example.di.AppServiceContainer
 import com.example.model.UploadTask
+import com.example.service.MediaUrlResolver
 import com.example.service.supabase.SupabaseResult
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
@@ -107,16 +108,24 @@ class UploadServiceImpl(
                 if (response.isSuccessful) {
                     val json = JSONObject(responseBody)
                     val mediaUrl = json.optString("url", "")
-                    val bucket = json.optString("bucket", "chat_media")
+                    val bucket = json.optString("bucket", MediaUrlResolver.CHAT_MEDIA_BUCKET)
 
-                    // ALL chat buckets are private, so the public URL would 403
-                    // for the recipient. Sign EVERY url with the max expiry
-                    // (7 days) so the recipient can actually load the media.
-                    // Signed URLs bypass Storage RLS at GET time — the signature
-                    // itself grants read access to whoever holds the link.
+                    // The edge function returns the PUBLIC url and chat_media is
+                    // a public bucket (migration 20260918_chat_fixes.sql), so
+                    // the plain url is permanent — no more 7-day signing that
+                    // used to brick every chat image after a week. The object
+                    // path is persisted too so any device can rebuild the url
+                    // from scratch (or re-sign, for private buckets).
+                    val objectPath = MediaUrlResolver.extractObjectPath(mediaUrl, bucket)
+                        ?: task.mediaPath
                     val finalUrl = if (mediaUrl.isNotEmpty()) {
-                        fetchSignedUrl(bucket, extractObjectPath(mediaUrl, bucket))
-                            ?: mediaUrl  // fallback: post-migration public URL
+                        if (bucket == MediaUrlResolver.CHAT_MEDIA_BUCKET) {
+                            MediaUrlResolver.resolve(mediaUrl, bucket, objectPath)
+                        } else {
+                            // Private bucket — keep the signed-url behaviour.
+                            fetchSignedUrl(bucket, extractObjectPath(mediaUrl, bucket))
+                                ?: mediaUrl
+                        }
                     } else {
                         mediaUrl
                     }
@@ -127,7 +136,8 @@ class UploadServiceImpl(
                         isCompleted = true,
                         remainingSeconds = 0,
                         mediaUrl = finalUrl,
-                        bucket = bucket
+                        bucket = bucket,
+                        mediaPath = objectPath
                     )
                     tasksMap[task.id] = completedTask
                     refreshState()

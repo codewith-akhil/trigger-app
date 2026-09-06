@@ -111,6 +111,9 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
+  // H7: real full-screen video playback (was a fake thumbnail + hardcoded 0:14/0:42)
+  implementation(libs.androidx.media3.exoplayer)
+  implementation(libs.androidx.media3.ui)
   implementation(libs.agora.rtc)
   // Retrofit / Moshi / OkHttp logging-interceptor were declared but never imported — removed in audit-E.
   // (okhttp itself IS still used by SupabaseClient + UploadServiceImpl.)

@@ -78,6 +78,16 @@ interface MessageDao {
     @Query("UPDATE messages SET mediaUrl = :mediaUrl WHERE id = :messageId")
     suspend fun updateMessageMedia(messageId: String, mediaUrl: String)
 
+    /** Writes the final URL AND the storage coordinates (bucket + object path)
+     *  so the URL can be rebuilt forever, even after reinstall. */
+    @Query("UPDATE messages SET mediaUrl = :mediaUrl, mediaBucket = :bucket, mediaPath = :path WHERE id = :messageId")
+    suspend fun updateMessageMediaFull(messageId: String, mediaUrl: String, bucket: String?, path: String?)
+
+    /** H4 unification: moves every message cached under a legacy peer-UUID key
+     *  to the real server conversation UUID. Idempotent. */
+    @Query("UPDATE messages SET conversationId = :toConversationId WHERE conversationId = :fromConversationId")
+    suspend fun rekeyConversationMessages(fromConversationId: String, toConversationId: String)
+
     /** Realtime-driven view-once sync: mark a message opened. */
     @Query("UPDATE messages SET isViewed = 1 WHERE id = :messageId")
     suspend fun markMessageViewed(messageId: String)

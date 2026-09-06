@@ -71,9 +71,12 @@ fun SelectContactScreen(
     var loadError by remember { mutableStateOf(false) }
 
     // Build the "Message yourself" row that always shows as the first item.
-    val selfItem = remember(currentUserProfile) {
+    // H4: pass the REAL own auth uuid (previously a fake "me_chat" id that
+    // failed every uuid-validated server call).
+    val selfId = com.example.di.AppServiceContainer.supabaseClient.currentSession?.user?.id ?: ""
+    val selfItem = remember(currentUserProfile, selfId) {
         SelectContactItem(
-            id = "me_chat",
+            id = selfId,
             name = currentUserProfile.name.ifEmpty { "You" },
             subtitle = "Message yourself",
             initialColor = 0xFF1FA855,

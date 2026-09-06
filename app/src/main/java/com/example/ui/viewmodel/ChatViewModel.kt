@@ -7,6 +7,11 @@ import com.example.config.ChatConfig
 import com.example.di.AppServiceContainer
 import com.example.model.*
 import com.example.service.CallSession
+import com.example.service.LiveLocationService
+import com.example.service.LiveLocationShareState
+import com.example.service.MessageServiceImpl
+import com.example.service.supabase.RealtimeEvent
+import com.example.service.supabase.SupabaseResult
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.text.SimpleDateFormat
@@ -26,7 +31,10 @@ data class PendingAttachment(
 )
 
 class ChatViewModel(
-    val contactId: String = "",
+    /** REAL server conversation uuid (H4). All data flows key on this. */
+    val conversationId: String = "",
+    /** The OTHER user's auth uuid — presence, typing indicators, calls, reports. */
+    val peerId: String = "",
     val contactName: String = "",
     val contactAvatarRes: Int? = null
 ) : ViewModel() {
@@ -42,7 +50,7 @@ class ChatViewModel(
     // Live messages from Room (the local cache, kept in sync with Supabase
     // Realtime by MessageServiceImpl).
     private val _liveMessages: StateFlow<List<DomainMessage>> = messageService
-        .observeMessages(contactId)
+        .observeMessages(conversationId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Pagination cursor — the oldest timestamp currently loaded. Null means
@@ -61,20 +69,20 @@ class ChatViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val contactPresence: StateFlow<Pair<PresenceStatus, String>> = presenceService
-        .observeContactPresence(contactId)
+        .observeContactPresence(peerId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PresenceStatus.ONLINE to "online")
 
     val connectionState: StateFlow<PresenceStatus> = presenceService.connectionState
     val activeCall: StateFlow<CallSession?> = callService.currentCall
     val activeUploads: StateFlow<List<UploadTask>> = uploadService.activeUploads
 
-    val conversationInfo = repository.getConversation(contactId)
+    val conversationInfo = repository.getConversation(conversationId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     // Media & Docs in conversation for Contact Info Sheet
-    val mediaMessages = messageService.getMediaMessages(contactId)
+    val mediaMessages = messageService.getMediaMessages(conversationId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val documentMessages = messageService.getDocumentMessages(contactId)
+    val documentMessages = messageService.getDocumentMessages(conversationId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Composer & Interaction state
@@ -89,7 +97,7 @@ class ChatViewModel(
     var searchResultsEx = MutableStateFlow<List<DomainMessage>>(emptyList())
     val searchResults = inChatSearchQuery.flatMapLatest { query ->
         if (query.isBlank()) flowOf(emptyList())
-        else messageService.searchMessages(contactId, query)
+        else messageService.searchMessages(conversationId, query)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     var currentMatchIndex = MutableStateFlow(0)
 
@@ -133,21 +141,29 @@ class ChatViewModel(
     private var audioPlaybackJob: Job? = null
     private var mediaPlayer: android.media.MediaPlayer? = null
 
+    // ---------- Live location (C7) ----------
+    /** MY active share (mirrored from the foreground service, 1 s cadence). */
+    val myLiveLocation = MutableStateFlow<LiveLocationShareState?>(null)
+    /** The PEER's latest live coordinates (realtime + initial seed). */
+    val peerLiveLocation = MutableStateFlow<LiveLocationShareState?>(null)
+    private var liveLocationMirrorJob: Job? = null
+    private var peerLiveExpiryJob: Job? = null
+
     init {
         // Mark conversation as read on open (calls edge function)
         viewModelScope.launch {
             try {
-                messageService.markConversationRead(contactId)
+                messageService.markConversationRead(conversationId)
             } catch (e: Exception) {
                 // Fallback to Room-only mark-as-read
-                repository.markConversationRead(contactId)
+                repository.markConversationRead(conversationId)
             }
         }
         // Multi-device sync: pull any messages we missed since the last sync.
         viewModelScope.launch {
             try {
                 val sinceTs = prefs.getLong(KEY_LAST_SYNC_TS, 0L)
-                messageService.syncMessages(conversationId = contactId, sinceTs = sinceTs)
+                messageService.syncMessages(conversationId = conversationId, sinceTs = sinceTs)
             } catch (e: Exception) {
                 // Non-fatal — Room is the local cache.
             }
@@ -161,13 +177,20 @@ class ChatViewModel(
         // Load starred messages + shared links for Chat Info
         viewModelScope.launch {
             try {
-                starredMessages.value = repository.getStarredMessages(contactId)
+                starredMessages.value = repository.getStarredMessages(conversationId)
             } catch (_: Exception) {}
         }
         viewModelScope.launch {
             try {
-                sharedLinks.value = messageService.getSharedLinks(contactId)
+                sharedLinks.value = messageService.getSharedLinks(conversationId)
             } catch (_: Exception) {}
+        }
+        // C7: mirror the foreground service state + listen for the peer's
+        // realtime live-location coordinates.
+        startMyLiveLocationMirror()
+        seedPeerLiveLocation()
+        (messageService as? MessageServiceImpl)?.onLiveLocationEvent = { event ->
+            handlePeerLiveLocationEvent(event)
         }
     }
 
@@ -180,7 +203,7 @@ class ChatViewModel(
         typingJob?.cancel()
         typingJob = viewModelScope.launch {
             delay(400)
-            presenceService.setUserTyping(contactId, newText.isNotBlank())
+            presenceService.setUserTyping(peerId, newText.isNotBlank())
         }
     }
 
@@ -195,7 +218,7 @@ class ChatViewModel(
 
         val message = DomainMessage(
             id = msgId,
-            conversationId = contactId,
+            conversationId = conversationId,
             senderId = "me",
             senderName = "You",
             type = MessageType.TEXT,
@@ -211,7 +234,7 @@ class ChatViewModel(
         )
 
         viewModelScope.launch {
-            messageService.sendMessage(message, peerId = contactId, peerName = contactName)
+            messageService.sendMessage(message, peerId = peerId, peerName = contactName)
             inputText.value = ""
             replyingTo.value = null
             // NO fake/simulated bot reply — real chat uses Supabase Realtime.
@@ -227,7 +250,7 @@ class ChatViewModel(
         recordingAmplitudes.value = emptyList()
 
         viewModelScope.launch {
-            presenceService.setUserRecording(contactId, true)
+            presenceService.setUserRecording(peerId, true)
         }
 
         // Real voice recording using MediaRecorder — captures actual audio amplitudes
@@ -294,7 +317,7 @@ class ChatViewModel(
         recordingAmplitudes.value = emptyList()
 
         viewModelScope.launch {
-            presenceService.setUserRecording(contactId, false)
+            presenceService.setUserRecording(peerId, false)
         }
     }
 
@@ -330,7 +353,7 @@ class ChatViewModel(
 
         val message = DomainMessage(
             id = msgId,
-            conversationId = contactId,
+            conversationId = conversationId,
             senderId = "me",
             senderName = "You",
             type = MessageType.AUDIO,
@@ -351,13 +374,13 @@ class ChatViewModel(
             val task = UploadTask(
                 id = "upload_$msgId",
                 messageId = msgId,
-                conversationId = contactId,
+                conversationId = conversationId,
                 fileName = voiceFile?.name ?: "Voice_note_${System.currentTimeMillis()}.m4a",
                 fileType = MessageType.AUDIO,
                 totalBytes = fileSize,
                 filePath = voiceFile?.absolutePath,
                 mimeType = "audio/mp4",
-                peerId = contactId,
+                peerId = peerId,
                 peerName = contactName
             )
             uploadService.enqueueUpload(task)
@@ -367,7 +390,7 @@ class ChatViewModel(
         }
 
         viewModelScope.launch {
-            presenceService.setUserRecording(contactId, false)
+            presenceService.setUserRecording(peerId, false)
         }
     }
 
@@ -413,7 +436,7 @@ class ChatViewModel(
 
         val message = DomainMessage(
             id = msgId,
-            conversationId = contactId,
+            conversationId = conversationId,
             senderId = "me",
             senderName = "You",
             type = pending.type,
@@ -440,13 +463,13 @@ class ChatViewModel(
             val task = UploadTask(
                 id = "upload_$msgId",
                 messageId = msgId,
-                conversationId = contactId,
+                conversationId = conversationId,
                 fileName = pending.fileName,
                 fileType = pending.type,
                 totalBytes = pending.fileSize,
                 filePath = pending.filePath,
                 mimeType = pending.mimeType,
-                peerId = contactId,
+                peerId = peerId,
                 peerName = contactName
             )
             uploadService.enqueueUpload(task)
@@ -459,7 +482,7 @@ class ChatViewModel(
         val locText = if (placeName.isNotBlank() && placeName != "Current Location") "$placeName\n$address" else address
         val msg = DomainMessage(
             id = java.util.UUID.randomUUID().toString(),
-            conversationId = contactId,
+            conversationId = conversationId,
             senderId = "me",
             senderName = "You",
             type = MessageType.LOCATION,
@@ -475,7 +498,7 @@ class ChatViewModel(
         viewModelScope.launch {
             messageService.sendMessage(
                 msg.copy(idempotencyKey = msg.idempotencyKey ?: java.util.UUID.randomUUID().toString()),
-                peerId = contactId, peerName = contactName
+                peerId = peerId, peerName = contactName
             )
         }
     }
@@ -493,7 +516,7 @@ class ChatViewModel(
         val baseText = "Live Location shared ($durationText)"
         val msg = DomainMessage(
             id = java.util.UUID.randomUUID().toString(),
-            conversationId = contactId,
+            conversationId = conversationId,
             senderId = "me",
             senderName = "You",
             type = MessageType.LOCATION,
@@ -513,7 +536,118 @@ class ChatViewModel(
             idempotencyKey = java.util.UUID.randomUUID().toString()
         )
         viewModelScope.launch {
-            messageService.sendMessage(msg, peerId = contactId, peerName = contactName)
+            messageService.sendMessage(msg, peerId = peerId, peerName = contactName)
+            // C7: start the REAL foreground-service updater — previously only
+            // the static anchor message was sent and nothing ever moved.
+            try {
+                LiveLocationService.start(
+                    AppServiceContainer.context,
+                    conversationId,
+                    durationTextToMinutes(durationText)
+                )
+            } catch (e: Exception) {
+                Log.w("ChatViewModel", "live location service start failed: ${e.message}")
+            }
+        }
+    }
+
+    /** Stops MY active live-location share (banner Stop button). */
+    fun stopLiveLocationShare() {
+        LiveLocationService.stop(AppServiceContainer.context)
+        myLiveLocation.value = null
+    }
+
+    // ----- C7 live-location internals -----
+
+    private fun startMyLiveLocationMirror() {
+        liveLocationMirrorJob?.cancel()
+        liveLocationMirrorJob = viewModelScope.launch {
+            while (isActive) {
+                val share = LiveLocationService.activeShare
+                myLiveLocation.value = share?.takeIf {
+                    it.conversationId == conversationId &&
+                        it.expiresAtMillis > System.currentTimeMillis()
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    /** Pulls any still-active peer share so a freshly-opened chat shows it. */
+    private fun seedPeerLiveLocation() {
+        viewModelScope.launch {
+            try {
+                val me = AppServiceContainer.supabaseClient.currentSession?.user?.id ?: return@launch
+                val result = AppServiceContainer.supabaseClient.getTable(
+                    "live_location_shares",
+                    "conversation_id=eq.$conversationId&select=*&order=updated_at.desc&limit=5"
+                )
+                if (result is SupabaseResult.Success) {
+                    for (i in 0 until result.data.length()) {
+                        val obj = result.data.getJSONObject(i)
+                        if (obj.optString("sharer_id") == me) continue
+                        val expires = parseInstantMillis(obj.optString("expires_at", ""), 0L)
+                        if (expires <= System.currentTimeMillis()) continue
+                        peerLiveLocation.value = LiveLocationShareState(
+                            conversationId = conversationId,
+                            sharerId = obj.optString("sharer_id"),
+                            latitude = obj.optDouble("latitude", 0.0),
+                            longitude = obj.optDouble("longitude", 0.0),
+                            accuracyMeters = obj.optDouble("accuracy", 0.0).takeIf { it > 0 }?.toFloat(),
+                            expiresAtMillis = expires,
+                            updatedAtMillis = parseInstantMillis(
+                                obj.optString("updated_at", ""), System.currentTimeMillis()
+                            )
+                        )
+                        schedulePeerLiveExpiry(expires)
+                        break
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun handlePeerLiveLocationEvent(event: RealtimeEvent) {
+        val record = event.record ?: return
+        if (record.optString("conversation_id", "") != conversationId) return
+        val me = AppServiceContainer.supabaseClient.currentSession?.user?.id ?: ""
+        val sharer = record.optString("sharer_id", "")
+        if (sharer.isBlank() || sharer == me) return
+        val expires = parseInstantMillis(record.optString("expires_at", ""), 0L)
+        if (expires <= System.currentTimeMillis()) {
+            peerLiveLocation.value = null
+            return
+        }
+        peerLiveLocation.value = LiveLocationShareState(
+            conversationId = conversationId,
+            sharerId = sharer,
+            latitude = record.optDouble("latitude", 0.0),
+            longitude = record.optDouble("longitude", 0.0),
+            accuracyMeters = record.optDouble("accuracy", 0.0).takeIf { it > 0 }?.toFloat(),
+            expiresAtMillis = expires,
+            updatedAtMillis = System.currentTimeMillis()
+        )
+        schedulePeerLiveExpiry(expires)
+    }
+
+    private fun schedulePeerLiveExpiry(expiresAtMillis: Long) {
+        peerLiveExpiryJob?.cancel()
+        peerLiveExpiryJob = viewModelScope.launch {
+            delay((expiresAtMillis - System.currentTimeMillis()).coerceAtLeast(0) + 500)
+            peerLiveLocation.value = null
+        }
+    }
+
+    private fun parseInstantMillis(iso: String, fallback: Long): Long {
+        if (iso.isBlank()) return fallback
+        return try {
+            java.time.Instant.parse(iso).toEpochMilli()
+        } catch (e: Exception) {
+            try {
+                java.time.OffsetDateTime.parse(iso).toInstant().toEpochMilli()
+            } catch (e2: Exception) {
+                fallback
+            }
         }
     }
 
@@ -527,13 +661,13 @@ class ChatViewModel(
 
     fun setBlocked(isBlocked: Boolean) {
         viewModelScope.launch {
-            repository.setBlocked(contactId, isBlocked)
+            repository.setBlocked(conversationId, isBlocked)
         }
     }
 
     fun setMuted(isMuted: Boolean) {
         viewModelScope.launch {
-            repository.setConversationMuted(contactId, isMuted)
+            repository.setConversationMuted(conversationId, isMuted)
         }
     }
 
@@ -541,7 +675,7 @@ class ChatViewModel(
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
         val msg = DomainMessage(
             id = java.util.UUID.randomUUID().toString(),
-            conversationId = contactId,
+            conversationId = conversationId,
             senderId = "me",
             senderName = "You",
             type = MessageType.CONTACT,
@@ -554,7 +688,7 @@ class ChatViewModel(
             idempotencyKey = java.util.UUID.randomUUID().toString()
         )
         viewModelScope.launch {
-            messageService.sendMessage(msg, peerId = contactId, peerName = contactName)
+            messageService.sendMessage(msg, peerId = peerId, peerName = contactName)
         }
     }
 
@@ -569,11 +703,11 @@ class ChatViewModel(
 
     // Calling integrations
     fun startAudioCall() {
-        callService.startCall(contactId, contactName, contactAvatarRes, CallType.AUDIO)
+        callService.startCall(peerId, contactName, contactAvatarRes, CallType.AUDIO)
     }
 
     fun startVideoCall() {
-        callService.startCall(contactId, contactName, contactAvatarRes, CallType.VIDEO)
+        callService.startCall(peerId, contactName, contactAvatarRes, CallType.VIDEO)
     }
 
     // Message selection & actions
@@ -636,17 +770,17 @@ class ChatViewModel(
 
     fun clearEntireChat() {
         viewModelScope.launch {
-            messageService.clearChat(contactId)
+            messageService.clearChat(conversationId)
         }
     }
 
     fun setDisappearingMessages(duration: DisappearingDuration) {
         viewModelScope.launch {
-            repository.setDisappearingDuration(contactId, duration)
+            repository.setDisappearingDuration(conversationId, duration)
             val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
             val systemMsg = DomainMessage(
                 id = java.util.UUID.randomUUID().toString(),
-                conversationId = contactId,
+                conversationId = conversationId,
                 senderId = "system",
                 senderName = "System",
                 type = MessageType.SYSTEM,
@@ -659,7 +793,7 @@ class ChatViewModel(
                 timestampMillis = System.currentTimeMillis(),
                 isOutgoing = false
             )
-            messageService.sendMessage(systemMsg, peerId = contactId, peerName = contactName)
+            messageService.sendMessage(systemMsg, peerId = peerId, peerName = contactName)
         }
     }
 
@@ -706,7 +840,7 @@ class ChatViewModel(
             messageService.toggleStarMessage(message.id)
             // Refresh starred list
             try {
-                starredMessages.value = repository.getStarredMessages(contactId)
+                starredMessages.value = repository.getStarredMessages(conversationId)
             } catch (_: Exception) {}
         }
     }
@@ -724,7 +858,7 @@ class ChatViewModel(
     // ---------- Archive chat ----------
     fun setArchived(isArchived: Boolean) {
         viewModelScope.launch {
-            messageService.toggleArchiveConversation(contactId, isArchived)
+            messageService.toggleArchiveConversation(conversationId, isArchived)
         }
     }
 
@@ -740,7 +874,7 @@ class ChatViewModel(
         val oldestTs = currentList.first().timestampMillis
         viewModelScope.launch {
             try {
-                val page = repository.getMessagesPage(contactId, oldestTs, limit = 50)
+                val page = repository.getMessagesPage(conversationId, oldestTs, limit = 50)
                 if (page.isNotEmpty()) {
                     _extraMessages.value = (_extraMessages.value + page).distinctBy { it.id }
                     paginationCursor.value = oldestTs
@@ -765,7 +899,7 @@ class ChatViewModel(
                     SearchFilter.DATE -> "date"
                 }
                 val results = messageService.searchMessagesEx(
-                    conversationId = contactId,
+                    conversationId = conversationId,
                     query = query,
                     searchType = type,
                     dateFrom = dateFrom,
@@ -782,10 +916,10 @@ class ChatViewModel(
     fun refreshChatInfo() {
         viewModelScope.launch {
             try {
-                starredMessages.value = repository.getStarredMessages(contactId)
+                starredMessages.value = repository.getStarredMessages(conversationId)
             } catch (_: Exception) {}
             try {
-                sharedLinks.value = messageService.getSharedLinks(contactId)
+                sharedLinks.value = messageService.getSharedLinks(conversationId)
             } catch (_: Exception) {}
         }
     }

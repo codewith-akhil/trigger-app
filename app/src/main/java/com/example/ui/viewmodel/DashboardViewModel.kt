@@ -39,9 +39,21 @@ class DashboardViewModel : ViewModel() {
                     val arr = result.data.optJSONArray("conversations") ?: return@launch
                     for (i in 0 until arr.length()) {
                         val obj = arr.getJSONObject(i)
+                        // H4/H5: persist the OTHER user's uuid on the row so a
+                        // chat opened by conversation uuid can still key
+                        // presence/typing/calls (which are peer-keyed).
+                        val myId = supabaseClient.currentUser?.id ?: ""
+                        val ownerId = obj.optString("owner_id", "")
+                        val peerRaw = obj.optString("peer_id", "")
+                        val otherId = when {
+                            ownerId == myId -> peerRaw
+                            peerRaw == myId -> ownerId
+                            else -> peerRaw
+                        }
                         // Insert/update each conversation in Room
                         val conv = com.example.data.local.ConversationEntity(
                             id = obj.getString("id"),
+                            peerId = otherId.takeIf { it.isNotBlank() },
                             name = obj.optString("peer_name", "Unknown"),
                             avatarRes = null,
                             initialColor = obj.optLong("peer_avatar_color", 0xFF00A884),

@@ -24,11 +24,14 @@ data class ConversationEntity(
     val disappearingDuration: String = "OFF",
     val isMuted: Boolean = false,
     val isBlocked: Boolean = false,
-    val isArchived: Boolean = false
+    val isArchived: Boolean = false,
+    /** The OTHER user's auth UUID (1:1 chats). Refreshed from sync-conversations. */
+    val peerId: String? = null
 ) {
     fun toDomain(): DomainConversation {
         return DomainConversation(
             id = id,
+            peerId = peerId,
             name = name,
             avatarRes = avatarRes,
             initialColor = initialColor,
@@ -56,6 +59,7 @@ data class ConversationEntity(
         fun fromDomain(d: DomainConversation): ConversationEntity {
             return ConversationEntity(
                 id = d.id,
+                peerId = d.peerId,
                 name = d.name,
                 avatarRes = d.avatarRes,
                 initialColor = d.initialColor,

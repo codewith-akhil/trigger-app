@@ -2,6 +2,8 @@ package com.example.model
 
 data class ChatItem(
     val id: String,
+    /** The OTHER user's auth uuid (H4/H5) — passed to the chat route. */
+    val peerId: String? = null,
     val name: String,
     val avatarRes: Int? = null,
     val initialColor: Long = 0xFF00A884,

@@ -9,6 +9,13 @@ interface MessageService {
     suspend fun sendMessage(message: DomainMessage, peerId: String? = null, peerName: String? = null)
 
     /**
+     * H4 unification: given a peer USER uuid, resolves the real server
+     * conversation id (local cache → server lookup both directions → create).
+     * Returns null when the peer id is not a valid UUID or resolution fails.
+     */
+    suspend fun resolveOrCreateConversation(peerId: String): String?
+
+    /**
      * Inserts an outgoing media message into Room only (status SENDING) — the
      * server call is deferred until its upload completes so the server row is
      * created with the recipient-accessible URL, never a local content:// URI.

@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [MessageEntity::class, ConversationEntity::class],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -28,11 +28,32 @@ abstract class ChatDatabase : RoomDatabase() {
                     ChatDatabase::class.java,
                     "whatsapp_chat_db"
                 )
-                    .addMigrations(REMOVE_SEEDED_DATA, ADD_PIN_EDIT_SEQ_IDEMPOTENCY_ARCHIVED, ADD_LOCATION_LIVE_FIELDS)
+                    .addMigrations(
+                        REMOVE_SEEDED_DATA,
+                        ADD_PIN_EDIT_SEQ_IDEMPOTENCY_ARCHIVED,
+                        ADD_LOCATION_LIVE_FIELDS,
+                        UNIFY_CONVERSATION_IDS_AND_MEDIA_PATHS
+                    )
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        // Migration 5 → 6 (H4/H5 + re-sign groundwork):
+        //  - conversations.peerId — the OTHER user's auth UUID, so a chat opened
+        //    by conversation UUID can still resolve presence/calls (peer-keyed).
+        //  - messages.mediaBucket/mediaPath — storage coordinates so expired
+        //    signed URLs can be rebuilt from scratch on any device.
+        // No data rewrite happens here: legacy peer-keyed message rows are
+        // re-keyed at RUNTIME (MessageServiceImpl re-key on send/sync responses)
+        // because the peer→conversation mapping only exists on the server.
+        private val UNIFY_CONVERSATION_IDS_AND_MEDIA_PATHS = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE conversations ADD COLUMN peerId TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN mediaBucket TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN mediaPath TEXT")
             }
         }
 

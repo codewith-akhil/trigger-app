@@ -29,6 +29,34 @@ class ChatRepositoryImpl(
         return conversationDao.getConversationById(id).map { it?.toDomain() }
     }
 
+    suspend fun getConversationByIdOnce(id: String): DomainConversation? {
+        return conversationDao.getConversationByIdOnce(id)?.toDomain()
+    }
+
+    /** Finds the conversation whose peer is the given user UUID. */
+    suspend fun getConversationByPeer(peerId: String): DomainConversation? {
+        return conversationDao.getConversationByPeer(peerId)?.toDomain()
+    }
+
+    /** H4: moves every Room message cached under [fromConversationId] (a
+     *  legacy peer-UUID key) onto the real conversation UUID. */
+    suspend fun rekeyConversationMessages(fromConversationId: String, toConversationId: String) {
+        if (fromConversationId == toConversationId) return
+        messageDao.rekeyConversationMessages(fromConversationId, toConversationId)
+    }
+
+    /** Ensures a conversation row exists with the real UUID, carrying peer info. */
+    suspend fun ensureConversationRow(id: String, peerId: String?, name: String?) {
+        val existing = conversationDao.getConversationByIdOnce(id)
+        if (existing == null) {
+            conversationDao.insertConversation(
+                ConversationEntity(id = id, name = name?.takeIf { it.isNotBlank() } ?: "Chat", peerId = peerId)
+            )
+        } else if (peerId != null && existing.peerId != peerId) {
+            conversationDao.updatePeerId(id, peerId)
+        }
+    }
+
     fun getMessages(conversationId: String): Flow<List<DomainMessage>> {
         return messageDao.getMessagesForConversation(conversationId).map { list ->
             list.map { it.toDomainMessage() }
@@ -251,6 +279,11 @@ class ChatRepositoryImpl(
      */
     suspend fun updateMessageMedia(messageId: String, mediaUrl: String) {
         messageDao.updateMessageMedia(messageId, mediaUrl)
+    }
+
+    /** Writes URL + bucket + path (re-sign groundwork). */
+    suspend fun updateMessageMediaFull(messageId: String, mediaUrl: String, bucket: String?, path: String?) {
+        messageDao.updateMessageMediaFull(messageId, mediaUrl, bucket, path)
     }
 
     /** Marks a message viewed (view-once sync from Realtime UPDATE events). */

@@ -48,7 +48,7 @@ enum class ChatFilter {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WhatsAppDashboardScreen(
-    onOpenChat: (contactId: String, contactName: String, avatarRes: Int?) -> Unit,
+    onOpenChat: (conversationId: String, peerId: String, contactName: String, avatarRes: Int?) -> Unit,
     onOpenSelectContact: () -> Unit = {},
     onOpenProfile: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
@@ -80,6 +80,7 @@ fun WhatsAppDashboardScreen(
             dbConversations.map { conv ->
                 ChatItem(
                     id = conv.id,
+                    peerId = conv.peerId,
                     name = conv.name,
                     avatarRes = conv.avatarRes,
                     initialColor = conv.initialColor,
@@ -259,13 +260,13 @@ fun WhatsAppDashboardScreen(
                                 ChatListItem(
                                     chat = chat,
                                     onClick = {
-                                        onOpenChat(chat.id, chat.name, chat.avatarRes)
+                                        onOpenChat(chat.id, chat.peerId ?: "", chat.name, chat.avatarRes)
                                     },
                                     onAvatarClick = {
                                         if (chat.hasStatusUpdate) {
                                             showStatusStoryDialog = chat.name
                                         } else {
-                                            onOpenChat(chat.id, chat.name, chat.avatarRes)
+                                            onOpenChat(chat.id, chat.peerId ?: "", chat.name, chat.avatarRes)
                                         }
                                     }
                                 )
@@ -371,7 +372,7 @@ fun WhatsAppDashboardScreen(
                             .fillMaxWidth()
                             .clickable {
                                 showNewChatDialog = false
-                                onOpenChat(contact.id, contact.name, contact.avatarRes)
+                                onOpenChat("", contact.id, contact.name, contact.avatarRes)
                             }
                             .padding(vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically

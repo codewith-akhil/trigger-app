@@ -25,6 +25,8 @@ data class MessageEntity(
     val text: String = "",
     val mediaUrl: String? = null,
     val mediaThumbnail: String? = null,
+    val mediaBucket: String? = null,
+    val mediaPath: String? = null,
     val fileName: String? = null,
     val fileSize: Long = 0L,
     val mediaDurationSec: Int = 0,
@@ -79,8 +81,16 @@ data class MessageEntity(
             senderName = senderName,
             type = try { MessageType.valueOf(type) } catch (e: Exception) { MessageType.TEXT },
             text = text,
-            mediaUrl = mediaUrl,
+            // Re-sign / normalize on the way OUT of Room: an expired signed URL
+            // is rebuilt from the persisted bucket+path (public form for the
+            // public chat_media bucket, fresh signature otherwise) so media
+            // renders forever instead of dying after 7 days.
+            mediaUrl = com.example.service.MediaUrlResolver.resolve(
+                storedUrl = mediaUrl, bucket = mediaBucket, path = mediaPath
+            ),
             mediaThumbnail = mediaThumbnail,
+            mediaBucket = mediaBucket,
+            mediaPath = mediaPath,
             fileName = fileName,
             fileSize = fileSize,
             mediaDurationSec = mediaDurationSec,
@@ -127,6 +137,8 @@ data class MessageEntity(
                 text = domain.text,
                 mediaUrl = domain.mediaUrl,
                 mediaThumbnail = domain.mediaThumbnail,
+                mediaBucket = domain.mediaBucket,
+                mediaPath = domain.mediaPath,
                 fileName = domain.fileName,
                 fileSize = domain.fileSize,
                 mediaDurationSec = domain.mediaDurationSec,

@@ -82,19 +82,53 @@ import java.io.File
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
-    contactId: String = "",
+    conversationId: String = "",
+    peerId: String = "",
     contactName: String = "",
     contactAvatarRes: Int? = null,
     onBack: () -> Unit
 ) {
+    // H4: the chat MUST run on the real conversation uuid. Entry points that
+    // only know the peer's user uuid resolve (or create) the conversation
+    // BEFORE the ViewModel is constructed, so every flow keys on it.
+    var resolvedConversationId by remember { mutableStateOf(conversationId.ifBlank { null }) }
+    var resolvedPeerId by remember { mutableStateOf<String?>(peerId.ifBlank { null }) }
+    LaunchedEffect(conversationId, peerId) {
+        if (conversationId.isBlank()) {
+            resolvedConversationId =
+                (com.example.di.AppServiceContainer.messageService as? com.example.service.MessageServiceImpl)
+                    ?.resolveOrCreateConversation(peerId)
+                    // Resolution failed (offline / no session): fall back to the
+                    // legacy peer key — send-message self-heals server-side.
+                    ?: peerId
+            if (resolvedPeerId == null) resolvedPeerId = peerId
+        } else if (resolvedPeerId == null) {
+            // Opened by conversation uuid (dashboard) — recover the peer for
+            // presence/typing/calls from the local conversation row (v6 column).
+            val conv = com.example.di.AppServiceContainer.chatRepository
+                .getConversationByIdOnce(conversationId)
+            resolvedPeerId = conv?.peerId ?: ""
+        }
+    }
+
+    val readyConvId = resolvedConversationId
+    val readyPeerId = resolvedPeerId
+    if (readyConvId == null || readyPeerId == null) {
+        // Conversation/peer resolution in flight (first chat with a new contact).
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
     // Scoped to the navigation back-stack entry: when the user leaves the
     // chat, onCleared() releases the MediaRecorder (mic), stops playback and
     // cancels timers. The previous remember{} kept all of that alive forever.
     val viewModel: ChatViewModel = viewModel(
-        key = "chat_$contactId",
+        key = "chat_$readyConvId",
         factory = viewModelFactory {
             initializer {
-                ChatViewModel(contactId, contactName, contactAvatarRes)
+                ChatViewModel(readyConvId, readyPeerId, contactName, contactAvatarRes)
             }
         }
     )
@@ -105,6 +139,9 @@ fun ChatScreen(
     val activeCall by viewModel.activeCall.collectAsState()
     val activeUploads by viewModel.activeUploads.collectAsState()
     val conversationInfo by viewModel.conversationInfo.collectAsState()
+    // C7: live-location status (mine + the peer's realtime coordinates)
+    val myLiveShare by viewModel.myLiveLocation.collectAsState()
+    val peerLiveShare by viewModel.peerLiveLocation.collectAsState()
 
     val mediaMessages by viewModel.mediaMessages.collectAsState()
     val documentMessages by viewModel.documentMessages.collectAsState()
@@ -622,6 +659,27 @@ fun ChatScreen(
                         )
                     }
 
+                    // C7: live-location status bar (sharer side + peer side)
+                    myLiveShare?.let { share ->
+                        LiveLocationStatusBar(
+                            title = "Sharing live location",
+                            subtitle = "Updating in realtime • ends " + formatLiveExpiry(share.expiresAtMillis),
+                            actionLabel = "Stop",
+                            onAction = { viewModel.stopLiveLocationShare() }
+                        )
+                    }
+                    peerLiveShare?.let { share ->
+                        val ageSec = ((System.currentTimeMillis() - share.updatedAtMillis) / 1000L).coerceAtLeast(0)
+                        LiveLocationStatusBar(
+                            title = "Live location shared with you",
+                            subtitle = "%.5f, %.5f • updated %ds ago • ends %s".format(
+                                share.latitude, share.longitude, ageSec, formatLiveExpiry(share.expiresAtMillis)
+                            ),
+                            actionLabel = null,
+                            onAction = {}
+                        )
+                    }
+
                     // Bottom Input or Voice Recording Bar
                     if (isRecordingVoice) {
                         ChatVoiceRecordingBar(
@@ -1008,7 +1066,7 @@ fun ChatScreen(
             },
             onReportUser = { reason ->
                 // Report the contact (peer) — we use the contactId as the reported user id
-                viewModel.reportUser(contactId, reason) {
+                viewModel.reportUser(peerId, reason) {
                     showContactInfoSheet = false
                 }
             },
@@ -1237,7 +1295,7 @@ fun ChatScreen(
 
     // Forward dialog (Select contact to forward to) — uses Room conversations
     if (showForwardDialog) {
-        val otherConversations = allConversations.filter { it.id != contactId }
+        val otherConversations = allConversations.filter { it.id != conversationId }
         var selectedForwardIds by remember { mutableStateOf(setOf<String>()) }
         AlertDialog(
             onDismissRequest = {
@@ -2246,3 +2304,49 @@ fun ChatEditBar(
     }
 }
 
+
+/** C7: compact live-location status card shown above the composer. */
+@Composable
+private fun LiveLocationStatusBar(
+    title: String,
+    subtitle: String,
+    actionLabel: String?,
+    onAction: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0xFFDCF8C6),
+        shadowElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.LocationOn,
+                contentDescription = null,
+                tint = Color(0xFF1FA855),
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF183B2A))
+                Text(subtitle, fontSize = 11.sp, color = Color(0xFF51705F))
+            }
+            if (actionLabel != null) {
+                TextButton(onClick = onAction) {
+                    Text(actionLabel, color = Color(0xFFB3261E), fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+/** "2h 14m" / "14m" until the live share expires. */
+private fun formatLiveExpiry(expiresAtMillis: Long): String {
+    val mins = ((expiresAtMillis - System.currentTimeMillis()) / 60000L).coerceAtLeast(0)
+    return if (mins >= 60) "${mins / 60}h ${mins % 60}m" else "${mins}m"
+}

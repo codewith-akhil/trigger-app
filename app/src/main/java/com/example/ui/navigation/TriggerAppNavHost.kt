@@ -75,7 +75,11 @@ fun TriggerAppNavHost(
     var showNotificationDialogOnLandingToAuth by rememberSaveable {
         mutableStateOf(false)
     }
-    var activeChatContactId by rememberSaveable {
+    var activeChatConversationId by rememberSaveable {
+        mutableStateOf("")
+    }
+    // The OTHER user's auth uuid — presence/typing/calls key on it (H5).
+    var activeChatPeerId by rememberSaveable {
         mutableStateOf("")
     }
     var activeChatContactName by rememberSaveable {
@@ -272,8 +276,9 @@ fun TriggerAppNavHost(
                 )
             }
             WhatsAppDashboardScreen(
-                onOpenChat = { contactId, contactName, avatarRes ->
-                    activeChatContactId = contactId
+                onOpenChat = { conversationId, peerId, contactName, avatarRes ->
+                    activeChatConversationId = conversationId
+                    activeChatPeerId = peerId
                     activeChatContactName = contactName
                     activeChatAvatarRes = avatarRes
                     navController.navigate(TriggerDestinations.CHAT)
@@ -433,8 +438,11 @@ fun TriggerAppNavHost(
                 onBack = {
                     navController.popBackStack()
                 },
-                onSelectContact = { contactId, contactName, avatarRes ->
-                    activeChatContactId = contactId
+                onSelectContact = { peerId, contactName, avatarRes ->
+                    // H4: conversationId is resolved inside ChatScreen (local
+                    // cache → server get-or-create) from the peer uuid.
+                    activeChatConversationId = ""
+                    activeChatPeerId = peerId
                     activeChatContactName = contactName
                     activeChatAvatarRes = avatarRes
                     navController.navigate(TriggerDestinations.CHAT)
@@ -445,8 +453,12 @@ fun TriggerAppNavHost(
         composable(TriggerDestinations.NEW_MESSAGE) {
             NewMessageScreen(
                 onBack = { navController.popBackStack() },
-                onChatOpened = { convId, contactId, contactName ->
-                    activeChatContactId = contactId
+                onChatOpened = { convId, peerId, contactName ->
+                    // H4 FIX: previously convId was DISCARDED here and the
+                    // peer uuid stored — message-request chats then ran on the
+                    // wrong key. Real conversation uuid wins when present.
+                    activeChatConversationId = convId
+                    activeChatPeerId = peerId
                     activeChatContactName = contactName
                     activeChatAvatarRes = null
                     navController.navigate(TriggerDestinations.CHAT)
@@ -456,7 +468,8 @@ fun TriggerAppNavHost(
 
         composable(TriggerDestinations.CHAT) {
             ChatScreen(
-                contactId = activeChatContactId,
+                conversationId = activeChatConversationId,
+                peerId = activeChatPeerId,
                 contactName = activeChatContactName,
                 contactAvatarRes = activeChatAvatarRes,
                 onBack = {

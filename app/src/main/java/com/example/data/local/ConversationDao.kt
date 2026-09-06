@@ -15,6 +15,14 @@ interface ConversationDao {
     @Query("SELECT * FROM conversations WHERE id = :id LIMIT 1")
     suspend fun getConversationByIdOnce(id: String): ConversationEntity?
 
+    /** Finds the conversation whose PEER is the given user UUID — used to map
+     *  legacy peer-keyed message rows onto the real conversation. */
+    @Query("SELECT * FROM conversations WHERE peerId = :peerId LIMIT 1")
+    suspend fun getConversationByPeer(peerId: String): ConversationEntity?
+
+    @Query("UPDATE conversations SET peerId = :peerId WHERE id = :id")
+    suspend fun updatePeerId(id: String, peerId: String?)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertConversation(conversation: ConversationEntity)
 

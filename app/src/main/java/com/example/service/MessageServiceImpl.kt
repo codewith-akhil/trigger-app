@@ -51,6 +51,11 @@ class MessageServiceImpl(
     // Active realtime subscriptions per conversation
     private val activeSubscriptions = mutableSetOf<String>()
 
+    // Live-location (C7): ChatViewModel plugs a listener in init and clears it
+    // in onCleared() — events for live_location_shares carry fresh peer coords.
+    @Volatile
+    var onLiveLocationEvent: ((RealtimeEvent) -> Unit)? = null
+
     private val prefs: SharedPreferences? by lazy {
         try {
             AppServiceContainer.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -67,7 +72,58 @@ class MessageServiceImpl(
      */
     fun reset() {
         activeSubscriptions.clear()
+        onLiveLocationEvent = null
     }
+
+    /** H4: given a peer USER uuid, resolve (or create) the real conversation. */
+    override suspend fun resolveOrCreateConversation(peerId: String): String? {
+        if (!MediaUrlResolver.isUuid(peerId)) return null
+        // 1. Local cache (conversations.peerId column, schema v6)
+        repository.getConversationByPeer(peerId)?.let { return it.id }
+
+        val supabaseClient = AppServiceContainer.supabaseClient
+        val me = supabaseClient.currentSession?.user?.id ?: return null
+
+        // 2. Server lookup in BOTH directions (same query send-message uses).
+        val or = "or=(and(owner_id.eq.$me,peer_id.eq.$peerId),and(owner_id.eq.$peerId,peer_id.eq.$me))"
+        when (val res = supabaseClient.getTable("conversations", "$or&select=id&limit=1")) {
+            is SupabaseResult.Success -> {
+                if (res.data.length() > 0) {
+                    val id = res.data.getJSONObject(0).optString("id", "")
+                    if (MediaUrlResolver.isUuid(id)) {
+                        repository.ensureConversationRow(id, peerId, null)
+                        // Re-key any legacy rows cached under the peer uuid.
+                        repository.rekeyConversationMessages(peerId, id)
+                        return id
+                    }
+                }
+            }
+            is SupabaseResult.Error -> Log.w(TAG, "conversation lookup failed: ${res.message}")
+        }
+
+        // 3. Create (self-chats allowed: owner = peer = me).
+        val insert = supabaseClient.insertRecord(
+            "conversations",
+            org.json.JSONObject()
+                .put("owner_id", me)
+                .put("peer_id", peerId)
+                .put("request_status", "accepted")
+                .put("is_group", false)
+        )
+        return when (insert) {
+            is SupabaseResult.Success -> {
+                val id = insert.data.optString("id", "")
+                if (MediaUrlResolver.isUuid(id)) {
+                    repository.ensureConversationRow(id, peerId, null)
+                    id
+                } else null
+            }
+            is SupabaseResult.Error -> {
+                Log.w(TAG, "conversation create failed: ${insert.message}")
+                null
+            }
+        }
+ }
 
     override fun observeMessages(conversationId: String): Flow<List<DomainMessage>> {
         // Subscribe to Realtime for this conversation if not already
@@ -85,10 +141,17 @@ class MessageServiceImpl(
         // Filter messages by conversation_id so we don't get every message
         // in the system delivered over the wire.
         supabaseClient.connectRealtime(
-            tables = listOf("public.messages", "public.conversations", "public.user_presences"),
+            tables = listOf(
+                "public.messages",
+                "public.conversations",
+                "public.user_presences",
+                "public.live_location_shares"
+            ),
             filter = "conversation_id=eq.$conversationId"
         )
 
+        // Live-location (C7): live_location_shares events are forwarded to the
+        // ChatViewModel listener registered on [onLiveLocationEvent].
         // Collect realtime events and update the local Room DB
         scope.launch {
             supabaseClient.realtimeEvents.collect { event ->
@@ -96,6 +159,7 @@ class MessageServiceImpl(
                     when (event.table) {
                         "messages" -> handleRealtimeMessageEvent(event, conversationId)
                         "user_presences" -> handleRealtimePresenceEvent(event)
+                        "live_location_shares" -> onLiveLocationEvent?.invoke(event)
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to handle realtime event: ${e.message}")
@@ -290,12 +354,42 @@ class MessageServiceImpl(
                     val seq = msgObj.optLong("seq", 0L)
                     if (seq > 0) repository.updateMessageSeq(message.id, seq)
                 }
+                // H4 self-heal: the server ALWAYS returns the real conversation
+                // uuid. If we sent under a legacy peer-uuid key, adopt the real
+                // one locally (re-key Room rows + ensure the conversation row).
+                syncConversationIdentityFromResponse(message.conversationId, peerId, peerName, msgObj)
             }
             is SupabaseResult.Error -> {
                 Log.e(TAG, "send-message failed: ${result.message}")
                 // Mark as FAILED so the user can retry (offline queue)
                 repository.updateMessageStatus(message.id, MessageStatus.FAILED)
             }
+        }
+    }
+
+    /**
+     * H4 self-heal: compares the server's conversation_id with the id we used
+     * locally and re-keys the local cache when they diverge (legacy rows keyed
+     * by the peer user uuid).
+     */
+    private suspend fun syncConversationIdentityFromResponse(
+        localConversationId: String,
+        peerId: String?,
+        peerName: String?,
+        msgObj: JSONObject?
+    ) {
+        try {
+            val serverConvId = msgObj?.optString("conversation_id", "") ?: ""
+            if (MediaUrlResolver.isUuid(serverConvId) && serverConvId != localConversationId) {
+                repository.rekeyConversationMessages(localConversationId, serverConvId)
+            }
+            if (MediaUrlResolver.isUuid(serverConvId)) {
+                val name = peerName?.takeIf { it.isNotBlank() }
+                    ?: repository.getConversationByIdOnce(serverConvId)?.name
+                repository.ensureConversationRow(serverConvId, peerId, name)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "conversation identity sync failed: ${e.message}")
         }
     }
 
@@ -321,6 +415,7 @@ class MessageServiceImpl(
             if (!peerId.isNullOrEmpty()) put("peer_id", peerId)
             if (!peerName.isNullOrEmpty()) put("peer_name", peerName)
             if (message.mediaUrl != null) put("media_url", message.mediaUrl)
+            if (message.mediaBucket != null) put("media_bucket", message.mediaBucket)
             if (message.mediaThumbnail != null) put("media_thumbnail", message.mediaThumbnail)
             if (message.fileName != null) put("file_name", message.fileName)
             if (message.fileSize > 0) put("file_size", message.fileSize)
@@ -352,12 +447,17 @@ class MessageServiceImpl(
             return
         }
 
-        // 1. Write the real remote URL back onto the local row so the sender's
-        //    own bubble and any history reload use the accessible URL.
-        repository.updateMessageMedia(task.messageId, finalUrl)
+        // 1. Write the real remote URL + storage coordinates back onto the
+        //    local row so the sender's own bubble (and any FUTURE re-sign)
+        //    can always rebuild the URL.
+        repository.updateMessageMediaFull(task.messageId, finalUrl, task.bucket, task.mediaPath)
 
         // 2. NOW create the server row — with the remote URL, never content://
-        val updated = msg.copy(mediaUrl = finalUrl)
+        val updated = msg.copy(
+            mediaUrl = finalUrl,
+            mediaBucket = task.bucket,
+            mediaPath = task.mediaPath
+        )
         val payload = buildMessagePayload(updated, task.peerId, task.peerName)
         val result = AppServiceContainer.supabaseClient.invokeFunction("send-message", payload)
         when (result) {
@@ -367,6 +467,7 @@ class MessageServiceImpl(
                 val msgObj = if (data.has("message")) data.getJSONObject("message") else data
                 val seq = msgObj?.optLong("seq", 0L) ?: 0L
                 if (seq > 0) repository.updateMessageSeq(task.messageId, seq)
+                syncConversationIdentityFromResponse(msg.conversationId, task.peerId, task.peerName, msgObj)
             }
             is SupabaseResult.Error -> {
                 Log.e(TAG, "post-upload send-message failed: ${result.message}")
@@ -459,9 +560,30 @@ class MessageServiceImpl(
             return
         }
         repository.updateMessageStatus(messageId, MessageStatus.SENDING)
-        // Pass conversationId as peerId — the edge function will find-or-create
-        // the conversation by peer_id if conversation_id doesn't exist.
-        sendMessage(msg, peerId = msg.conversationId, peerName = null)
+        // H4: route by the REAL conversation uuid + the conversation's peer —
+        // previously the conversationId was blindly passed as peer_id and only
+        // worked because the server silently self-healed the mismatch.
+        val (realConvId, realPeerId) = resolveConversationForRetry(msg.conversationId)
+        sendMessage(msg.copy(conversationId = realConvId), peerId = realPeerId, peerName = null)
+    }
+
+    /**
+     * Maps whatever id a legacy row carries (real conversation uuid OR the
+     * peer user uuid) to (realConversationId, peerIdOrNull) and re-keys the
+     * local rows when the legacy key was the peer uuid.
+     */
+    private suspend fun resolveConversationForRetry(idOrPeer: String): Pair<String, String?> {
+        // Already the real conversation id?
+        val conv = repository.getConversationByIdOnce(idOrPeer)
+        if (conv != null) return Pair(idOrPeer, conv.peerId)
+        // Legacy: row keyed by the peer user uuid — find the conversation row.
+        val byPeer = repository.getConversationByPeer(idOrPeer)
+        if (byPeer != null) {
+            repository.rekeyConversationMessages(idOrPeer, byPeer.id)
+            return Pair(byPeer.id, idOrPeer)
+        }
+        // Unknown — let the server find-or-create by treating it as a peer.
+        return Pair(idOrPeer, idOrPeer)
     }
 
     override suspend fun retryAllFailedMessages() {
@@ -474,7 +596,8 @@ class MessageServiceImpl(
                 if (isMedia && (msg.mediaUrl.isNullOrBlank() || !msg.mediaUrl.startsWith("http"))) {
                     return@forEach  // needs re-upload, not re-send
                 }
-                sendMessage(msg, peerId = msg.conversationId, peerName = null)
+                val (realConvId, realPeerId) = resolveConversationForRetry(msg.conversationId)
+                sendMessage(msg.copy(conversationId = realConvId), peerId = realPeerId, peerName = null)
             } catch (e: Exception) {
                 Log.w(TAG, "Retry failed for ${msg.id}: ${e.message}")
             }
