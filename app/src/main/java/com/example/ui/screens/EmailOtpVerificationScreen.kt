@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,6 +41,14 @@ fun EmailOtpVerificationScreen(
     email: String,
     expectedOtp: String,
     purpose: OtpPurpose,
+    /**
+     * Plaintext password captured during signup. After the email is confirmed
+     * via verify-email-otp, a password grant is performed so this user
+     * actually owns a Supabase session. Memory-only (not rememberSaveable)
+     * so it is never persisted to disk; if the process dies mid-OTP the user
+     * simply signs in with the credentials they just created.
+     */
+    signupPassword: String? = null,
     onWrongEmailClick: () -> Unit,
     onVerificationSuccess: () -> Unit,
     onOtpVerified: (String) -> Unit = {},
@@ -88,12 +97,29 @@ fun EmailOtpVerificationScreen(
                     successMessage = "Email verified successfully!"
                     // Capture the verified OTP code so the reset-password screen can use it
                     onOtpVerified(otpCode)
+
+                    // SIGN_UP: the verify-email-otp edge function only confirms the
+                    // email — it never issues a Supabase auth session (and /auth/v1/signup
+                    // returned none because email confirmation is required). The email IS
+                    // confirmed by now, so do a password grant so this user actually owns
+                    // the session the dashboard will run under. Without this, the new
+                    // account lands on the dashboard with either NO session (after a clean
+                    // logout) or the PREVIOUS account's leaked session.
+                    if (purpose == OtpPurpose.SIGN_UP && !signupPassword.isNullOrBlank()) {
+                        when (val grant = AppServiceContainer.supabaseClient
+                            .signInWithPassword(email, signupPassword)) {
+                            is SupabaseResult.Success ->
+                                Log.i("EmailOtpScreen", "Post-OTP password grant ok for ${grant.data.user.id}")
+                            is SupabaseResult.Error ->
+                                Log.w("EmailOtpScreen", "Post-OTP password grant failed: ${grant.message}")
+                        }
+                    }
+
                     // Hydrate the profile from the server so name + email
                     // show on the Profile screen immediately after signup.
-                    // This runs in parallel with the 800ms success delay.
-                    coroutineScope.launch {
-                        ProfileService.refreshFromServer(AppServiceContainer.supabaseClient)
-                    }
+                    // Runs AFTER the grant so it uses the fresh JWT.
+                    ProfileService.refreshFromServer(AppServiceContainer.supabaseClient)
+
                     delay(800)
                     onVerificationSuccess()
                 } else {

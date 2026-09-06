@@ -59,6 +59,16 @@ class MessageServiceImpl(
         }
     }
 
+    /**
+     * Clears in-memory per-account state (active Realtime subscriptions).
+     * Called by AccountStateManager on logout / account switch so the next
+     * account gets fresh subscriptions instead of silently reusing the old
+     * ones.
+     */
+    fun reset() {
+        activeSubscriptions.clear()
+    }
+
     override fun observeMessages(conversationId: String): Flow<List<DomainMessage>> {
         // Subscribe to Realtime for this conversation if not already
         ensureRealtimeSubscription(conversationId)

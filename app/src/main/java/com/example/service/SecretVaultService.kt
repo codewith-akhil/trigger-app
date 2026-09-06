@@ -179,6 +179,25 @@ class SecretVaultService(private val context: Context) {
     }
 
     /**
+     * Wipes all local vault state: the PIN hash + salt prefs, cached items and
+     * the media files themselves. Called by AccountStateManager on logout /
+     * account switch so the previous account's vault can never be opened by
+     * the next one. The canonical PIN lives server-side in `vault_pins`, so a
+     * returning user can simply set their PIN again.
+     */
+    fun resetLocalState() {
+        prefs.edit().clear().apply()
+        _isPinSet.value = false
+        _isUnlocked.value = false
+        _vaultItems.value = emptyList()
+        try {
+            vaultDir.deleteRecursively()
+        } catch (e: Exception) {
+            Log.e(TAG, "Vault dir wipe failed: ${e.message}")
+        }
+    }
+
+    /**
      * OTP-based PIN reset flow backed by the `reset-vault-pin` edge function.
      *
      * Step 1: call with `otp = null` to send an OTP to [email].

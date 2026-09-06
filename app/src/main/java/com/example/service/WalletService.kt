@@ -61,6 +61,20 @@ class WalletService(private val context: Context? = null) {
     private val client get() = AppServiceContainer.supabaseClient
 
     /**
+     * Zeroes all in-memory wallet state. Called by AccountStateManager on
+     * logout / account switch so the previous account's balance, bank
+     * details and transactions are never rendered for the next account.
+     */
+    fun reset() {
+        _availableBalance.value = 0.0
+        _pendingBalance.value = 0.0
+        _totalEarned.value = 0.0
+        _bankDetails.value = BankDetails()
+        _payoutDetails.value = PayoutDetails()
+        _transactions.value = emptyList()
+    }
+
+    /**
      * Persist bank details via the `update-bank-details` edge function.
      * Server stores the last4 + a hash of the full account number; only the
      * masked value is mirrored into local state for UI hydration.

@@ -40,7 +40,7 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SignUpScreen(
-    onNavigateToOtp: (name: String, email: String, generatedOtp: String) -> Unit,
+    onNavigateToOtp: (name: String, email: String, generatedOtp: String, signupPassword: String) -> Unit,
     onNavigateToLogin: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
@@ -128,7 +128,7 @@ fun SignUpScreen(
                         is SupabaseResult.Success -> {
                             isSubmitting = false
                             UserRepository.setUser(name = trimmedName, email = trimmedEmail, id = result.data.id)
-                            onNavigateToOtp(trimmedName, trimmedEmail, "")
+                            onNavigateToOtp(trimmedName, trimmedEmail, "", password)
                         }
                         is SupabaseResult.Error -> {
                             isSubmitting = false
@@ -141,7 +141,7 @@ fun SignUpScreen(
                                 "Account created, but we couldn't send the verification email. Tap resend on the next screen."
                             }
                             UserRepository.setUser(name = trimmedName, email = trimmedEmail, id = result.data.id)
-                            onNavigateToOtp(trimmedName, trimmedEmail, "")
+                            onNavigateToOtp(trimmedName, trimmedEmail, "", password)
                         }
                     }
                 }

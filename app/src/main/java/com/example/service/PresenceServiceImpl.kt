@@ -36,6 +36,17 @@ class PresenceServiceImpl(
 
     private var heartbeatJob: kotlinx.coroutines.Job? = null
 
+    /**
+     * Clears all per-account presence state. Called by AccountStateManager on
+     * logout / account switch so cached contact presence from the previous
+     * account is never shown to the next one.
+     */
+    fun reset() {
+        stopHeartbeat()
+        _connectionState.value = PresenceStatus.OFFLINE
+        contactPresenceMap.clear()
+    }
+
     override fun observeContactPresence(contactId: String): Flow<Pair<PresenceStatus, String>> {
         val flow = contactPresenceMap.getOrPut(contactId) {
             MutableStateFlow(PresenceStatus.OFFLINE to "offline")

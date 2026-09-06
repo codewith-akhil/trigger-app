@@ -393,6 +393,14 @@ class SupabaseClient(
             }
 
             try {
+                // Starting a fresh signup invalidates whatever session the app
+                // was browsing with. Without this, the PREVIOUS account's
+                // session stays alive during the new account's signup (the
+                // email-confirmation path returns no session here), so the new
+                // user's dashboard would render — and write! — with the old
+                // account's JWT.
+                if (currentSession != null) applySession(null)
+
                 val bodyJson = JSONObject().apply {
                     put("email", email)
                     put("password", password)

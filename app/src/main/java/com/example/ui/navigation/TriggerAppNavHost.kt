@@ -11,7 +11,6 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import kotlinx.coroutines.launch
 import com.example.model.LanguageRepository
 import com.example.di.AppServiceContainer
 import com.example.ui.components.NotificationPermissionDialog
@@ -51,8 +50,6 @@ fun TriggerAppNavHost(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController()
 ) {
-    val navScope = rememberCoroutineScope()
-
     var selectedLanguage by remember {
         mutableStateOf(LanguageRepository.languages.first())
     }
@@ -60,6 +57,13 @@ fun TriggerAppNavHost(
         mutableStateOf("")
     }
     var currentOtp by rememberSaveable {
+        mutableStateOf("")
+    }
+    // Signup password captured for the post-OTP password grant. Deliberately
+    // remember (memory-only) instead of rememberSaveable — a plaintext password
+    // must never be persisted to disk via SavedStateHandle. If the process dies
+    // mid-OTP, the user just signs in with the credentials they just created.
+    var pendingSignupPassword by remember {
         mutableStateOf("")
     }
     var currentVerifiedOtpCode by rememberSaveable {
@@ -172,9 +176,10 @@ fun TriggerAppNavHost(
 
         composable(TriggerDestinations.SIGN_UP) {
             SignUpScreen(
-                onNavigateToOtp = { _, email, generatedOtp ->
+                onNavigateToOtp = { _, email, generatedOtp, signupPassword ->
                     currentEmail = email
                     currentOtp = generatedOtp
+                    pendingSignupPassword = signupPassword
                     otpPurpose = OtpPurpose.SIGN_UP
                     navController.navigate(TriggerDestinations.EMAIL_OTP)
                 },
@@ -208,11 +213,13 @@ fun TriggerAppNavHost(
                 email = currentEmail,
                 expectedOtp = currentOtp,
                 purpose = otpPurpose,
+                signupPassword = if (otpPurpose == OtpPurpose.SIGN_UP) pendingSignupPassword else null,
                 onWrongEmailClick = {
                     navController.popBackStack()
                 },
                 onVerificationSuccess = {
                     if (otpPurpose == OtpPurpose.SIGN_UP) {
+                        pendingSignupPassword = ""  // clear credential from memory
                         navController.navigate(TriggerDestinations.DASHBOARD) {
                             popUpTo(TriggerDestinations.LANDING) { inclusive = true }
                         }
@@ -242,6 +249,16 @@ fun TriggerAppNavHost(
         }
 
         composable(TriggerDestinations.DASHBOARD) {
+            // Safety net: if the authenticated user differs from the last user
+            // this device saw (signup without clean logout, restored stale
+            // session, etc.), wipe all local per-user state (Room chats, chat
+            // prefs, vault prefs + files, wallet/presence caches) BEFORE the
+            // dashboard UI reads it.
+            LaunchedEffect(Unit) {
+                com.example.service.AccountStateManager.onUserSessionChanged(
+                    com.example.di.AppServiceContainer.supabaseClient.currentSession?.user?.id
+                )
+            }
             WhatsAppDashboardScreen(
                 onOpenChat = { contactId, contactName, avatarRes ->
                     activeChatContactId = contactId
@@ -278,15 +295,15 @@ fun TriggerAppNavHost(
                     navController.popBackStack()
                 },
                 onLogout = {
-                    navScope.launch {
-                        // Disconnect Realtime WebSocket + stop presence heartbeat
-                        (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppBackground()
-                        com.example.di.AppServiceContainer.supabaseClient.disconnectRealtime()
-                        com.example.di.AppServiceContainer.supabaseClient.signOut()
-                        com.example.model.UserRepository.clear()
-                    }
-                    navController.navigate(TriggerDestinations.LANDING) {
-                        popUpTo(0) { inclusive = true }
+                    // Full cleanup on an app-level, non-cancellable scope:
+                    // presence offline -> realtime disconnect -> server signOut
+                    // -> Room DB + chat prefs + vault prefs/files + wallet/
+                    //    presence caches + UserRepository wiped
+                    // Navigation happens ONLY after cleanup completes.
+                    com.example.service.AccountStateManager.performLogout {
+                        navController.navigate(TriggerDestinations.LANDING) {
+                            popUpTo(0) { inclusive = true }
+                        }
                     }
                 },
                 onNavigateToDeleteAccount = {
@@ -299,14 +316,10 @@ fun TriggerAppNavHost(
             DeleteAccountScreen(
                 onBack = { navController.popBackStack() },
                 onDeleted = {
-                    navScope.launch {
-                        (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppBackground()
-                        com.example.di.AppServiceContainer.supabaseClient.disconnectRealtime()
-                        com.example.di.AppServiceContainer.supabaseClient.signOut()
-                        com.example.model.UserRepository.clear()
-                    }
-                    navController.navigate(TriggerDestinations.LANDING) {
-                        popUpTo(0) { inclusive = true }
+                    com.example.service.AccountStateManager.performLogout {
+                        navController.navigate(TriggerDestinations.LANDING) {
+                            popUpTo(0) { inclusive = true }
+                        }
                     }
                 }
             )
