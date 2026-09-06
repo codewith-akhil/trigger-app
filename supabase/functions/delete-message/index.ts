@@ -26,7 +26,7 @@ async function handler(req: Request): Promise<Response> {
 
   // Get the message to check ownership
   const { data: msg, error: fetchError } = await supabase
-    .from("messages").select("sender_id, is_deleted_for_everyone").eq("id", messageId).maybeSingle();
+    .from("messages").select("sender_id, is_deleted_for_everyone, media_url, media_thumbnail, file_name").eq("id", messageId).maybeSingle();
 
   if (fetchError || !msg) return json({ error: "Message not found" }, 404);
 
@@ -35,9 +35,17 @@ async function handler(req: Request): Promise<Response> {
     if (msg.sender_id !== userId) {
       return json({ error: "Only the sender can delete for everyone" }, 403);
     }
+    // Strip media references too — previously the tombstone kept media_url,
+    // so "deleted" photos/videos/files stayed fetchable via their URL.
     const { error: updateError } = await supabase
       .from("messages")
-      .update({ is_deleted_for_everyone: true, text: "This message was deleted" })
+      .update({
+        is_deleted_for_everyone: true,
+        text: "This message was deleted",
+        media_url: null,
+        media_thumbnail: null,
+        file_name: null,
+      })
       .eq("id", messageId);
     if (updateError) return json({ error: "Failed to delete" }, 500);
     return json({ deleted: true });

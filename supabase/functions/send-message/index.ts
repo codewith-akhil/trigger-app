@@ -127,12 +127,16 @@ async function handler(req: Request): Promise<Response> {
 
   // If not found by conversation_id, try find-or-create by peer_id
   if (!conv && body.peer_id) {
-    // Look for an existing conversation between this user and the peer
+    // Look for an existing conversation between this user and the peer in
+    // EITHER direction. The previous query required peer_id = the CALLER
+    // (`owner_id.eq.me OR peer_id.eq.me AND peer_id.eq.peer`) which can never
+    // match a conversation the PEER initiated — creating duplicate rows for
+    // the same pair.
     const { data: existing } = await supabase
       .from("conversations")
       .select("id, owner_id, peer_id, request_status")
-      .or(`owner_id.eq.${userId},peer_id.eq.${userId}`)
-      .eq("peer_id", body.peer_id)
+      .or(`and(owner_id.eq.${userId},peer_id.eq.${body.peer_id}),and(owner_id.eq.${body.peer_id},peer_id.eq.${userId})`)
+      .order("created_at", { ascending: true })
       .limit(1);
     if (existing && existing.length > 0) {
       conv = existing[0];
@@ -259,7 +263,16 @@ async function handler(req: Request): Promise<Response> {
 
   // Send push notification to the receiver via send-chat-notification edge function
   try {
-    const senderName = msg.sender_name || "New message";
+    // messages has NO sender_name column (previous code read a non-existent
+    // column -> push title was always "New message"). Resolve the display
+    // name from the sender's profile row instead.
+    let senderName = "New message";
+    const { data: senderProfile } = await supabase
+      .from("profiles")
+      .select("full_name")
+      .eq("id", userId)
+      .maybeSingle();
+    if (senderProfile?.full_name) senderName = senderProfile.full_name;
     const preview = lastMsgPreview;
     const notifPayload = {
       conversationId: conversationId,

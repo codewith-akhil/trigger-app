@@ -163,6 +163,10 @@ class MessageServiceImpl(
                 if (record.optBoolean("is_deleted_for_everyone", false)) {
                     repository.deleteForEveryone(msgId)
                 }
+                // View-once opened by the RECEIVER — propagate to sender's UI
+                if (!record.isNull("is_viewed") && record.optBoolean("is_viewed", false)) {
+                    repository.markMessageViewed(msgId)
+                }
             }
             "DELETE" -> {
                 val msgId = record.optString("id", "")
@@ -176,8 +180,26 @@ class MessageServiceImpl(
         val isOnline = record.optBoolean("is_online", false)
         val lastSeen = record.optString("last_seen_at", "")
         val userId = record.optString("user_id", "")
-        // Update presence via the PresenceService
         if (presenceService is PresenceServiceImpl) {
+            // Typing indicator — short-lived typing_until expiry set by the
+            // update-presence edge function. previously DEAD: the server never
+            // persisted typing state and the client ignored it.
+            val typingUntil = record.optString("typing_until", "")
+            if (typingUntil.isNotBlank() && typingUntil != "null") {
+                val untilMs = parseIsoToMillis(typingUntil)
+                if (untilMs > System.currentTimeMillis()) {
+                    presenceService.setContactPresence(userId, PresenceStatus.TYPING, "typing…")
+                    return
+                }
+            }
+            val recordingUntil = record.optString("recording_until", "")
+            if (recordingUntil.isNotBlank() && recordingUntil != "null") {
+                val untilMs = parseIsoToMillis(recordingUntil)
+                if (untilMs > System.currentTimeMillis()) {
+                    presenceService.setContactPresence(userId, PresenceStatus.RECORDING_AUDIO, "recording audio…")
+                    return
+                }
+            }
             val status = if (isOnline) PresenceStatus.ONLINE else PresenceStatus.OFFLINE
             val text = if (isOnline) "online" else "last seen $lastSeen"
             presenceService.setContactPresence(userId, status, text)
@@ -254,32 +276,7 @@ class MessageServiceImpl(
 
         // 2. Send to Supabase via send-message edge function with idempotency_key
         val supabaseClient = AppServiceContainer.supabaseClient
-        val idempotencyKey = message.idempotencyKey ?: java.util.UUID.randomUUID().toString()
-        val payload = JSONObject().apply {
-            put("conversation_id", message.conversationId)
-            put("type", message.type.name)
-            put("text", message.text)
-            put("timestamp_millis", message.timestampMillis)
-            put("idempotency_key", idempotencyKey)
-            // peer_id + peer_name: the edge function auto-creates a conversation
-            // if conversation_id doesn't exist in Supabase. This is critical for
-            // first-time chats where the app only has the peer's user UUID.
-            if (!peerId.isNullOrEmpty()) put("peer_id", peerId)
-            if (!peerName.isNullOrEmpty()) put("peer_name", peerName)
-            if (message.mediaUrl != null) put("media_url", message.mediaUrl)
-            if (message.fileName != null) put("file_name", message.fileName)
-            if (message.fileSize > 0) put("file_size", message.fileSize)
-            if (message.mediaDurationSec > 0) put("media_duration_sec", message.mediaDurationSec)
-            if (message.isViewOnce) put("is_view_once", true)
-            if (message.replyToId != null) put("reply_to_id", message.replyToId)
-            if (message.locationLatitude != null) put("location_lat", message.locationLatitude)
-            if (message.locationLongitude != null) put("location_lng", message.locationLongitude)
-            if (message.locationAddress != null) put("location_address", message.locationAddress)
-            if (message.locationLiveMinutes != null) put("location_live_minutes", message.locationLiveMinutes)
-            if (message.locationComment != null) put("location_comment", message.locationComment)
-            if (message.contactName != null) put("contact_name", message.contactName)
-            if (message.contactPhone != null) put("contact_phone", message.contactPhone)
-        }
+        val payload = buildMessagePayload(message, peerId, peerName)
 
         val result = supabaseClient.invokeFunction("send-message", payload)
         when (result) {
@@ -302,6 +299,87 @@ class MessageServiceImpl(
         }
     }
 
+    /**
+     * Builds the send-message payload. Shared by sendMessage() and
+     * completeMediaUpload() so both paths always agree on the wire format.
+     */
+    private fun buildMessagePayload(
+        message: DomainMessage,
+        peerId: String?,
+        peerName: String?
+    ): JSONObject {
+        val idempotencyKey = message.idempotencyKey ?: java.util.UUID.randomUUID().toString()
+        return JSONObject().apply {
+            put("conversation_id", message.conversationId)
+            put("type", message.type.name)
+            put("text", message.text)
+            put("timestamp_millis", message.timestampMillis)
+            put("idempotency_key", idempotencyKey)
+            // peer_id + peer_name: the edge function auto-creates a conversation
+            // if conversation_id doesn't exist in Supabase. This is critical for
+            // first-time chats where the app only has the peer's user UUID.
+            if (!peerId.isNullOrEmpty()) put("peer_id", peerId)
+            if (!peerName.isNullOrEmpty()) put("peer_name", peerName)
+            if (message.mediaUrl != null) put("media_url", message.mediaUrl)
+            if (message.mediaThumbnail != null) put("media_thumbnail", message.mediaThumbnail)
+            if (message.fileName != null) put("file_name", message.fileName)
+            if (message.fileSize > 0) put("file_size", message.fileSize)
+            if (message.mediaDurationSec > 0) put("media_duration_sec", message.mediaDurationSec)
+            if (message.isViewOnce) put("is_view_once", true)
+            if (message.replyToId != null) put("reply_to_id", message.replyToId)
+            if (message.locationLatitude != null) put("location_lat", message.locationLatitude)
+            if (message.locationLongitude != null) put("location_lng", message.locationLongitude)
+            if (message.locationAddress != null) put("location_address", message.locationAddress)
+            if (message.locationLiveMinutes != null) put("location_live_minutes", message.locationLiveMinutes)
+            if (message.locationComment != null) put("location_comment", message.locationComment)
+            if (message.contactName != null) put("contact_name", message.contactName)
+            if (message.contactPhone != null) put("contact_phone", message.contactPhone)
+        }
+    }
+
+    override suspend fun stageOutgoingMessage(message: DomainMessage) {
+        // Local insert ONLY — the server call happens in completeMediaUpload
+        // once the upload finishes and we hold a recipient-accessible URL.
+        repository.sendMessage(message, isOnline = true)
+    }
+
+    override suspend fun completeMediaUpload(task: com.example.model.UploadTask) {
+        val msg = repository.getMessageById(task.messageId) ?: return
+        val finalUrl = task.mediaUrl
+        if (finalUrl.isNullOrEmpty()) {
+            Log.e(TAG, "completeMediaUpload: task ${task.id} has no final URL")
+            repository.updateMessageStatus(task.messageId, MessageStatus.FAILED)
+            return
+        }
+
+        // 1. Write the real remote URL back onto the local row so the sender's
+        //    own bubble and any history reload use the accessible URL.
+        repository.updateMessageMedia(task.messageId, finalUrl)
+
+        // 2. NOW create the server row — with the remote URL, never content://
+        val updated = msg.copy(mediaUrl = finalUrl)
+        val payload = buildMessagePayload(updated, task.peerId, task.peerName)
+        val result = AppServiceContainer.supabaseClient.invokeFunction("send-message", payload)
+        when (result) {
+            is SupabaseResult.Success -> {
+                repository.updateMessageStatus(task.messageId, MessageStatus.SENT)
+                val data = result.data
+                val msgObj = if (data.has("message")) data.getJSONObject("message") else data
+                val seq = msgObj?.optLong("seq", 0L) ?: 0L
+                if (seq > 0) repository.updateMessageSeq(task.messageId, seq)
+            }
+            is SupabaseResult.Error -> {
+                Log.e(TAG, "post-upload send-message failed: ${result.message}")
+                repository.updateMessageStatus(task.messageId, MessageStatus.FAILED)
+            }
+        }
+    }
+
+    override suspend fun markMediaMessageFailed(messageId: String, reason: String) {
+        Log.e(TAG, "Media message $messageId failed: $reason")
+        repository.updateMessageStatus(messageId, MessageStatus.FAILED)
+    }
+
     override suspend fun updateMessageStatus(messageId: String, status: MessageStatus) {
         repository.updateMessageStatus(messageId, status)
         // Sync to Supabase (update the messages table)
@@ -322,6 +400,16 @@ class MessageServiceImpl(
 
     override suspend fun markViewOnceOpened(messageId: String) {
         repository.markViewOnceAsViewed(messageId)
+        // Best-effort server sync so the SENDER sees "Opened" (via Realtime
+        // UPDATE) and the view-once state survives reinstall/other devices.
+        // Requires the mark-view-once-opened edge function to be deployed;
+        // failure is non-fatal (local mark already applied).
+        runCatching {
+            AppServiceContainer.supabaseClient.invokeFunction(
+                "mark-view-once-opened",
+                org.json.JSONObject().put("message_id", messageId)
+            )
+        }.onFailure { Log.w(TAG, "view-once sync failed: ${it.message}") }
     }
 
     override suspend fun deleteForMe(messageId: String) {
@@ -360,6 +448,16 @@ class MessageServiceImpl(
     override suspend fun retryFailedMessage(messageId: String) {
         // Re-call send-message with the same message data
         val msg = repository.getMessageById(messageId) ?: return
+        // Media rows whose upload never completed still hold a local content://
+        // preview (or null) as mediaUrl — re-sending would store a dead URL on
+        // the server. Their retry path is re-upload (upload retry affordance),
+        // not re-send.
+        val isMedia = msg.type in listOf(MessageType.IMAGE, MessageType.VIDEO, MessageType.AUDIO, MessageType.DOCUMENT)
+        if (isMedia && (msg.mediaUrl.isNullOrBlank() || !msg.mediaUrl.startsWith("http"))) {
+            Log.w(TAG, "retryFailedMessage: media message $messageId has no remote URL — needs re-upload")
+            repository.updateMessageStatus(messageId, MessageStatus.FAILED)
+            return
+        }
         repository.updateMessageStatus(messageId, MessageStatus.SENDING)
         // Pass conversationId as peerId — the edge function will find-or-create
         // the conversation by peer_id if conversation_id doesn't exist.
@@ -372,6 +470,10 @@ class MessageServiceImpl(
         Log.i(TAG, "Retrying ${failed.size} failed messages")
         failed.forEach { msg ->
             try {
+                val isMedia = msg.type in listOf(MessageType.IMAGE, MessageType.VIDEO, MessageType.AUDIO, MessageType.DOCUMENT)
+                if (isMedia && (msg.mediaUrl.isNullOrBlank() || !msg.mediaUrl.startsWith("http"))) {
+                    return@forEach  // needs re-upload, not re-send
+                }
                 sendMessage(msg, peerId = msg.conversationId, peerName = null)
             } catch (e: Exception) {
                 Log.w(TAG, "Retry failed for ${msg.id}: ${e.message}")
@@ -382,6 +484,7 @@ class MessageServiceImpl(
     override suspend fun forwardMessage(message: DomainMessage, targetConversationIds: List<String>) {
         // Insert locally for each target
         val currentTime = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+        val localCopyIds = mutableListOf<String>()
         targetConversationIds.forEach { targetId ->
             val forwardedMsg = message.copy(
                 id = java.util.UUID.randomUUID().toString(),
@@ -393,6 +496,7 @@ class MessageServiceImpl(
                 reactions = emptyList(),
                 idempotencyKey = java.util.UUID.randomUUID().toString()
             )
+            localCopyIds.add(forwardedMsg.id)
             repository.sendMessage(forwardedMsg, true)
         }
 
@@ -403,11 +507,18 @@ class MessageServiceImpl(
             put("target_conversation_ids", org.json.JSONArray(targetConversationIds))
         }
         val result = supabaseClient.invokeFunction("forward-message", payload)
-        if (result is SupabaseResult.Success) {
-            // Update local messages to SENT
-            targetConversationIds.forEach { _ ->
-                // The edge function created the real server-side messages
-                // Realtime will deliver them to the receiver
+        when (result) {
+            is SupabaseResult.Success -> {
+                // The edge function created the server-side rows — flip the
+                // local copies out of SENDING (previously stuck forever).
+                localCopyIds.forEach { id ->
+                    repository.updateMessageStatus(id, MessageStatus.SENT)
+                }
+            }
+            is SupabaseResult.Error -> {
+                localCopyIds.forEach { id ->
+                    repository.updateMessageStatus(id, MessageStatus.FAILED)
+                }
             }
         }
     }

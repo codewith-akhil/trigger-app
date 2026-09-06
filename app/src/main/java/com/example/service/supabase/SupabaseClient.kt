@@ -311,7 +311,12 @@ class SupabaseClient(
                                     put("event", "*")
                                     put("schema", schema)
                                     put("table", table)
-                                    if (filter != null) put("filter", filter)
+                                    // Only apply the conversation_id filter to tables
+                                    // that actually HAVE that column. Applying it to
+                                    // `conversations` (PK is `id`) and `user_presences`
+                                    // made Realtime reject those subscriptions, so
+                                    // presence and conversation events never arrived.
+                                    if (filter != null && table == "messages") put("filter", filter)
                                 })
                             })
                         })

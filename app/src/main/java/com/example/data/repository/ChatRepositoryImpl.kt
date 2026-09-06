@@ -245,6 +245,20 @@ class ChatRepositoryImpl(
     }
 
     /**
+     * Writes the final remote media URL back onto a message after its upload
+     * completed, so the sender's own bubble (and any history reload) uses the
+     * recipient-accessible URL instead of the local content:// preview.
+     */
+    suspend fun updateMessageMedia(messageId: String, mediaUrl: String) {
+        messageDao.updateMessageMedia(messageId, mediaUrl)
+    }
+
+    /** Marks a message viewed (view-once sync from Realtime UPDATE events). */
+    suspend fun markMessageViewed(messageId: String) {
+        messageDao.markMessageViewed(messageId)
+    }
+
+    /**
      * Inserts a message directly (for incoming Realtime messages).
      */
     suspend fun insertMessage(message: DomainMessage) {

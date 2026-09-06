@@ -42,10 +42,14 @@ interface TokenRequestBody {
 }
 
 function sanitizeChannelName(raw: string): string {
-  // Match AgoraConfig.sanitizeChannelName on the client: alphanumeric, 1-64 chars.
-  const sanitized = (raw ?? "").replace(/[^A-Za-z0-9]/g, "");
+  // Match AgoraConfig.sanitizeChannelName on the client EXACTLY: keep
+  // [A-Za-z0-9_-], replace other chars with "_", cap 64. The previous version
+  // stripped "_" and "-" while the client kept them — so the token was signed
+  // for a DIFFERENT channel than the one joined (ERR_INVALID_TOKEN on every
+  // token-authenticated call/stream).
+  const sanitized = (raw ?? "").replace(/[^a-zA-Z0-9_-]/g, "_").substring(0, 64);
   return sanitized.length > 0
-    ? sanitized.substring(0, 64)
+    ? sanitized
     : `channel_${Date.now()}`;
 }
 

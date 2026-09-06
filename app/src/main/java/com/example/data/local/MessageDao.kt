@@ -54,7 +54,9 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND text LIKE '%' || :query || '%' ORDER BY timestampMillis DESC")
     fun searchMessages(conversationId: String, query: String): Flow<List<MessageEntity>>
 
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND (type = 'IMAGE' OR type = 'VIDEO') ORDER BY timestampMillis DESC")
+    // View-once media is excluded: it must only be viewable in the chat bubble
+    // (once), never from the shared Media gallery tab.
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND (type = 'IMAGE' OR type = 'VIDEO') AND isViewOnce = 0 AND isDeletedForEveryone = 0 ORDER BY timestampMillis DESC")
     fun getMediaMessages(conversationId: String): Flow<List<MessageEntity>>
 
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND type = 'DOCUMENT' ORDER BY timestampMillis DESC")
@@ -71,4 +73,12 @@ interface MessageDao {
 
     @Query("UPDATE messages SET text = :newText, editedAt = :editedAt WHERE id = :messageId")
     suspend fun updateMessageText(messageId: String, newText: String, editedAt: Long)
+
+    /** Writes the final remote media URL back onto the message after upload. */
+    @Query("UPDATE messages SET mediaUrl = :mediaUrl WHERE id = :messageId")
+    suspend fun updateMessageMedia(messageId: String, mediaUrl: String)
+
+    /** Realtime-driven view-once sync: mark a message opened. */
+    @Query("UPDATE messages SET isViewed = 1 WHERE id = :messageId")
+    suspend fun markMessageViewed(messageId: String)
 }

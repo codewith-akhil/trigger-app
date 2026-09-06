@@ -37,7 +37,9 @@ fun ChatCallingOverlay(
     onToggleMute: () -> Unit,
     onToggleSpeaker: () -> Unit,
     onToggleVideo: () -> Unit,
-    onSwitchCamera: () -> Unit
+    onSwitchCamera: () -> Unit,
+    onAcceptCall: () -> Unit = {},
+    onDeclineCall: () -> Unit = {}
 ) {
     val isVideo = session.type == CallType.VIDEO && session.isVideoEnabled
     val engineState by AppServiceContainer.agoraRtcEngineManager.engineState.collectAsState()
@@ -168,7 +170,9 @@ fun ChatCallingOverlay(
 
             val statusText = when (session.state) {
                 CallState.CALLING -> "Calling..."
-                CallState.RINGING -> "Ringing..."
+                CallState.RINGING -> if (session.isIncoming) "Incoming " +
+                    (if (session.type == CallType.VIDEO) "video call..." else "voice call...")
+                    else "Ringing..."
                 CallState.CONNECTING -> "Connecting..."
                 CallState.CONNECTED -> {
                     val mins = session.durationSeconds / 60
@@ -189,6 +193,16 @@ fun ChatCallingOverlay(
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium
             )
+
+            if (session.errorMessage != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = session.errorMessage,
+                    color = Color(0xFFFF6B6B),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
 
             if (session.isPoorConnection) {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -257,6 +271,57 @@ fun ChatCallingOverlay(
             color = Color(0xFF1F2C34).copy(alpha = 0.95f),
             shadowElevation = 8.dp
         ) {
+            // INCOMING RING: show Accept / Decline instead of the in-call
+            // controls (this UI previously did not exist at all).
+            if (session.isIncoming && session.state == CallState.RINGING) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 32.dp, vertical = 18.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Decline (red)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        FloatingActionButton(
+                            onClick = onDeclineCall,
+                            shape = CircleShape,
+                            containerColor = Color(0xFFEA4335),
+                            contentColor = Color.White,
+                            modifier = Modifier.size(58.dp).testTag("decline_call_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.CallEnd,
+                                contentDescription = "Decline call",
+                                tint = Color.White,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text("Decline", color = Color(0xFF8696A0), fontSize = 12.sp)
+                    }
+
+                    // Accept (green)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        FloatingActionButton(
+                            onClick = onAcceptCall,
+                            shape = CircleShape,
+                            containerColor = Color(0xFF25D366),
+                            contentColor = Color.White,
+                            modifier = Modifier.size(58.dp).testTag("accept_call_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Call,
+                                contentDescription = "Accept call",
+                                tint = Color.White,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text("Accept", color = Color(0xFF25D366), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -346,6 +411,7 @@ fun ChatCallingOverlay(
                         modifier = Modifier.size(28.dp)
                     )
                 }
+            }
             }
         }
     }

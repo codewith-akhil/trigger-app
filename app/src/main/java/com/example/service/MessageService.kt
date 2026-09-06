@@ -7,6 +7,26 @@ import kotlinx.coroutines.flow.Flow
 interface MessageService {
     fun observeMessages(conversationId: String): Flow<List<DomainMessage>>
     suspend fun sendMessage(message: DomainMessage, peerId: String? = null, peerName: String? = null)
+
+    /**
+     * Inserts an outgoing media message into Room only (status SENDING) — the
+     * server call is deferred until its upload completes so the server row is
+     * created with the recipient-accessible URL, never a local content:// URI.
+     */
+    suspend fun stageOutgoingMessage(message: DomainMessage)
+
+    /**
+     * Called when a media upload completes. Writes the final remote URL back
+     * onto the Room row and sends the message to the server with it.
+     */
+    suspend fun completeMediaUpload(task: com.example.model.UploadTask)
+
+    /**
+     * Called when a media upload fails permanently — flips the staged message
+     * to FAILED so the user can retry.
+     */
+    suspend fun markMediaMessageFailed(messageId: String, reason: String)
+
     suspend fun updateMessageStatus(messageId: String, status: MessageStatus)
     suspend fun toggleReaction(messageId: String, emoji: String)
     suspend fun markViewOnceOpened(messageId: String)

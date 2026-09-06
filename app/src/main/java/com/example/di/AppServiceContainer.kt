@@ -78,10 +78,24 @@ object AppServiceContainer {
         storageService = StorageServiceImpl(context.cacheDir)
         notificationService = NotificationServiceImpl(context)
 
-        uploadService = UploadServiceImpl(appScope) { completedTask ->
-            // Update message status upon upload completion
-            messageService.updateMessageStatus(completedTask.messageId, com.example.model.MessageStatus.SENT)
-        }
+        uploadService = UploadServiceImpl(
+            appScope,
+            onUploadComplete = { completedTask ->
+                // Media messages are now SENT TO THE SERVER ONLY AFTER the
+                // upload completes, carrying the recipient-accessible signed
+                // URL. The upload's final URL is written back onto the Room
+                // row too (previously recipients got a dead content:// URI).
+                messageService.completeMediaUpload(completedTask)
+            },
+            onUploadFailed = { failedTask ->
+                // Flip the staged message to FAILED so the retry affordance
+                // appears instead of an eternal spinner.
+                messageService.markMediaMessageFailed(
+                    failedTask.messageId,
+                    failedTask.errorMessage ?: "Upload failed"
+                )
+            }
+        )
 
         callService = com.example.service.agora.AgoraCallService(
             rtcManager = agoraRtcEngineManager,

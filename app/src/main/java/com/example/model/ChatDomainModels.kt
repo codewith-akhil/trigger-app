@@ -136,5 +136,9 @@ data class UploadTask(
     val filePath: String? = null,
     val mimeType: String? = null,
     val mediaUrl: String? = null,
-    val bucket: String? = null
+    val bucket: String? = null,
+    // Routing metadata carried through the upload so the message can be
+    // sent to the server AFTER the upload completes with the real URL.
+    val peerId: String? = null,
+    val peerName: String? = null
 )

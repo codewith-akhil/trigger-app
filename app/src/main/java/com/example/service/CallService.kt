@@ -16,7 +16,13 @@ data class CallSession(
     val isSpeakerOn: Boolean = false,
     val isVideoEnabled: Boolean = true,
     val isFrontCamera: Boolean = true,
-    val isPoorConnection: Boolean = false
+    val isPoorConnection: Boolean = false,
+    /** Agora channel both peers join — alnum-only so client & token server agree. */
+    val channelName: String = "",
+    /** True when this device is being called (shows Accept/Decline UI). */
+    val isIncoming: Boolean = false,
+    /** Human-readable failure reason surfaced on the call overlay. */
+    val errorMessage: String? = null
 )
 
 interface CallService {

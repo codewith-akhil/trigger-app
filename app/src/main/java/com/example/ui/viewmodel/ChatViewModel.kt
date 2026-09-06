@@ -2,6 +2,7 @@ package com.example.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.util.Log
 import com.example.config.ChatConfig
 import com.example.di.AppServiceContainer
 import com.example.model.*
@@ -113,6 +114,7 @@ class ChatViewModel(
     var isRecordingLocked = MutableStateFlow(false)
     var recordingDurationSec = MutableStateFlow(0f)
     var recordingAmplitudes = MutableStateFlow<List<Float>>(emptyList())
+    var voiceErrorMessage = MutableStateFlow<String?>(null)
     private var recordingTimerJob: Job? = null
     private var mediaRecorder: android.media.MediaRecorder? = null
     private var currentVoiceFile: java.io.File? = null
@@ -127,7 +129,9 @@ class ChatViewModel(
     // Voice playback state
     var currentlyPlayingAudioId = MutableStateFlow<String?>(null)
     var audioPlaybackProgress = MutableStateFlow(0f)
+    var audioPlaybackError = MutableStateFlow<String?>(null)
     private var audioPlaybackJob: Job? = null
+    private var mediaPlayer: android.media.MediaPlayer? = null
 
     init {
         // Mark conversation as read on open (calls edge function)
@@ -167,9 +171,15 @@ class ChatViewModel(
         }
     }
 
+    private var typingJob: Job? = null
+
     fun onInputTextChanged(newText: String) {
         inputText.value = newText
-        viewModelScope.launch {
+        // Debounced typing indicator — one event per idle gap instead of one
+        // per keystroke (previously blew through the 30 req/min rate limit).
+        typingJob?.cancel()
+        typingJob = viewModelScope.launch {
+            delay(400)
             presenceService.setUserTyping(contactId, newText.isNotBlank())
         }
     }
@@ -249,15 +259,21 @@ class ChatViewModel(
                 }
             }
         } catch (e: Exception) {
-            // Fallback: if MediaRecorder fails (no permission, etc.), use minimal amplitudes
-            recordingTimerJob = viewModelScope.launch {
-                while (isActive) {
-                    delay(1000)
-                    recordingDurationSec.value += 1f
-                    recordingAmplitudes.value = (recordingAmplitudes.value + 0.1f).takeLast(24)
-                }
-            }
+            // FAIL LOUDLY: no permission / mic busy. Previously this started a
+            // fake timer and later uploaded a 0-byte file that could never send.
+            Log.e("ChatViewModel", "Voice recording failed: ${e.message}")
+            voiceErrorMessage.value = "Couldn't record audio — check mic permission"
+            isRecordingVoice.value = false
+            isRecordingLocked.value = false
+            try { mediaRecorder?.release() } catch (_: Exception) {}
+            mediaRecorder = null
+            currentVoiceFile?.delete()
+            currentVoiceFile = null
         }
+    }
+
+    fun clearVoiceError() {
+        voiceErrorMessage.value = null
     }
 
     fun lockVoiceRecording() {
@@ -299,6 +315,15 @@ class ChatViewModel(
             return
         }
 
+        // Recording failed earlier (MediaRecorder error) — do NOT send an
+        // empty/invalid file. Fail loudly instead of fabricating a message.
+        if (voiceFile == null || !voiceFile.exists() || voiceFile.length() < 1024L) {
+            voiceErrorMessage.value = "Recording failed — please try again"
+            voiceFile?.delete()
+            currentVoiceFile = null
+            return
+        }
+
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
         val msgId = java.util.UUID.randomUUID().toString()
         val idempotencyKey = java.util.UUID.randomUUID().toString()
@@ -318,7 +343,9 @@ class ChatViewModel(
         )
 
         viewModelScope.launch {
-            messageService.sendMessage(message, peerId = contactId, peerName = contactName)
+            // Stage locally only — send-message is deferred until upload
+            // completes so the server row carries the accessible signed URL.
+            messageService.stageOutgoingMessage(message)
             // Enqueue real upload with the actual voice file path
             val fileSize = voiceFile?.length() ?: (duration.toLong() * 16000L).coerceAtLeast(1024L)
             val task = UploadTask(
@@ -329,10 +356,13 @@ class ChatViewModel(
                 fileType = MessageType.AUDIO,
                 totalBytes = fileSize,
                 filePath = voiceFile?.absolutePath,
-                mimeType = "audio/mp4"
+                mimeType = "audio/mp4",
+                peerId = contactId,
+                peerName = contactName
             )
             uploadService.enqueueUpload(task)
-            // Clean up the reference (file will be deleted by the cache after upload)
+            // The cache dir file can now be cleaned up on our side once the
+            // upload job has its own path reference.
             currentVoiceFile = null
         }
 
@@ -390,17 +420,23 @@ class ChatViewModel(
             text = pending.caption,
             fileName = pending.fileName,
             fileSize = pending.fileSize,
+            // Local preview only for the sender's own bubble — the SERVER row
+            // is created after upload via completeMediaUpload() with the real
+            // signed URL (recipients can never load a content:// URI).
             mediaUrl = pending.previewUrl,
             mediaDurationSec = pending.durationSec,
             isViewOnce = pending.isViewOnce,
             status = MessageStatus.SENDING,
             timestamp = time,
             timestampMillis = System.currentTimeMillis(),
-            isOutgoing = true
+            isOutgoing = true,
+            idempotencyKey = java.util.UUID.randomUUID().toString()
         )
 
         viewModelScope.launch {
-            messageService.sendMessage(message, peerId = contactId, peerName = contactName)
+            // Stage locally only — send-message is deferred until upload
+            // completes so the server row carries the accessible URL.
+            messageService.stageOutgoingMessage(message)
             val task = UploadTask(
                 id = "upload_$msgId",
                 messageId = msgId,
@@ -409,7 +445,9 @@ class ChatViewModel(
                 fileType = pending.type,
                 totalBytes = pending.fileSize,
                 filePath = pending.filePath,
-                mimeType = pending.mimeType
+                mimeType = pending.mimeType,
+                peerId = contactId,
+                peerName = contactName
             )
             uploadService.enqueueUpload(task)
         }
@@ -435,7 +473,10 @@ class ChatViewModel(
             isOutgoing = true
         )
         viewModelScope.launch {
-            messageService.sendMessage(msg, peerId = contactId, peerName = contactName)
+            messageService.sendMessage(
+                msg.copy(idempotencyKey = msg.idempotencyKey ?: java.util.UUID.randomUUID().toString()),
+                peerId = contactId, peerName = contactName
+            )
         }
     }
 
@@ -468,7 +509,8 @@ class ChatViewModel(
             status = MessageStatus.SENDING,
             timestamp = time,
             timestampMillis = System.currentTimeMillis(),
-            isOutgoing = true
+            isOutgoing = true,
+            idempotencyKey = java.util.UUID.randomUUID().toString()
         )
         viewModelScope.launch {
             messageService.sendMessage(msg, peerId = contactId, peerName = contactName)
@@ -508,7 +550,8 @@ class ChatViewModel(
             status = MessageStatus.SENDING,
             timestamp = time,
             timestampMillis = System.currentTimeMillis(),
-            isOutgoing = true
+            isOutgoing = true,
+            idempotencyKey = java.util.UUID.randomUUID().toString()
         )
         viewModelScope.launch {
             messageService.sendMessage(msg, peerId = contactId, peerName = contactName)
@@ -561,6 +604,14 @@ class ChatViewModel(
         clearSelection()
         viewModelScope.launch {
             ids.forEach { messageService.deleteForMe(it) }
+        }
+    }
+
+    /** Delete a single message for me — used by the full-screen media viewer,
+     *  which previously called the (empty) selection-based path and did nothing. */
+    fun deleteMessageForMe(message: DomainMessage) {
+        viewModelScope.launch {
+            messageService.deleteForMe(message.id)
         }
     }
 
@@ -739,29 +790,89 @@ class ChatViewModel(
         }
     }
 
-    // Audio voice playback simulation
-    fun togglePlayVoice(messageId: String, durationSec: Int) {
-        if (currentlyPlayingAudioId.value == messageId) {
-            // Pause
-            audioPlaybackJob?.cancel()
-            currentlyPlayingAudioId.value = null
-            audioPlaybackProgress.value = 0f
-        } else {
-            // Play
-            audioPlaybackJob?.cancel()
-            currentlyPlayingAudioId.value = messageId
-            audioPlaybackProgress.value = 0f
+    // ---------- REAL audio playback ----------
+    // Previously this "played" by animating a progress bar with delay() —
+    // no MediaPlayer existed anywhere in the app. Now streams the message's
+    // mediaUrl (signed URL) and reports real position-based progress.
+    fun togglePlayVoice(message: DomainMessage) {
+        if (currentlyPlayingAudioId.value == message.id) {
+            stopVoicePlayback(resetProgress = true)
+            return
+        }
 
-            audioPlaybackJob = viewModelScope.launch {
-                val totalSteps = (durationSec * 10).coerceAtLeast(10)
-                for (step in 1..totalSteps) {
-                    delay(100)
-                    audioPlaybackProgress.value = step.toFloat() / totalSteps
+        val url = message.mediaUrl
+        if (url.isNullOrBlank() || !url.startsWith("http")) {
+            audioPlaybackError.value = "Audio unavailable"
+            return
+        }
+
+        stopVoicePlayback(resetProgress = true)
+        currentlyPlayingAudioId.value = message.id
+        audioPlaybackProgress.value = 0f
+        audioPlaybackError.value = null
+
+        audioPlaybackJob = viewModelScope.launch(Dispatchers.IO) {
+            var player: android.media.MediaPlayer? = null
+            try {
+                player = android.media.MediaPlayer()
+                mediaPlayer = player
+                player.setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                        .build()
+                )
+                player.setDataSource(url)
+                player.setOnCompletionListener {
+                    audioPlaybackProgress.value = 1f
+                    stopVoicePlayback(resetProgress = false)
+                    currentlyPlayingAudioId.value = null
+                    audioPlaybackProgress.value = 0f
                 }
-                currentlyPlayingAudioId.value = null
-                audioPlaybackProgress.value = 0f
+                player.prepare()  // blocking — we're on Dispatchers.IO
+                player.start()
+
+                val durationMs = player.duration.coerceAtLeast(1)
+                while (isActive && player.isPlaying) {
+                    audioPlaybackProgress.value =
+                        (player.currentPosition.toFloat() / durationMs).coerceIn(0f, 1f)
+                    delay(100)
+                }
+            } catch (e: Exception) {
+                if (isActive) {
+                    Log.w("ChatViewModel", "Audio playback failed: ${e.message}")
+                    audioPlaybackError.value = "Playback failed"
+                    stopVoicePlayback(resetProgress = true)
+                }
             }
         }
+    }
+
+    private fun stopVoicePlayback(resetProgress: Boolean) {
+        audioPlaybackJob?.cancel()
+        audioPlaybackJob = null
+        try { mediaPlayer?.stop() } catch (_: Exception) {}
+        try { mediaPlayer?.release() } catch (_: Exception) {}
+        mediaPlayer = null
+        if (resetProgress) {
+            currentlyPlayingAudioId.value = null
+            audioPlaybackProgress.value = 0f
+        }
+    }
+
+    override fun onCleared() {
+        // The screen is gone — release hardware + cancel timers. Previously
+        // the mic stayed held and the amplitude timer kept polling after the
+        // user left the chat.
+        recordingTimerJob?.cancel()
+        try { mediaRecorder?.stop() } catch (_: Exception) {}
+        try { mediaRecorder?.release() } catch (_: Exception) {}
+        mediaRecorder = null
+        currentVoiceFile?.delete()
+        currentVoiceFile = null
+        stopVoicePlayback(resetProgress = false)
+        typingJob?.cancel()
+        super.onCleared()
     }
 }
 

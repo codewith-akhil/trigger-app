@@ -20,6 +20,21 @@ async function handler(req: Request): Promise<Response> {
   if (!convId) return json({ error: "conversation_id required" }, 422);
 
   const supabase = createAdminClient();
+
+  // SECURITY: participant check. This function previously used the service-role
+  // client with NO participant verification, so any authenticated user could
+  // read ANY conversation's messages (IDOR). Verify the caller is the owner or
+  // peer of the conversation before querying messages.
+  const { data: conv, error: convErr } = await supabase
+    .from("conversations")
+    .select("id, owner_id, peer_id")
+    .eq("id", convId)
+    .maybeSingle();
+  if (convErr) return errorResponse("Lookup failed", 500, ErrorCode.INTERNAL_ERROR);
+  if (!conv || (conv.owner_id !== userId && conv.peer_id !== userId)) {
+    return errorResponse("Conversation not found", 404, ErrorCode.NOT_FOUND);
+  }
+
   let dbQuery = supabase.from("messages").select("id, text, type, sender_id, created_at, media_url, file_name, is_deleted_for_everyone")
     .eq("conversation_id", convId).eq("is_deleted_for_everyone", false).order("created_at", { ascending: false }).limit(limit);
 

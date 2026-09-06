@@ -85,6 +85,13 @@ fun TriggerAppNavHost(
         mutableStateOf<Int?>(null)
     }
 
+    // Android 13+ requires a RUNTIME request for POST_NOTIFICATIONS. The
+    // landing dialog previously just navigated without ever requesting.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val notificationPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { /* granted or not — continue to auth either way */ }
+
     NavHost(
         navController = navController,
         // Auto-login: skip onboarding when a persisted Supabase session exists
@@ -126,6 +133,11 @@ fun TriggerAppNavHost(
                 NotificationPermissionDialog(
                     onAllow = {
                         showNotificationDialogOnLandingToAuth = false
+                        // Fire the REAL runtime permission request on Android 13+
+                        val activity = context as? android.app.Activity
+                        if (android.os.Build.VERSION.SDK_INT >= 33 && activity != null) {
+                            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                        }
                         navController.navigate(TriggerDestinations.EMAIL_AUTH)
                     },
                     onDontAllow = {

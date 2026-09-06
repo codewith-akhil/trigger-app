@@ -35,6 +35,9 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.EmojiEmotions
 import androidx.compose.material3.*
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -84,9 +87,17 @@ fun ChatScreen(
     contactAvatarRes: Int? = null,
     onBack: () -> Unit
 ) {
-    val viewModel = remember(contactId) {
-        ChatViewModel(contactId, contactName, contactAvatarRes)
-    }
+    // Scoped to the navigation back-stack entry: when the user leaves the
+    // chat, onCleared() releases the MediaRecorder (mic), stops playback and
+    // cancels timers. The previous remember{} kept all of that alive forever.
+    val viewModel: ChatViewModel = viewModel(
+        key = "chat_$contactId",
+        factory = viewModelFactory {
+            initializer {
+                ChatViewModel(contactId, contactName, contactAvatarRes)
+            }
+        }
+    )
 
     val messages by viewModel.messages.collectAsState()
     val presence by viewModel.contactPresence.collectAsState()
@@ -379,10 +390,16 @@ fun ChatScreen(
         }
     }
 
-    // Auto-scroll to bottom on new messages
+    // Auto-scroll on new messages ONLY when the user is already near the
+    // bottom — previously a history page-load (prepend) yanked them to the
+    // end of the list mid-read.
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val nearBottom = lastVisible >= messages.size - 2
+            if (nearBottom) {
+                listState.animateScrollToItem(messages.size - 1)
+            }
         }
     }
 
@@ -794,7 +811,7 @@ fun ChatScreen(
                                     }
                                 },
                                 onTogglePlayAudio = {
-                                    viewModel.togglePlayVoice(message.id, message.mediaDurationSec)
+                                    viewModel.togglePlayVoice(message)
                                 },
                                 onOpenMediaViewer = {
                                     viewModel.activeViewerMessage.value = message
@@ -905,18 +922,34 @@ fun ChatScreen(
             onToggleMute = { AppServiceContainer.callService.toggleMute() },
             onToggleSpeaker = { AppServiceContainer.callService.toggleSpeaker() },
             onToggleVideo = { AppServiceContainer.callService.toggleVideo() },
-            onSwitchCamera = { AppServiceContainer.callService.switchCamera() }
+            onSwitchCamera = { AppServiceContainer.callService.switchCamera() },
+            onAcceptCall = { AppServiceContainer.callService.acceptIncomingCall() },
+            onDeclineCall = { AppServiceContainer.callService.declineCall() }
         )
     }
 
     // Full screen Media Viewer
     val activeViewerMessageValue = activeViewerMessage
+
+    // Screenshot prevention (C10): FLAG_SECURE while a VIEW-ONCE media is on
+    // screen — previously there was zero screenshot protection anywhere.
+    val secureViewer = activeViewerMessageValue?.isViewOnce == true
+    if (secureViewer) {
+        DisposableEffect(Unit) {
+            val window = (context as? android.app.Activity)?.window
+            window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            onDispose {
+                window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            }
+        }
+    }
+
     if (activeViewerMessageValue != null) {
         ChatMediaViewer(
             message = activeViewerMessageValue,
             onClose = { viewModel.activeViewerMessage.value = null },
             onDelete = {
-                viewModel.deleteSelectedForMe()
+                viewModel.deleteMessageForMe(activeViewerMessageValue)
                 viewModel.activeViewerMessage.value = null
             },
             onShare = {

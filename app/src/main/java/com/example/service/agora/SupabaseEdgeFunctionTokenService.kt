@@ -64,11 +64,18 @@ class SupabaseEdgeFunctionTokenService(
             }
         }
 
-        // 2. Fallback for testing mode (e.g. project with App ID only or STATIC_FALLBACK_TOKEN)
-        val fallbackToken = AgoraConfig.STATIC_FALLBACK_TOKEN
+        // 2. Fallback for testing mode (e.g. project with App ID only)
+        // AGORA_TOKEN="none" is a PLACEHOLDER baked into BuildConfig — it is
+        // not a real Agora token and can never authenticate a join. Previously
+        // this returned Result.success("none") and the UI showed "Ringing..."
+        // forever. Treat placeholder as NO fallback.
+        val rawFallback = AgoraConfig.STATIC_FALLBACK_TOKEN.trim()
+        val fallbackToken = if (rawFallback.equals("none", true) ||
+            rawFallback.equals("null", true) || rawFallback == "0" || rawFallback.isEmpty()
+        ) "" else rawFallback
         val appId = AgoraConfig.AGORA_APP_ID
 
-        if (AgoraConfig.isConfigured) {
+        if (AgoraConfig.isConfigured && fallbackToken.isNotEmpty()) {
             val expiresAt = (System.currentTimeMillis() / 1000) + 3600
             Log.i(TAG, "Using direct Agora App ID configuration for channel $sanitizedChannel")
             return@withContext Result.success(
@@ -79,6 +86,24 @@ class SupabaseEdgeFunctionTokenService(
                     uid = uid,
                     role = role,
                     expiresAt = expiresAt
+                )
+            )
+        }
+
+        if (AgoraConfig.isConfigured && fallbackToken.isEmpty()) {
+            // App ID present but no usable static token. If the project is
+            // App-ID-only (no certificate) an EMPTY token joins fine; if it is
+            // certificate-secured the join fails with ERR_INVALID_TOKEN — which
+            // the engine surfaces as CallState.FAILED instead of ringing forever.
+            Log.w(TAG, "Edge function unavailable and no static token — attempting join with empty token (App-ID-only mode)")
+            return@withContext Result.success(
+                AgoraTokenResponse(
+                    token = "",
+                    appId = appId,
+                    channelName = sanitizedChannel,
+                    uid = uid,
+                    role = role,
+                    expiresAt = (System.currentTimeMillis() / 1000) + 3600
                 )
             )
         }

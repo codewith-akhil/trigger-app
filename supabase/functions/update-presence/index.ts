@@ -14,7 +14,13 @@
 // Rate limit: 30 requests / 60s (heartbeats are cheap).
 //
 // Request body:
-//   { "isOnline"?: boolean }   // default true
+//   { "isOnline"?: boolean }                                        // default true
+//   { "action": "typing", "is_typing"?: boolean }                    // typing indicator
+//   { "action": "recording", "is_recording"?: boolean }              // recording indicator
+//
+// Typing/recording state is stored as short-lived expiry timestamps
+// (typing_until / recording_until) on user_presences so Realtime UPDATE
+// events broadcast them to the peer without extra infrastructure.
 //
 // Response 200: { "updated": true, "isOnline": boolean, "lastSeenAt": string }
 // ----------------------------------------------------------------------------
@@ -28,6 +34,9 @@ const PRESENCE_LIMIT = { maxRequests: 30, windowSeconds: 60, name: "update_prese
 
 interface Body {
   isOnline?: boolean;
+  action?: "typing" | "recording";
+  is_typing?: boolean;
+  is_recording?: boolean;
 }
 
 async function handler(req: Request): Promise<Response> {
@@ -51,6 +60,41 @@ async function handler(req: Request): Promise<Response> {
   // Use the USER's JWT (not the service role) so auth.uid() resolves correctly
   // inside the security_definer RPC. The service role has no user identity.
   const userClient = createUserClient(authHeader);
+
+  // Typing / recording indicators: persist a short-lived expiry timestamp so
+  // the peer's Realtime subscription receives UPDATE events. Previously this
+  // function IGNORED these payloads entirely — typing indicators were dead
+  // end-to-end.
+  if (body.action === "typing") {
+    const until = body.is_typing !== false
+      ? new Date(Date.now() + 6_000).toISOString()
+      : null;
+    const { error: typingError } = await userClient
+      .from("user_presences")
+      .update({ typing_until: until })
+      .eq("user_id", userId);
+    if (typingError) {
+      console.error("update-presence typing failed", typingError);
+      return errorResponse("Failed to update typing state", 500, ErrorCode.INTERNAL_ERROR);
+    }
+    return json({ updated: true, typing: body.is_typing !== false });
+  }
+
+  if (body.action === "recording") {
+    const until = body.is_recording !== false
+      ? new Date(Date.now() + 8_000).toISOString()
+      : null;
+    const { error: recError } = await userClient
+      .from("user_presences")
+      .update({ recording_until: until })
+      .eq("user_id", userId);
+    if (recError) {
+      console.error("update-presence recording failed", recError);
+      return errorResponse("Failed to update recording state", 500, ErrorCode.INTERNAL_ERROR);
+    }
+    return json({ updated: true, recording: body.is_recording !== false });
+  }
+
   const { error } = await userClient.rpc("upsert_presence", { p_is_online: isOnline });
   if (error) {
     console.error("update-presence failed", error);

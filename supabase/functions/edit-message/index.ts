@@ -17,9 +17,20 @@ async function handler(req: Request): Promise<Response> {
   if (!newText) return json({ error: "new_text required" }, 422);
   if (newText.length > 10000) return json({ error: "Text too long (max 10000)" }, 422);
   const supabase = createAdminClient();
-  const { data: msg } = await supabase.from("messages").select("sender_id").eq("id", messageId).maybeSingle();
+  const { data: msg } = await supabase.from("messages").select("sender_id, conversation_id, timestamp_millis").eq("id", messageId).maybeSingle();
   if (!msg) return json({ error: "Message not found" }, 404);
   if (msg.sender_id !== userId) return json({ error: "Only sender can edit" }, 403);
+
+  // SERVER-SIDE edit window. The 15-minute rule previously existed only in the
+  // app client — a modified client could edit messages of any age.
+  const EDIT_WINDOW_MS = 15 * 60 * 1000;
+  const ts = typeof msg.timestamp_millis === "number" && msg.timestamp_millis > 0
+    ? msg.timestamp_millis
+    : Date.parse(String(msg.created_at ?? ""));
+  if (Number.isFinite(ts) && Date.now() - ts > EDIT_WINDOW_MS) {
+    return json({ error: "Edit window expired (15 minutes)" }, 403);
+  }
+
   const { error } = await supabase.from("messages").update({ text: newText, edited_at: new Date().toISOString() }).eq("id", messageId);
   if (error) return json({ error: "Failed to edit" }, 500);
   return json({ edited: true });

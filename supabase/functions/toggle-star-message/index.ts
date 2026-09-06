@@ -23,6 +23,20 @@ async function handler(req: Request): Promise<Response> {
 
   const supabase = createAdminClient();
 
+  // SECURITY: participant check. Previously ANY authenticated user could
+  // star/unstar ANY message (IDOR write).
+  const { data: conv, error: convErr } = await supabase
+    .from("messages")
+    .select("conversation_id, conversations!inner(owner_id, peer_id)")
+    .eq("id", messageId)
+    .maybeSingle();
+  if (convErr || !conv) return json({ error: "Message not found" }, 404);
+  const convOwner = (conv as any).conversations?.owner_id;
+  const convPeer = (conv as any).conversations?.peer_id;
+  if (convOwner !== userId && convPeer !== userId) {
+    return errorResponse("Forbidden", 403, ErrorCode.FORBIDDEN);
+  }
+
   // Get current starred state
   const { data: msg, error: fetchError } = await supabase
     .from("messages").select("is_starred").eq("id", messageId).maybeSingle();

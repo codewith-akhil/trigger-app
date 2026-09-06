@@ -622,10 +622,27 @@ fun DomainChatBubble(
                     }
 
                     message.type == MessageType.LOCATION -> {
+                        // Tap opens the location in the device's maps app
+                        // (geo: URI) — previously the bubble was inert.
+                        val context = androidx.compose.ui.platform.LocalContext.current
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
+                                .clickable(enabled = message.locationLatitude != null && message.locationLongitude != null) {
+                                    try {
+                                        val uri = android.net.Uri.parse(
+                                            "geo:${message.locationLatitude},${message.locationLongitude}" +
+                                                "?q=${message.locationLatitude},${message.locationLongitude}" +
+                                                "(${android.net.Uri.encode(message.locationAddress ?: "Shared location")})"
+                                        )
+                                        context.startActivity(
+                                            android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
+                                        )
+                                    } catch (_: Exception) {
+                                        // No maps app installed — nothing to open
+                                    }
+                                }
                         ) {
                             Box(
                                 modifier = Modifier
@@ -634,12 +651,22 @@ fun DomainChatBubble(
                                     .background(Color(0xFFC8E6C9)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Filled.LocationOn,
-                                    contentDescription = null,
-                                    tint = Color(0xFF2E7D32),
-                                    modifier = Modifier.size(44.dp)
-                                )
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = Icons.Filled.LocationOn,
+                                        contentDescription = null,
+                                        tint = Color(0xFF2E7D32),
+                                        modifier = Modifier.size(44.dp)
+                                    )
+                                    if (message.locationLiveMinutes != null) {
+                                        Text(
+                                            text = "Live location • ${message.locationLiveMinutes}m",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF2E7D32)
+                                        )
+                                    }
+                                }
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(

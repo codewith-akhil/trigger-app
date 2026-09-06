@@ -69,10 +69,25 @@ async function handler(req: Request): Promise<Response> {
   if (req.method !== "POST") return errorResponse("Method not allowed", 405, ErrorCode.METHOD_NOT_ALLOWED);
 
   const authHeader = req.headers.get("Authorization");
-  const senderId = await resolveUserId(authHeader);
-  if (!senderId) return errorResponse("Unauthorized", 401, ErrorCode.UNAUTHORIZED);
+  const apiKey = req.headers.get("apikey") ?? "";
 
-  const rl = checkRateLimit(req, senderId, RATE_LIMITS.SEND_CHAT_NOTIFICATION);
+  // INTERNAL CALLS: send-message invokes this function with the service-role
+  // key as Bearer. resolveUserId() -> auth.getUser() REJECTS that JWT (it has
+  // no `sub`), so every server-originated push silently died with 401. Accept
+  // the service-role key as a trusted internal caller; user JWTs still go
+  // through resolveUserId.
+  let senderId: string | null = null;
+  let isInternal = false;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const bearer = (authHeader ?? "").replace(/^Bearer\s+/i, "").trim();
+  if (serviceKey && (bearer === serviceKey || apiKey === serviceKey)) {
+    isInternal = true;
+  } else {
+    senderId = await resolveUserId(authHeader);
+  }
+  if (!isInternal && !senderId) return errorResponse("Unauthorized", 401, ErrorCode.UNAUTHORIZED);
+
+  const rl = checkRateLimit(req, senderId ?? "internal:send-message", RATE_LIMITS.SEND_CHAT_NOTIFICATION);
   if (!rl.allowed) {
     return json({ error: rl.message, code: ErrorCode.RATE_LIMITED, retryAfter: rl.retryAfter }, 429);
   }

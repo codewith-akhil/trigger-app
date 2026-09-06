@@ -18,6 +18,20 @@ async function handler(req: Request): Promise<Response> {
 
   const supabase = createAdminClient();
 
+  // SECURITY: participant check. Previously ANY authenticated user could
+  // react to ANY message (IDOR write).
+  const { data: conv, error: convErr } = await supabase
+    .from("messages")
+    .select("id, conversations!inner(owner_id, peer_id)")
+    .eq("id", messageId)
+    .maybeSingle();
+  if (convErr || !conv) return json({ error: "Message not found" }, 404);
+  const convOwner = (conv as any).conversations?.owner_id;
+  const convPeer = (conv as any).conversations?.peer_id;
+  if (convOwner !== userId && convPeer !== userId) {
+    return errorResponse("Forbidden", 403, ErrorCode.FORBIDDEN);
+  }
+
   // Check if reaction already exists
   const { data: existing } = await supabase
     .from("message_reactions")

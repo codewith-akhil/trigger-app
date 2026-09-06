@@ -29,7 +29,8 @@ import kotlinx.coroutines.withContext
  */
 class UploadServiceImpl(
     private val scope: CoroutineScope,
-    private val onUploadComplete: suspend (UploadTask) -> Unit = {}
+    private val onUploadComplete: suspend (UploadTask) -> Unit = {},
+    private val onUploadFailed: suspend (UploadTask) -> Unit = {}
 ) : UploadService {
 
     companion object {
@@ -108,13 +109,14 @@ class UploadServiceImpl(
                     val mediaUrl = json.optString("url", "")
                     val bucket = json.optString("bucket", "chat_media")
 
-                    // For private buckets (voice_notes, documents), generate a
-                    // signed URL via the Supabase Storage API so the recipient
-                    // can read the file. Public buckets (chat_media) keep the
-                    // public URL returned by the edge function.
-                    val finalUrl = if (bucket != "chat_media" && mediaUrl.isNotEmpty()) {
+                    // ALL chat buckets are private, so the public URL would 403
+                    // for the recipient. Sign EVERY url with the max expiry
+                    // (7 days) so the recipient can actually load the media.
+                    // Signed URLs bypass Storage RLS at GET time — the signature
+                    // itself grants read access to whoever holds the link.
+                    val finalUrl = if (mediaUrl.isNotEmpty()) {
                         fetchSignedUrl(bucket, extractObjectPath(mediaUrl, bucket))
-                            ?: mediaUrl
+                            ?: mediaUrl  // fallback: post-migration public URL
                     } else {
                         mediaUrl
                     }
@@ -152,6 +154,13 @@ class UploadServiceImpl(
                 )
                 tasksMap[task.id] = failedTask
                 refreshState()
+                // Notify the message layer so the staged message flips to
+                // FAILED and shows the retry affordance (was stuck SENDING).
+                try {
+                    onUploadFailed(failedTask)
+                } catch (e2: Exception) {
+                    Log.w(TAG, "onUploadFailed callback error: ${e2.message}")
+                }
             }
         }
         jobMap[task.id] = job
@@ -197,10 +206,20 @@ class UploadServiceImpl(
      * object. Returns null on failure.
      *
      *   POST /storage/v1/object/sign/{bucket}/{path}
-     *   Body: { "expiresIn": 3600 }
+     *   Body: { "expiresIn": 604800 }
      *   Response: { "signedURL": "/storage/v1/object/sign/...?token=..." }
+     *
+     * Tries the 7-day max expiry first (long-lived message media), falling
+     * back to 1 hour if the project rejects the long expiry.
      */
     private suspend fun fetchSignedUrl(bucket: String, objectPath: String): String? {
+        return withContext(Dispatchers.IO) {
+            fetchSignedUrlWithExpiry(bucket, objectPath, 604_800)
+                ?: fetchSignedUrlWithExpiry(bucket, objectPath, 3_600)
+        }
+    }
+
+    private suspend fun fetchSignedUrlWithExpiry(bucket: String, objectPath: String, expiresIn: Int): String? {
         return withContext(Dispatchers.IO) {
             try {
                 val supabaseClient = AppServiceContainer.supabaseClient
@@ -209,7 +228,7 @@ class UploadServiceImpl(
                     ?: com.example.config.BackendConfig.SUPABASE_ANON_KEY
                 val anonKey = com.example.config.BackendConfig.SUPABASE_ANON_KEY
 
-                val body = JSONObject().put("expiresIn", 3600).toString()
+                val body = JSONObject().put("expiresIn", expiresIn).toString()
                     .toRequestBody("application/json".toMediaType())
 
                 val request = Request.Builder()

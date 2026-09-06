@@ -220,6 +220,9 @@ fun SendLocationScreen(
             val myLocationOverlay = MyLocationNewOverlay(this)
             myLocationOverlay.setDrawAccuracyEnabled(true)
             myLocationOverlay.setEnableAutoStop(false)
+            // Must be ENABLED to draw: previously the overlay was added but
+            // enableMyLocation() was never called, so the "me dot" never showed.
+            myLocationOverlay.enableMyLocation()
             overlays.add(myLocationOverlay)
 
             // Tap-to-drop-pin (real reverse-geocoded selection, like WhatsApp).
