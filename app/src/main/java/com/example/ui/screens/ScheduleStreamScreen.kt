@@ -59,7 +59,11 @@ fun ScheduleStreamScreen(
     val coroutineScope = rememberCoroutineScope()
 
     var streamName by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf("Tech & Dev") }
+
+    // Category dropdown options: Education, Business, Meeting, Personal
+    val categoryOptions = listOf("Education", "Business", "Meeting", "Personal")
+    var selectedCategory by remember { mutableStateOf("Education") }
+    var categoryDropdownExpanded by remember { mutableStateOf(false) }
 
     val calendar = remember { Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) } }
     val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()) }
@@ -68,14 +72,16 @@ fun ScheduleStreamScreen(
     var selectedDate by remember { mutableStateOf(dateFormat.format(calendar.time)) }
     var selectedTime by remember { mutableStateOf(timeFormat.format(calendar.time)) }
 
-    // Slot options: 25, 50, 150, 200, 500, ANY
-    val slotOptions = listOf("25", "50", "150", "200", "500", "ANY")
-    var selectedSlot by remember { mutableStateOf("50") }
+    // Slot: Limited / Unlimited
+    val slotOptions = listOf("Unlimited", "Limited")
+    var selectedSlotType by remember { mutableStateOf("Unlimited") }
     var slotDropdownExpanded by remember { mutableStateOf(false) }
+    var slotNumberText by remember { mutableStateOf("50") }
 
-    // Type: FREE vs PAID
-    var streamType by remember { mutableStateOf(StreamPricingType.FREE) }
-    var typeDropdownExpanded by remember { mutableStateOf(false) }
+    // Type: Free / Paid
+    val pricingTypeOptions = listOf("Free", "Paid")
+    var selectedPricingType by remember { mutableStateOf("Free") }
+    var pricingDropdownExpanded by remember { mutableStateOf(false) }
 
     // Paid amount & Currency
     var amountText by remember { mutableStateOf("9.99") }
@@ -108,7 +114,7 @@ fun ScheduleStreamScreen(
         containerColor = DarkBackground,
         topBar = {
             com.example.ui.components.TriggerTopHeader(
-                title = "Schedule Stream",
+                title = "Create Streaming",
                 onBack = onBack
             )
         },
@@ -199,12 +205,12 @@ fun ScheduleStreamScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Stream Name Input
+                    // Stream Title Input
                     OutlinedTextField(
                         value = streamName,
                         onValueChange = { streamName = it },
-                        label = { Text("Stream Name / Title *") },
-                        placeholder = { Text("e.g., Next-Gen WebRTC Architecture Q&A") },
+                        label = { Text("Stream Title *") },
+                        placeholder = { Text("e.g. Next-Gen WebRTC Architecture Q&A") },
                         leadingIcon = {
                             Icon(Icons.Filled.Videocam, contentDescription = null, tint = AccentGreen)
                         },
@@ -219,47 +225,48 @@ fun ScheduleStreamScreen(
                             .testTag("stream_name_input")
                     )
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                    // Category Chips
+                    // Category Dropdown (Education, Business, Meeting, Personal)
                     Text(
-                        text = "Category",
+                        text = "Category *",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = TextSub
                     )
                     Spacer(modifier = Modifier.height(6.dp))
-                    val categories = listOf("Tech & Dev", "Music", "Education", "Gaming", "Talk")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ExposedDropdownMenuBox(
+                        expanded = categoryDropdownExpanded,
+                        onExpandedChange = { categoryDropdownExpanded = !categoryDropdownExpanded }
                     ) {
-                        categories.take(3).forEach { cat ->
-                            FilterChip(
-                                selected = selectedCategory == cat,
-                                onClick = { selectedCategory = cat },
-                                label = { Text(cat, fontSize = 12.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFE8F5E9),
-                                    selectedLabelColor = HeaderGreen
+                        OutlinedTextField(
+                            value = selectedCategory,
+                            onValueChange = {},
+                            readOnly = true,
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryDropdownExpanded) },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = HeaderGreen,
+                                focusedLabelColor = HeaderGreen
+                            ),
+                            modifier = Modifier
+                                .menuAnchor()
+                                .fillMaxWidth()
+                                .testTag("category_dropdown_field")
+                        )
+                        ExposedDropdownMenu(
+                            expanded = categoryDropdownExpanded,
+                            onDismissRequest = { categoryDropdownExpanded = false }
+                        ) {
+                            categoryOptions.forEach { cat ->
+                                DropdownMenuItem(
+                                    text = { Text(cat) },
+                                    onClick = {
+                                        selectedCategory = cat
+                                        categoryDropdownExpanded = false
+                                    }
                                 )
-                            )
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        categories.drop(3).forEach { cat ->
-                            FilterChip(
-                                selected = selectedCategory == cat,
-                                onClick = { selectedCategory = cat },
-                                label = { Text(cat, fontSize = 12.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFE8F5E9),
-                                    selectedLabelColor = HeaderGreen
-                                )
-                            )
+                            }
                         }
                     }
                 }
@@ -368,7 +375,7 @@ fun ScheduleStreamScreen(
                 }
             }
 
-            // Section 3: Slot Limit Dropdown (25, 50, 150, 200, 500, ANY)
+            // Section 3: Slot Limit Dropdown (Unlimited / Limited)
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = CardBackground),
@@ -384,7 +391,7 @@ fun ScheduleStreamScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Choose audience capacity. If ANY is selected, capacity is unlimited.",
+                        text = "Choose audience capacity: Unlimited or Limited to a specific number of seats.",
                         fontSize = 12.sp,
                         color = TextSub
                     )
@@ -395,12 +402,16 @@ fun ScheduleStreamScreen(
                         onExpandedChange = { slotDropdownExpanded = !slotDropdownExpanded }
                     ) {
                         OutlinedTextField(
-                            value = if (selectedSlot.equals("ANY", true)) "ANY (Unlimited Capacity)" else "$selectedSlot Attendees",
+                            value = selectedSlotType,
                             onValueChange = {},
                             readOnly = true,
+                            label = { Text("Slot Type *") },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = slotDropdownExpanded) },
                             shape = RoundedCornerShape(12.dp),
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = HeaderGreen),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = HeaderGreen,
+                                focusedLabelColor = HeaderGreen
+                            ),
                             modifier = Modifier
                                 .menuAnchor()
                                 .fillMaxWidth()
@@ -412,23 +423,40 @@ fun ScheduleStreamScreen(
                         ) {
                             slotOptions.forEach { opt ->
                                 DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            if (opt == "ANY") "ANY — Unlimited Capacity" else "$opt Attendees"
-                                        )
-                                    },
+                                    text = { Text(opt) },
                                     onClick = {
-                                        selectedSlot = opt
+                                        selectedSlotType = opt
                                         slotDropdownExpanded = false
                                     }
                                 )
                             }
                         }
                     }
+
+                    // If Limited: type box to type slot no
+                    AnimatedVisibility(visible = selectedSlotType == "Limited") {
+                        Column(modifier = Modifier.padding(top = 12.dp)) {
+                            OutlinedTextField(
+                                value = slotNumberText,
+                                onValueChange = { slotNumberText = it.filter { ch -> ch.isDigit() } },
+                                label = { Text("Slot Number *") },
+                                placeholder = { Text("e.g. 50") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = HeaderGreen,
+                                    focusedLabelColor = HeaderGreen
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("slot_number_input")
+                            )
+                        }
+                    }
                 }
             }
 
-            // Section 4: Type Dropdown (PAID / FREE) & Pricing
+            // Section 4: Type Dropdown (Free / Paid) & Pricing
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = CardBackground),
@@ -444,63 +472,62 @@ fun ScheduleStreamScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Type Dropdown: PAID / FREE
+                    // Type Dropdown: Free / Paid
                     ExposedDropdownMenuBox(
-                        expanded = typeDropdownExpanded,
-                        onExpandedChange = { typeDropdownExpanded = !typeDropdownExpanded }
+                        expanded = pricingDropdownExpanded,
+                        onExpandedChange = { pricingDropdownExpanded = !pricingDropdownExpanded }
                     ) {
                         OutlinedTextField(
-                            value = if (streamType == StreamPricingType.PAID) "PAID STREAM" else "FREE STREAM",
+                            value = if (selectedPricingType == "Paid") "Paid" else "Free",
                             onValueChange = {},
                             readOnly = true,
+                            label = { Text("Type *") },
                             leadingIcon = {
                                 Icon(
-                                    imageVector = if (streamType == StreamPricingType.PAID) Icons.Filled.Paid else Icons.Filled.LockOpen,
+                                    imageVector = if (selectedPricingType == "Paid") Icons.Filled.Paid else Icons.Filled.LockOpen,
                                     contentDescription = null,
                                     tint = AccentGreen
                                 )
                             },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = typeDropdownExpanded) },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = pricingDropdownExpanded) },
                             shape = RoundedCornerShape(12.dp),
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = HeaderGreen),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = HeaderGreen,
+                                focusedLabelColor = HeaderGreen
+                            ),
                             modifier = Modifier
                                 .menuAnchor()
                                 .fillMaxWidth()
                                 .testTag("type_dropdown_field")
                         )
                         ExposedDropdownMenu(
-                            expanded = typeDropdownExpanded,
-                            onDismissRequest = { typeDropdownExpanded = false }
+                            expanded = pricingDropdownExpanded,
+                            onDismissRequest = { pricingDropdownExpanded = false }
                         ) {
-                            DropdownMenuItem(
-                                text = { Text("FREE STREAM (Public & Open)") },
-                                onClick = {
-                                    streamType = StreamPricingType.FREE
-                                    typeDropdownExpanded = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("PAID STREAM (Ticket / Monetized)") },
-                                onClick = {
-                                    streamType = StreamPricingType.PAID
-                                    typeDropdownExpanded = false
-                                }
-                            )
+                            pricingTypeOptions.forEach { opt ->
+                                DropdownMenuItem(
+                                    text = { Text(opt) },
+                                    onClick = {
+                                        selectedPricingType = opt
+                                        pricingDropdownExpanded = false
+                                    }
+                                )
+                            }
                         }
                     }
 
-                    // If PAID: Show Type Box to type Amount and Choose Currency
-                    AnimatedVisibility(visible = streamType == StreamPricingType.PAID) {
+                    // If Paid: Currency dropdown and Amount type box
+                    AnimatedVisibility(visible = selectedPricingType == "Paid") {
                         Column(modifier = Modifier.padding(top = 12.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                // Amount Input
+                                // Amount Type Box
                                 OutlinedTextField(
                                     value = amountText,
                                     onValueChange = { amountText = it.filter { ch -> ch.isDigit() || ch == '.' } },
-                                    label = { Text("Ticket Price *") },
+                                    label = { Text("Amount *") },
                                     placeholder = { Text("9.99") },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     shape = RoundedCornerShape(12.dp),
@@ -513,7 +540,7 @@ fun ScheduleStreamScreen(
                                         .testTag("price_amount_input")
                                 )
 
-                                // Currency Dropdown
+                                // Currency Selection Dropdown
                                 ExposedDropdownMenuBox(
                                     expanded = currencyDropdownExpanded,
                                     onExpandedChange = { currencyDropdownExpanded = !currencyDropdownExpanded },
@@ -523,10 +550,13 @@ fun ScheduleStreamScreen(
                                         value = selectedCurrency,
                                         onValueChange = {},
                                         readOnly = true,
-                                        label = { Text("Currency") },
+                                        label = { Text("Currency *") },
                                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = currencyDropdownExpanded) },
                                         shape = RoundedCornerShape(12.dp),
-                                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = HeaderGreen),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = HeaderGreen,
+                                            focusedLabelColor = HeaderGreen
+                                        ),
                                         modifier = Modifier
                                             .menuAnchor()
                                             .fillMaxWidth()
@@ -702,67 +732,106 @@ fun ScheduleStreamScreen(
                 }
             }
 
-            // Schedule Button
-            Button(
-                onClick = {
-                    if (streamName.isBlank()) {
-                        snackbarMessage = "Please enter a title for your stream."
-                        return@Button
-                    }
-                    val amount = amountText.toDoubleOrNull() ?: 0.0
-                    if (streamType == StreamPricingType.PAID && amount <= 0.0) {
-                        snackbarMessage = "Please enter a valid ticket price greater than 0."
-                        return@Button
-                    }
-
-                    // Wrap in a coroutine so the isSubmitting spinner actually
-                    // renders (scheduleStream fires the server inserts in a
-                    // scope.launch internally; we still want the spinner to
-                    // show while the synchronous portion runs + briefly so
-                    // the user sees feedback).
-                    isSubmitting = true
-                    coroutineScope.launch {
-                        try {
-                            AppServiceContainer.streamScheduleService.scheduleStream(
-                                context = context,
-                                title = streamName.trim(),
-                                category = selectedCategory,
-                                date = selectedDate,
-                                time = selectedTime,
-                                slotLimit = selectedSlot,
-                                type = streamType,
-                                amount = if (streamType == StreamPricingType.PAID) amount else 0.0,
-                                currency = selectedCurrency,
-                                sendEmail = sendEmailNotification,
-                                sendPush = sendPushNotification
-                            )
-                            isSubmitting = false
-                            showSuccessDialog = true
-                        } catch (e: Exception) {
-                            isSubmitting = false
-                            snackbarMessage = "Failed to schedule stream: ${e.message ?: "unknown error"}"
-                        }
-                    }
-                },
+            // Action Buttons: Go Live Now & Schedule
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
-                    .testTag("schedule_stream_submit_btn"),
-                colors = ButtonDefaults.buttonColors(containerColor = HeaderGreen),
-                shape = RoundedCornerShape(12.dp),
-                enabled = !isSubmitting
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                if (isSubmitting) {
-                    CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
-                } else {
-                    Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
+                // Go Live Now Button
+                Button(
+                    onClick = {
+                        if (streamName.isBlank()) {
+                            snackbarMessage = "Please enter a stream title."
+                            return@Button
+                        }
+                        val finalTitle = streamName.trim()
+                        val channel = "stream_" + System.currentTimeMillis()
+                        AppServiceContainer.agoraService.startLiveStream(finalTitle, channel)
+                        onBack()
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp)
+                        .testTag("go_live_now_btn"),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Filled.Videocam, contentDescription = null, modifier = Modifier.size(20.dp), tint = Color.White)
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Schedule Stream Now",
-                        fontSize = 16.sp,
+                        text = "Go Live Now",
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
+                }
+
+                // Schedule Button
+                Button(
+                    onClick = {
+                        if (streamName.isBlank()) {
+                            snackbarMessage = "Please enter a title for your stream."
+                            return@Button
+                        }
+                        val isPaid = selectedPricingType == "Paid"
+                        val amount = amountText.toDoubleOrNull() ?: 0.0
+                        if (isPaid && amount <= 0.0) {
+                            snackbarMessage = "Please enter a valid ticket price greater than 0."
+                            return@Button
+                        }
+                        val finalSlotLimit = if (selectedSlotType == "Limited") {
+                            slotNumberText.ifBlank { "50" }
+                        } else {
+                            "ANY"
+                        }
+                        val streamType = if (isPaid) StreamPricingType.PAID else StreamPricingType.FREE
+
+                        isSubmitting = true
+                        coroutineScope.launch {
+                            try {
+                                AppServiceContainer.streamScheduleService.scheduleStream(
+                                    context = context,
+                                    title = streamName.trim(),
+                                    category = selectedCategory,
+                                    date = selectedDate,
+                                    time = selectedTime,
+                                    slotLimit = finalSlotLimit,
+                                    type = streamType,
+                                    amount = if (isPaid) amount else 0.0,
+                                    currency = selectedCurrency,
+                                    sendEmail = sendEmailNotification,
+                                    sendPush = sendPushNotification
+                                )
+                                isSubmitting = false
+                                showSuccessDialog = true
+                            } catch (e: Exception) {
+                                isSubmitting = false
+                                snackbarMessage = "Failed to schedule stream: ${e.message ?: "unknown error"}"
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp)
+                        .testTag("schedule_stream_submit_btn"),
+                    colors = ButtonDefaults.buttonColors(containerColor = HeaderGreen),
+                    shape = RoundedCornerShape(12.dp),
+                    enabled = !isSubmitting
+                ) {
+                    if (isSubmitting) {
+                        CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
+                    } else {
+                        Icon(Icons.Filled.CalendarMonth, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color.White)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Schedule",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(20.dp))
@@ -799,8 +868,18 @@ fun ScheduleStreamScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(10.dp)) {
-                            Text("👥 Slot Limit: ${if (selectedSlot.equals("ANY", true)) "Unlimited" else "$selectedSlot Seats"}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = HeaderGreen)
-                            Text("💰 Pricing: ${if (streamType == StreamPricingType.PAID) "$selectedCurrency $amountText" else "Free"}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = HeaderGreen)
+                            Text(
+                                text = "👥 Slot Limit: ${if (selectedSlotType == "Limited") "$slotNumberText Seats" else "Unlimited"}",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = HeaderGreen
+                            )
+                            Text(
+                                text = "💰 Pricing: ${if (selectedPricingType == "Paid") "$selectedCurrency $amountText" else "Free"}",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = HeaderGreen
+                            )
                             Text("📧 Sent to: $registeredEmail", fontSize = 12.sp, color = TextSub)
                         }
                     }

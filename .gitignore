@@ -34,6 +34,7 @@ supabase/.temp
 # Deno / Node caches.
 .deno/
 node_modules/
+node-compile-cache/
 
 # Local test artifacts.
 *.log

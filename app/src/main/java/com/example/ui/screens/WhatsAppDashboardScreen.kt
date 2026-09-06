@@ -5,9 +5,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -106,8 +108,12 @@ fun WhatsAppDashboardScreen(
         containerColor = Color.White,
         topBar = {
             if (selectedTab != DashboardTab.PROFILE) {
+                val isStreamTab = selectedTab == DashboardTab.STREAM
                 Column {
                     WhatsAppTopHeader(
+                        title = if (isStreamTab) "Live Stream" else "Trigger App",
+                        isStreamHeader = isStreamTab,
+                        onNewStreamClick = onNavigateToScheduleStream,
                         onCameraClick = { showCameraDialog = true },
                         onMenuClick = { showTopMenu = true },
                         showMenu = showTopMenu,
@@ -181,16 +187,16 @@ fun WhatsAppDashboardScreen(
                 }
                 DashboardTab.STREAM -> {
                     FloatingActionButton(
-                        onClick = { showGoLiveDialog = true },
+                        onClick = onNavigateToScheduleStream,
                         shape = RoundedCornerShape(16.dp),
                         containerColor = TriggerFabGreen,
                         contentColor = Color.White,
                         elevation = FloatingActionButtonDefaults.elevation(3.dp),
-                        modifier = Modifier.testTag("go_live_fab")
+                        modifier = Modifier.testTag("new_stream_fab")
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.LiveTv,
-                            contentDescription = "Go Live",
+                            imageVector = Icons.Filled.VideoCall,
+                            contentDescription = "New Stream",
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -513,6 +519,9 @@ fun WhatsAppDashboardScreen(
 
 @Composable
 fun WhatsAppTopHeader(
+    title: String = "Trigger App",
+    isStreamHeader: Boolean = false,
+    onNewStreamClick: () -> Unit = {},
     onCameraClick: () -> Unit,
     onMenuClick: () -> Unit,
     showMenu: Boolean,
@@ -522,8 +531,12 @@ fun WhatsAppTopHeader(
     onRestartOnboarding: () -> Unit,
     onToggleNetwork: () -> Unit = {}
 ) {
+    val headerBgColor = if (isStreamHeader) TriggerHeaderGreen else Color.White
+    val titleColor = if (isStreamHeader) Color.White else TriggerHeaderGreen
+    val iconColor = if (isStreamHeader) Color.White else Color(0xFF111B21)
+
     Surface(
-        color = Color.White,
+        color = headerBgColor,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
@@ -540,27 +553,42 @@ fun WhatsAppTopHeader(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-            // Brand name "Trigger App"
+            // Brand name or "Live Stream"
             Text(
-                text = "Trigger App",
-                color = TriggerHeaderGreen,
+                text = title,
+                color = titleColor,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.3).sp,
                 modifier = Modifier.weight(1f)
             )
 
-            // Top action icons: Camera & MoreVert
-            IconButton(
-                onClick = onCameraClick,
-                modifier = Modifier.size(38.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.PhotoCamera,
-                    contentDescription = "Camera",
-                    tint = Color(0xFF111B21),
-                    modifier = Modifier.size(24.dp)
-                )
+            if (isStreamHeader) {
+                // New stream icon navigating to Stream Create page
+                IconButton(
+                    onClick = onNewStreamClick,
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.VideoCall,
+                        contentDescription = "New Stream",
+                        tint = iconColor,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            } else {
+                // Camera icon on regular tabs
+                IconButton(
+                    onClick = onCameraClick,
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.PhotoCamera,
+                        contentDescription = "Camera",
+                        tint = iconColor,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
 
             Box {
@@ -571,7 +599,7 @@ fun WhatsAppTopHeader(
                     Icon(
                         imageVector = Icons.Filled.MoreVert,
                         contentDescription = "More options",
-                        tint = Color(0xFF111B21),
+                        tint = iconColor,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -1384,7 +1412,7 @@ fun CallLogItem(
 
 @Composable
 fun StreamTabContent(
-    onGoLive: () -> Unit,
+    onGoLive: () -> Unit = {},
     onNavigateToScheduleStream: () -> Unit = {},
     onNavigateToStreamHistory: () -> Unit = {}
 ) {
@@ -1393,7 +1421,7 @@ fun StreamTabContent(
     val scheduledStreams by com.example.di.AppServiceContainer.streamScheduleService.scheduledStreams.collectAsState()
     val streamHistory by com.example.di.AppServiceContainer.streamScheduleService.streamHistory.collectAsState()
 
-    var selectedSection by remember { mutableStateOf("Scheduled") }
+    var selectedSection by remember { mutableStateOf("My Stream") }
     var selectedStreamForBooking by remember { mutableStateOf<com.example.service.ScheduledStream?>(null) }
     var actionToastMessage by remember { mutableStateOf<String?>(null) }
 
@@ -1404,157 +1432,53 @@ fun StreamTabContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Go Live Now & Schedule Hero
-        item {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = TriggerHeaderGreen
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFFFF5252))
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "LIVE & SCHEDULED BROADCASTS",
-                                    color = Color.White.copy(alpha = 0.85f),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 1.sp
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Interactive Streams",
-                                color = Color.White,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Go live instantly, schedule future talks with audience limits, or monetize with paid ticket slots.",
-                                color = Color.White.copy(alpha = 0.85f),
-                                fontSize = 13.sp,
-                                lineHeight = 18.sp
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    // Action Buttons Row: Go Live Now & Schedule Stream
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Button(
-                            onClick = onGoLive,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color.White,
-                                contentColor = TriggerHeaderGreen
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp)
-                                .testTag("go_live_now_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Videocam,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Go Live Now",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
-                        }
-
-                        Button(
-                            onClick = onNavigateToScheduleStream,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF00A884),
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp)
-                                .testTag("schedule_stream_nav_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.CalendarMonth,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Schedule",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Section Tabs Row (Scheduled, Live Channels, History)
+        // Section Tabs Row (My Stream, Upcoming, Live Now, History)
         item {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = selectedSection == "Scheduled",
-                        onClick = { selectedSection = "Scheduled" },
-                        label = { Text("Scheduled (${scheduledStreams.size})") },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(0xFFE8F5E9),
-                            selectedLabelColor = TriggerHeaderGreen
-                        )
+                FilterChip(
+                    selected = selectedSection == "My Stream",
+                    onClick = { selectedSection = "My Stream" },
+                    label = { Text("My Stream (${streamHistory.size})") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFFE8F5E9),
+                        selectedLabelColor = TriggerHeaderGreen
                     )
-                    FilterChip(
-                        selected = selectedSection == "Live",
-                        onClick = { selectedSection = "Live" },
-                        label = { Text("Live Now (${agoraState.activeStreams.size})") },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(0xFFE8F5E9),
-                            selectedLabelColor = TriggerHeaderGreen
-                        )
+                )
+                FilterChip(
+                    selected = selectedSection == "Upcoming",
+                    onClick = { selectedSection = "Upcoming" },
+                    label = { Text("Upcoming (${scheduledStreams.size})") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFFE8F5E9),
+                        selectedLabelColor = TriggerHeaderGreen
                     )
-                    FilterChip(
-                        selected = selectedSection == "History",
-                        onClick = { selectedSection = "History" },
-                        label = { Text("History (${streamHistory.size})") },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(0xFFE8F5E9),
-                            selectedLabelColor = TriggerHeaderGreen
-                        )
+                )
+                FilterChip(
+                    selected = selectedSection == "Live Now",
+                    onClick = { selectedSection = "Live Now" },
+                    label = { Text("Live Now (${agoraState.activeStreams.size})") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFFE8F5E9),
+                        selectedLabelColor = TriggerHeaderGreen
                     )
-                }
+                )
+                FilterChip(
+                    selected = selectedSection == "History",
+                    onClick = { selectedSection = "History" },
+                    label = { Text("History (${streamHistory.size})") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFFE8F5E9),
+                        selectedLabelColor = TriggerHeaderGreen
+                    )
+                )
 
-                if (selectedSection == "History") {
+                if (selectedSection == "History" || selectedSection == "My Stream") {
                     TextButton(onClick = onNavigateToStreamHistory) {
                         Text("View All", color = TriggerHeaderGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
@@ -1564,7 +1488,48 @@ fun StreamTabContent(
 
         // Section Content
         when (selectedSection) {
-            "Scheduled" -> {
+            "My Stream" -> {
+                // Show previous ended streaming
+                if (streamHistory.isEmpty()) {
+                    item {
+                        Card(
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(Icons.Filled.History, contentDescription = null, tint = Color(0xFF667781), modifier = Modifier.size(40.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("No Previous Streams", fontWeight = FontWeight.Bold, color = GeometricTextDark)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text("Your completed and ended streaming broadcasts will appear here.", fontSize = 12.sp, color = Color(0xFF667781))
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Button(
+                                    onClick = onNavigateToScheduleStream,
+                                    colors = ButtonDefaults.buttonColors(containerColor = TriggerHeaderGreen),
+                                    shape = RoundedCornerShape(20.dp)
+                                ) {
+                                    Icon(Icons.Filled.VideoCall, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Create Stream", color = Color.White, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    items(streamHistory, key = { it.id }) { item ->
+                        StreamHistoryCard(item)
+                    }
+                }
+            }
+
+            "Upcoming" -> {
+                // Show upcoming scheduled stream details
                 if (scheduledStreams.isEmpty()) {
                     item {
                         Card(
@@ -1580,9 +1545,19 @@ fun StreamTabContent(
                             ) {
                                 Icon(Icons.Filled.EventAvailable, contentDescription = null, tint = Color(0xFF667781), modifier = Modifier.size(40.dp))
                                 Spacer(modifier = Modifier.height(8.dp))
-                                Text("No Scheduled Streams", fontWeight = FontWeight.Bold, color = GeometricTextDark)
+                                Text("No Upcoming Streams", fontWeight = FontWeight.Bold, color = GeometricTextDark)
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text("Schedule your first interactive event with slots & pricing.", fontSize = 12.sp, color = Color(0xFF667781))
+                                Text("Schedule upcoming streams with attendee slots and monetization.", fontSize = 12.sp, color = Color(0xFF667781))
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Button(
+                                    onClick = onNavigateToScheduleStream,
+                                    colors = ButtonDefaults.buttonColors(containerColor = TriggerHeaderGreen),
+                                    shape = RoundedCornerShape(20.dp)
+                                ) {
+                                    Icon(Icons.Filled.CalendarMonth, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Schedule a Stream", color = Color.White, fontSize = 13.sp)
+                                }
                             }
                         }
                     }
@@ -1607,7 +1582,7 @@ fun StreamTabContent(
                 }
             }
 
-            "Live" -> {
+            "Live Now" -> {
                 if (agoraState.activeStreams.isEmpty()) {
                     item {
                         Card(
@@ -1625,7 +1600,7 @@ fun StreamTabContent(
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text("No Active Live Streams", fontWeight = FontWeight.Bold, color = GeometricTextDark)
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text("Tap 'Go Live Now' above to broadcast to the community.", fontSize = 12.sp, color = Color(0xFF667781))
+                                Text("There are no live streams broadcasting right now.", fontSize = 12.sp, color = Color(0xFF667781))
                             }
                         }
                     }
@@ -1642,8 +1617,31 @@ fun StreamTabContent(
             }
 
             "History" -> {
-                items(streamHistory, key = { it.id }) { item ->
-                    StreamHistoryCard(item)
+                if (streamHistory.isEmpty()) {
+                    item {
+                        Card(
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(Icons.Filled.History, contentDescription = null, tint = Color(0xFF667781), modifier = Modifier.size(40.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("No Broadcast History", fontWeight = FontWeight.Bold, color = GeometricTextDark)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text("Completed broadcasts will appear here.", fontSize = 12.sp, color = Color(0xFF667781))
+                            }
+                        }
+                    }
+                } else {
+                    items(streamHistory, key = { it.id }) { item ->
+                        StreamHistoryCard(item)
+                    }
                 }
             }
         }
