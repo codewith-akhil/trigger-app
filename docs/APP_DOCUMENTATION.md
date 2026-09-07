@@ -293,6 +293,30 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-07 (release distribution moved to Supabase Storage):** The sandbox
+  gateway kept aborting large downloads (`/api/download` streamed ~151 MB
+  through the preview proxy and died mid-transfer every time), so the signed
+  release artifacts are now hosted on **Supabase Storage, bucket `releases`**:
+  `builds/<commit>/` holds the immutable objects, `latest/manifest.json` is
+  the single atomic pointer (versionName/versionCode, commit, sizes,
+  per-part + full-file sha256, mirror URLs). Supabase **free plan caps a
+  single upload at 50 MB** (verified empirically: simple POST, TUS resumable
+  and even existing bucket-level limits are all gated by the global 50 MB
+  cap; Management API returns HTTP 402 to raise it on the free plan), so the
+  APK (151,078,593 B → 3 parts) and AAB (75,522,785 B → 2 parts) are stored
+  as sha256-verified parts and reassembled **in the browser** by the download
+  page (per-part checksum verification with retry, progress UI, blob
+  assembly; GitHub release `v1.0-test` stays a one-click mirror, and
+  `/api/download` now 302-redirects to it instead of streaming through the
+  gateway). Future rebuilds: `scripts/upload-release.sh` enforces the
+  **delete-old → upload-new** policy (content-addressed build folder, atomic
+  manifest switch, HEAD + full reassembly sha256 verification, stale-object
+  purge after the manifest-cache window, `--purge-only` resume mode) and runs
+  automatically at the end of `trigger-recover.sh` (whose repo `.env` backup
+  now lives durably at `secrets/repo-env.txt`). Verified end-to-end:
+  reassembled sha256 APK `3aa7c979…` / AAB `dce1e9e5…` byte-identical to the
+  signed build; browser download completed and checksum-verified on desktop
+  and mobile layouts.
 - **2026-09-07 (deep full-stack audit — 68 verified findings fixed):**
   Four-parallel-agent audit (UI / data / edge functions / DB+RLS) with every
   finding hand-verified before fixing. **BLOCKERS:** media uploads ran
