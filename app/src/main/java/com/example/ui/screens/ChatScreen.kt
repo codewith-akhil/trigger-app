@@ -9,6 +9,7 @@ import android.net.Uri
 import android.provider.ContactsContract
 import android.provider.OpenableColumns
 import android.view.inputmethod.InputMethodManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -102,12 +103,23 @@ fun ChatScreen(
                     // legacy peer key — send-message self-heals server-side.
                     ?: peerId
             if (resolvedPeerId == null) resolvedPeerId = peerId
-        } else if (resolvedPeerId == null) {
+        } else {
             // Opened by conversation uuid (dashboard) — recover the peer for
             // presence/typing/calls from the local conversation row (v6 column).
-            val conv = com.example.di.AppServiceContainer.chatRepository
-                .getConversationByIdOnce(conversationId)
-            resolvedPeerId = conv?.peerId ?: ""
+            if (resolvedPeerId == null) {
+                val conv = com.example.di.AppServiceContainer.chatRepository
+                    .getConversationByIdOnce(conversationId)
+                resolvedPeerId = conv?.peerId ?: ""
+            }
+            // Canonical-row heal: the pair may hold two mirror conversation
+            // rows while messages live on the OLDEST one. If we were opened
+            // with a mirror id, switch to the canonical id so the thread
+            // matches the peer's (critical after accepting a message request).
+            val canonical = (com.example.di.AppServiceContainer.messageService as? com.example.service.MessageServiceImpl)
+                ?.resolveCanonicalConversationId(conversationId)
+            if (!canonical.isNullOrBlank() && canonical != conversationId) {
+                resolvedConversationId = canonical
+            }
         }
     }
 
@@ -135,6 +147,8 @@ fun ChatScreen(
 
     val messages by viewModel.messages.collectAsState()
     val presence by viewModel.contactPresence.collectAsState()
+    val conversationMeta by viewModel.conversationMeta.collectAsState()
+    val requestNotice by viewModel.requestNotice.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
     val activeCall by viewModel.activeCall.collectAsState()
     val activeUploads by viewModel.activeUploads.collectAsState()
@@ -167,6 +181,20 @@ fun ChatScreen(
 
     val context = LocalContext.current
     val isBlocked = conversationInfo?.isBlocked ?: false
+
+    // Message-request state (Instagram model)
+    val isRequestPending = conversationMeta?.requestStatus == "pending"
+    val isRequestReceiver = isRequestPending && conversationMeta?.isRequester == false
+    val isRequestRequester = isRequestPending && conversationMeta?.isRequester == true
+
+    // Blocked-send / action notices surface as a toast (same channel the
+    // rest of the screen uses for lightweight feedback).
+    LaunchedEffect(requestNotice) {
+        requestNotice?.let {
+            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            viewModel.clearRequestNotice()
+        }
+    }
 
     var showContactInfoSheet by remember { mutableStateOf(false) }
     var showAttachmentSheet by remember { mutableStateOf(false) }
@@ -567,7 +595,11 @@ fun ChatScreen(
                     // Normal Chat Top App Bar
                     ChatMainTopBar(
                         contactName = contactName,
-                        presenceText = if (isBlocked) "Blocked" else presence.second,
+                        presenceText = when {
+                            isBlocked -> "Blocked"
+                            isRequestPending -> "Message request"
+                            else -> presence.second
+                        },
                         avatarRes = contactAvatarRes,
                         onBack = onBack,
                         onHeaderClick = { showContactInfoSheet = true },
@@ -630,6 +662,17 @@ fun ChatScreen(
                         }
                     )
             ) {
+                // Message-request banner — RECEIVER must accept/decline before
+                // the conversation unlocks (replying is blocked server-side too).
+                if (isRequestReceiver) {
+                    MessageRequestReceiverBanner(
+                        senderName = contactName,
+                        onAccept = { viewModel.acceptMessageRequest() },
+                        onDecline = { viewModel.declineMessageRequest() }
+                    )
+                } else if (isRequestRequester) {
+                    MessageRequestRequesterBanner(messagesSent = conversationMeta?.myRequestMessageCount ?: 0)
+                }
                 if (isBlocked) {
                     // Blocked contact notice banner
                     Surface(
@@ -697,7 +740,7 @@ fun ChatScreen(
                             onCancel = { viewModel.cancelEditing() },
                             onSave = { viewModel.saveEdit() }
                         )
-                    } else {
+                    } else if (!isRequestReceiver) {
                         ChatComposerBar(
                             text = inputText,
                             onTextChanged = {
@@ -792,6 +835,9 @@ fun ChatScreen(
                                 }
                             )
                         }
+                    } else {
+                        // RECEIVER still deciding — composer locked until accept.
+                        MessageRequestComposerLocked()
                     }
                 }
             }
@@ -2349,4 +2395,125 @@ private fun LiveLocationStatusBar(
 private fun formatLiveExpiry(expiresAtMillis: Long): String {
     val mins = ((expiresAtMillis - System.currentTimeMillis()) / 60000L).coerceAtLeast(0)
     return if (mins >= 60) "${mins / 60}h ${mins % 60}m" else "${mins}m"
+}
+
+// ============================================================================
+// Message-request banners (Instagram model)
+// ============================================================================
+
+/** RECEIVER: accept / decline an incoming message request. */
+@Composable
+private fun MessageRequestReceiverBanner(
+    senderName: String,
+    onAccept: () -> Unit,
+    onDecline: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFFD8FDD2),
+        shadowElevation = 2.dp
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Filled.PersonAddAlt1,
+                    contentDescription = null,
+                    tint = Color(0xFF0B614E),
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "$senderName wants to chat with you",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF183B2A),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onAccept,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00A884)),
+                    shape = RoundedCornerShape(20.dp),
+                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 6.dp)
+                ) {
+                    Text("Accept", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+                OutlinedButton(
+                    onClick = onDecline,
+                    shape = RoundedCornerShape(20.dp),
+                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 6.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD32F2F))
+                ) {
+                    Text("Decline", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+            }
+        }
+    }
+}
+
+/** REQUESTER: waiting-for-acceptance status with the 3-message budget. */
+@Composable
+private fun MessageRequestRequesterBanner(messagesSent: Int) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFFFDF3D8)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Schedule,
+                contentDescription = null,
+                tint = Color(0xFF8A6D1A),
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Message request • $messagesSent of 3 messages sent — " +
+                    "${(3 - messagesSent).coerceAtLeast(0)} left until they accept",
+                fontSize = 12.sp,
+                color = Color(0xFF6B5616),
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+/** RECEIVER: composer placeholder while the request is still undecided. */
+@Composable
+private fun MessageRequestComposerLocked() {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = Color(0xFFF0F2F5)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Lock,
+                contentDescription = null,
+                tint = Color(0xFF667781),
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Accept the request above to reply",
+                fontSize = 13.sp,
+                color = Color(0xFF667781)
+            )
+        }
+    }
 }

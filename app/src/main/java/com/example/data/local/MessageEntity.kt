@@ -52,6 +52,8 @@ data class MessageEntity(
     val locationComment: String? = null,  // user comment attached to a location share
     val contactName: String? = null,
     val contactPhone: String? = null,
+    val callType: String? = null,      // CALL_LOG: "audio" | "video"
+    val callDurationSec: Int = 0,      // CALL_LOG: duration in seconds
     val reactionsRaw: String = "" // e.g. "❤️:1:false,👍:2:true"
 ) {
     fun toDomainMessage(
@@ -116,6 +118,8 @@ data class MessageEntity(
             locationComment = locationComment,
             contactName = contactName,
             contactPhone = contactPhone,
+            callType = callType,
+            callDurationSec = callDurationSec,
             reactions = parsedReactions,
             uploadProgress = uploadProgress,
             uploadSpeed = uploadSpeed,
@@ -164,6 +168,8 @@ data class MessageEntity(
                 locationComment = domain.locationComment,
                 contactName = domain.contactName,
                 contactPhone = domain.contactPhone,
+                callType = domain.callType,
+                callDurationSec = domain.callDurationSec,
                 reactionsRaw = reactionsString
             )
         }

@@ -101,31 +101,50 @@ object AppServiceContainer {
             rtcManager = agoraRtcEngineManager,
             supabaseClient = supabaseClient,
             scope = appScope
-        ) { contactId, type, durationSec, isMissed ->
-            // Insert call log message into chat
-            val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
-            val callText = if (isMissed) {
-                "📞 Missed ${if (type == CallType.VIDEO) "video" else "audio"} call"
-            } else {
-                val mins = durationSec / 60
-                val secs = durationSec % 60
-                val durString = if (mins > 0) "$mins min $secs sec" else "$secs sec"
-                "📞 ${if (type == CallType.VIDEO) "Video" else "Audio"} call, $durString"
-            }
+        ) { contactId, type, durationSec, isMissed, isOutgoing ->
+            // Call-history persistence. Only the CALLER writes the CALL_LOG
+            // message (the receiver's copy arrives via Realtime), so both
+            // participants get exactly ONE record with the duration. contactId
+            // here is the peer's USER uuid — the real conversation uuid is
+            // resolved through the message service (H4) and the call metadata
+            // is stored in messages.call_type / call_duration_sec (DB history).
+            if (isOutgoing) {
+                appScope.launch(kotlinx.coroutines.CoroutineName("callLogPersist")) {
+                    try {
+                        val me = supabaseClient.currentSession?.user?.id
+                            ?: return@launch
+                        val conversationId = messageService.resolveOrCreateConversation(contactId)
+                            ?: return@launch
 
-            val callLogMsg = DomainMessage(
-                id = java.util.UUID.randomUUID().toString(),
-                conversationId = contactId,
-                senderId = "me",
-                senderName = "You",
-                type = MessageType.CALL_LOG,
-                text = callText,
-                timestamp = time,
-                timestampMillis = System.currentTimeMillis(),
-                isOutgoing = true,
-                status = com.example.model.MessageStatus.READ
-            )
-            chatRepository.sendMessage(callLogMsg, isOnline = true)
+                        val callText = if (isMissed) {
+                            "📞 Missed ${if (type == CallType.VIDEO) "video" else "audio"} call"
+                        } else {
+                            val mins = durationSec / 60
+                            val secs = durationSec % 60
+                            val durString = if (mins > 0) "$mins min $secs sec" else "$secs sec"
+                            "📞 ${if (type == CallType.VIDEO) "Video" else "Audio"} call, $durString"
+                        }
+                        val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
+                        val callLogMsg = DomainMessage(
+                            id = java.util.UUID.randomUUID().toString(),
+                            conversationId = conversationId,
+                            senderId = me,
+                            senderName = "You",
+                            type = MessageType.CALL_LOG,
+                            text = callText,
+                            timestamp = time,
+                            timestampMillis = System.currentTimeMillis(),
+                            isOutgoing = true,
+                            status = com.example.model.MessageStatus.SENT,
+                            callType = if (type == CallType.VIDEO) "video" else "audio",
+                            callDurationSec = durationSec
+                        )
+                        messageService.sendMessage(callLogMsg, peerId = contactId, peerName = null)
+                    } catch (e: Exception) {
+                        android.util.Log.w("AppServiceContainer", "call log persist failed: ${e.message}")
+                    }
+                }
+            }
         }
 
         liveStreamService = com.example.service.agora.AgoraLiveStreamService(

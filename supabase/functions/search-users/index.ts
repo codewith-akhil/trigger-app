@@ -1,13 +1,14 @@
 // Edge function: search-users
-// Search by username. Returns matching users (excluding self).
+// Search by username OR full name OR phone. Returns matching users (excluding
+// self). Presence fields are NEVER returned here — online/last seen are only
+// visible inside an accepted conversation (see user_presences RLS).
 //
 // Security:
 //   - Requires a valid Supabase JWT.
 //   - Rate-limited per IP (20 requests / 5 min) to slow enumeration.
-//   - Query is validated against a strict allow-list (alphanumeric + ._-,
-//     max 50 chars) — defense-in-depth against PostgREST filter injection.
-//   - Uses .ilike("username", ...) rather than .or(...) with interpolated
-//     input — the previous .or() filter was an injection vector.
+//   - Query is validated against a strict allow-list before being used in a
+//     PostgREST .or() filter — commas/parens/quotes (filter-injection chars)
+//     are stripped, so interpolation is safe.
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { handleOptions, json, errorResponse, ErrorCode } from "../_shared/cors.ts";
 import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
@@ -27,7 +28,6 @@ async function handler(req: Request): Promise<Response> {
   const userId = await resolveUserId(req.headers.get("Authorization"));
   if (!userId) return errorResponse("Unauthorized", 401, ErrorCode.UNAUTHORIZED);
 
-  // --- Rate limit per IP (search is a sensitive enumeration surface) ---
   const ip = (req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "anonymous")
     .split(",")[0].trim();
   const rl = checkRateLimit(req, ip, SEARCH_LIMIT);
@@ -42,28 +42,36 @@ async function handler(req: Request): Promise<Response> {
   try { body = await req.json(); } catch { return json({ error: "Invalid body" }, 400); }
 
   // --- Sanitize + validate the query ----------------------------------------
-  // Allow alphanumeric + a few safe chars used in usernames. Max 50 chars.
-  // Stripping leading "@" handles the "@username" search style. Any query
-  // that doesn't match the allow-list returns an empty result set rather
-  // than an error — the client treats both the same.
-  const raw = (body.query ?? "").trim().replace(/^@/, "");
+  const raw = (body.query ?? "").trim().replace(/^@/, "").replace(/\s+/g, " ");
   if (raw.length < 2 || raw.length > 50) return json({ users: [] });
-  if (!/^[A-Za-z0-9._\-]+$/.test(raw)) return json({ users: [] });
-  const query = raw.toLowerCase();
+  // Allow username/name chars + spaces; strip every PostgREST filter-injection
+  // character (, ( ) " :) entirely so .or() interpolation stays safe.
+  const safe = raw.replace(/[,()":\\*]/g, "");
+  if (safe.length < 2 || !/^[A-Za-z0-9 ._\-']+$/.test(safe)) return json({ users: [] });
 
   const supabase = createAdminClient();
-  // Search by username only (ilike). The previous .or(...) builder
-  // interpolated the unsanitized query directly into a PostgREST filter
-  // string, allowing an attacker to inject additional filters
-  // (e.g. ",email.eq.admin@x,") — .ilike() on a single column is safe.
+
+  // Username or full-name match (case-insensitive). If the query looks like a
+  // phone number, match phone digits too.
+  const orParts = [`username.ilike.%${safe}%`, `full_name.ilike.%${safe}%`];
+  const digits = raw.replace(/[^0-9]/g, "");
+  if (digits.length >= 6 && digits.length <= 15) {
+    orParts.push(`phone.ilike.%${digits}%`);
+  }
+
+  // Presence is deliberately NOT selected — search results must not leak
+  // online/last-seen for users who are not accepted contacts.
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, full_name, username, avatar_url, phone")
+    .select("id, full_name, username, avatar_url")
     .neq("id", userId)
-    .ilike("username", `%${query}%`)
+    .or(orParts.join(","))
     .limit(20);
 
-  if (error) return json({ error: "Search failed" }, 500);
+  if (error) {
+    console.error("search-users failed", error);
+    return json({ error: "Search failed" }, 500);
+  }
   return json({ users: data ?? [] });
 }
 serve(handler, { port: 9032 });

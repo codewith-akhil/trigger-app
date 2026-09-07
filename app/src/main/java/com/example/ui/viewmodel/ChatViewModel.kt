@@ -79,6 +79,134 @@ class ChatViewModel(
     val conversationInfo = repository.getConversation(conversationId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    // ---------- Message-request state (Instagram model) ----------
+    // The canonical conversation row carries request_status: while it is
+    // "pending", the REQUESTER may send at most 3 messages and the RECEIVER
+    // must accept before replying; presence is hidden (server-side RLS gate).
+    data class ConversationMeta(
+        val requestStatus: String,      // pending | accepted | blocked | declined
+        val isRequester: Boolean,       // I sent the request (I own the canonical row)
+        val myRequestMessageCount: Int, // messages I already sent while pending (0..3)
+        val pendingRequestId: String?   // message_requests.id when the receiver needs to act
+    )
+
+    private val _conversationMeta = MutableStateFlow<ConversationMeta?>(null)
+    val conversationMeta: StateFlow<ConversationMeta?> = _conversationMeta.asStateFlow()
+
+    /** One-shot notice for the UI when a send is blocked by request rules. */
+    val requestNotice = MutableStateFlow<String?>(null)
+
+    fun clearRequestNotice() { requestNotice.value = null }
+
+    /** True while the pair is still in the pending-request phase. */
+    val isMessageRequestPending: Boolean
+        get() = _conversationMeta.value?.requestStatus == "pending"
+
+    private var requestPollingJob: Job? = null
+
+    fun refreshConversationMeta() {
+        viewModelScope.launch {
+            _conversationMeta.value = fetchConversationMeta()
+            startRequestPolling()
+        }
+    }
+
+    private suspend fun fetchConversationMeta(): ConversationMeta? {
+        if (conversationId.isBlank()) return null
+        return try {
+            val res = supabaseClient.getTable(
+                "conversations",
+                "id=eq.$conversationId&select=id,owner_id,peer_id,request_status&limit=1"
+            )
+            val row = (res as? SupabaseResult.Success)?.data?.optJSONObject(0) ?: return null
+            val status = row.optString("request_status", "accepted").ifBlank { "accepted" }
+            val ownerId = row.optString("owner_id", "")
+            val myId = supabaseClient.currentSession?.user?.id ?: ""
+            val isRequester = ownerId.isNotBlank() && ownerId == myId
+            var myCount = 0
+            var pendingRequestId: String? = null
+            if (status == "pending") {
+                if (isRequester) {
+                    val mine = supabaseClient.getTable(
+                        "messages",
+                        "conversation_id=eq.$conversationId&sender_id=eq.$myId&select=id"
+                    )
+                    myCount = (mine as? SupabaseResult.Success)?.data?.length() ?: 0
+                } else {
+                    val req = supabaseClient.getTable(
+                        "message_requests",
+                        "conversation_id=eq.$conversationId&status=eq.pending&select=id&limit=1"
+                    )
+                    pendingRequestId = (req as? SupabaseResult.Success)?.data?.optJSONObject(0)?.optString("id")
+                }
+            }
+            ConversationMeta(status, isRequester, myCount, pendingRequestId)
+        } catch (e: Exception) {
+            Log.w("ChatViewModel", "fetchConversationMeta failed: ${e.message}")
+            null
+        }
+    }
+
+    /** While a request is pending, poll lightly so the requester's banner
+     *  clears within seconds of the receiver accepting. */
+    private fun startRequestPolling() {
+        requestPollingJob?.cancel()
+        if (_conversationMeta.value?.requestStatus != "pending") return
+        requestPollingJob = viewModelScope.launch {
+            while (isActive && _conversationMeta.value?.requestStatus == "pending") {
+                delay(12_000)
+                _conversationMeta.value = fetchConversationMeta()
+            }
+        }
+    }
+
+    /** RECEIVER: accept the message request → normal chat (presence unlocks). */
+    fun acceptMessageRequest() {
+        val requestId = _conversationMeta.value?.pendingRequestId ?: return
+        viewModelScope.launch {
+            val payload = org.json.JSONObject().put("requestId", requestId).put("action", "accept")
+            when (val res = supabaseClient.invokeFunction("respond-message-request", payload)) {
+                is SupabaseResult.Success -> {
+                    _conversationMeta.value = fetchConversationMeta()
+                    startRequestPolling()
+                    // Presence is now visible (RLS unlocked) — pull it immediately.
+                    (presenceService as? com.example.service.PresenceServiceImpl)?.refreshPeerPresence(peerId)
+                }
+                is SupabaseResult.Error -> requestNotice.value = "Failed to accept request"
+            }
+        }
+    }
+
+    /** RECEIVER: decline the request. The sender is blocked from sending more;
+     *  the receiver can still re-open the chat later by sending a message. */
+    fun declineMessageRequest() {
+        val requestId = _conversationMeta.value?.pendingRequestId ?: return
+        viewModelScope.launch {
+            val payload = org.json.JSONObject().put("requestId", requestId).put("action", "decline")
+            when (val res = supabaseClient.invokeFunction("respond-message-request", payload)) {
+                is SupabaseResult.Success -> {
+                    _conversationMeta.value = fetchConversationMeta()
+                    startRequestPolling()
+                }
+                is SupabaseResult.Error -> requestNotice.value = "Failed to decline request"
+            }
+        }
+    }
+
+    /** Central client-side gate mirroring the server rules (defense in depth). */
+    private fun requestBlockReason(): String? {
+        val meta = _conversationMeta.value ?: return null
+        return when {
+            meta.requestStatus == "pending" && !meta.isRequester ->
+                "Accept the message request to reply"
+            meta.requestStatus == "pending" && meta.myRequestMessageCount >= 3 ->
+                "You can send up to 3 messages while your request is pending"
+            meta.requestStatus == "declined" && meta.isRequester ->
+                "Your message request was declined"
+            else -> null
+        }
+    }
+
     // Media & Docs in conversation for Contact Info Sheet
     val mediaMessages = messageService.getMediaMessages(conversationId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -150,6 +278,8 @@ class ChatViewModel(
     private var peerLiveExpiryJob: Job? = null
 
     init {
+        // Message-request meta: pending/accepted/declined + my message budget
+        refreshConversationMeta()
         // Mark conversation as read on open (calls edge function)
         viewModelScope.launch {
             try {
@@ -211,6 +341,12 @@ class ChatViewModel(
         val text = inputText.value.trim()
         if (text.isEmpty()) return
 
+        // Message-request rules (server enforces the same limits)
+        requestBlockReason()?.let {
+            requestNotice.value = it
+            return
+        }
+
         val reply = replyingTo.value
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
         val msgId = java.util.UUID.randomUUID().toString()
@@ -237,6 +373,12 @@ class ChatViewModel(
             messageService.sendMessage(message, peerId = peerId, peerName = contactName)
             inputText.value = ""
             replyingTo.value = null
+            // Keep the 3-message request budget accurate while pending.
+            if (isMessageRequestPending) {
+                _conversationMeta.value = _conversationMeta.value?.copy(
+                    myRequestMessageCount = _conversationMeta.value?.myRequestMessageCount?.plus(1) ?: 1
+                )
+            }
             // NO fake/simulated bot reply — real chat uses Supabase Realtime.
             // The receiver will see the message via realtime + can reply for real.
         }

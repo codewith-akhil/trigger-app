@@ -283,8 +283,11 @@ fun TriggerAppNavHost(
                     activeChatAvatarRes = avatarRes
                     navController.navigate(TriggerDestinations.CHAT)
                 },
-                onOpenSelectContact = {
-                    navController.navigate(TriggerDestinations.SELECT_CONTACT)
+                onOpenNewMessage = {
+                    // The New Message page is the single entry point for
+                    // starting chats: message requests, contacts, follows
+                    // and username search all live there.
+                    navController.navigate(TriggerDestinations.NEW_MESSAGE)
                 },
                 onOpenProfile = {
                     navController.navigate(TriggerDestinations.PROFILE)

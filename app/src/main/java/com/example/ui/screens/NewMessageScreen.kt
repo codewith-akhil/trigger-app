@@ -10,7 +10,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PersonAdd
@@ -45,13 +44,14 @@ private val TriggerDivider = Color(0xFFF0F2F5)
 
 data class UserSearchResult(
     val id: String, val name: String, val username: String?,
-    val avatarUrl: String?, val phone: String?
+    val avatarUrl: String?
 )
 
 data class MessageRequestItem(
     val id: String, val senderId: String, val senderName: String,
     val senderUsername: String?, val senderAvatarUrl: String?,
-    val initialMessage: String, val createdAt: String
+    val initialMessage: String, val conversationId: String?,
+    val messageCount: Int, val createdAt: String
 )
 
 data class ContactItem(
@@ -74,9 +74,34 @@ fun NewMessageScreen(
     var isSearching by remember { mutableStateOf(false) }
     var contacts by remember { mutableStateOf<List<ContactItem>>(emptyList()) }
     var messageRequests by remember { mutableStateOf<List<MessageRequestItem>>(emptyList()) }
+    var followingUsers by remember { mutableStateOf<List<UserSearchResult>>(emptyList()) }
     var showSendDialog by remember { mutableStateOf<UserSearchResult?>(null) }
 
-    // Fetch contacts + message requests on load
+    // Instagram-model state
+    var followState by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) } // userId -> I follow them
+    var followBusy by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var requestSentTo by remember { mutableStateOf<Set<String>>(emptySet()) } // this session
+
+    val contactIds = remember(contacts) { contacts.map { it.id }.toSet() }
+
+    suspend fun refreshFollowStates(ids: List<String>) {
+        if (ids.isEmpty()) return
+        val me = AppServiceContainer.supabaseClient.currentSession?.user?.id ?: return
+        val inList = ids.joinToString(",")
+        val result = AppServiceContainer.supabaseClient.getTable(
+            "follows",
+            "follower_id=eq.$me&following_id=in.($inList)&select=following_id"
+        )
+        if (result is SupabaseResult.Success) {
+            val followed = mutableSetOf<String>()
+            for (i in 0 until result.data.length()) {
+                followed.add(result.data.getJSONObject(i).optString("following_id"))
+            }
+            followState = followState + ids.associateWith { it in followed }
+        }
+    }
+
+    // Fetch contacts + message requests + following on load
     LaunchedEffect(Unit) {
         coroutineScope.launch {
             // Get contacts
@@ -96,7 +121,8 @@ fun NewMessageScreen(
                 }
                 contacts = list
             }
-            // Get message requests
+            // Get message requests (now carries the canonical conversation id
+            // + pre-accept message count)
             val reqResult = AppServiceContainer.supabaseClient.invokeFunction("get-message-requests", JSONObject())
             if (reqResult is SupabaseResult.Success) {
                 val arr = reqResult.data.optJSONArray("requests") ?: JSONArray()
@@ -110,28 +136,19 @@ fun NewMessageScreen(
                         senderUsername = obj.optString("sender_username", null),
                         senderAvatarUrl = obj.optString("sender_avatar_url", null),
                         initialMessage = obj.getString("initial_message"),
+                        conversationId = obj.optString("conversation_id", null),
+                        messageCount = obj.optInt("message_count", 0),
                         createdAt = obj.optString("created_at", "")
                     ))
                 }
                 messageRequests = list
             }
-        }
-    }
-
-    // Debounced search
-    LaunchedEffect(searchQuery) {
-        if (searchQuery.trim().length < 2) {
-            searchResults = emptyList()
-            return@LaunchedEffect
-        }
-        isSearching = true
-        kotlinx.coroutines.delay(400)
-        coroutineScope.launch {
-            val payload = JSONObject().put("query", searchQuery.trim())
-            val result = AppServiceContainer.supabaseClient.invokeFunction("search-users", payload)
-            isSearching = false
-            if (result is SupabaseResult.Success) {
-                val arr = result.data.optJSONArray("users") ?: JSONArray()
+            // Get the users I follow (Instagram model)
+            val followResult = AppServiceContainer.supabaseClient.invokeFunction(
+                "get-follow-list", JSONObject().put("type", "following").put("limit", 50)
+            )
+            if (followResult is SupabaseResult.Success) {
+                val arr = followResult.data.optJSONArray("users") ?: JSONArray()
                 val list = mutableListOf<UserSearchResult>()
                 for (i in 0 until arr.length()) {
                     val obj = arr.getJSONObject(i)
@@ -139,12 +156,76 @@ fun NewMessageScreen(
                         id = obj.getString("id"),
                         name = obj.getString("full_name"),
                         username = obj.optString("username", null),
-                        avatarUrl = obj.optString("avatar_url", null),
-                        phone = obj.optString("phone", null)
+                        avatarUrl = obj.optString("avatar_url", null)
                     ))
                 }
-                searchResults = list
+                followingUsers = list
+                refreshFollowStates(list.map { it.id })
             }
+        }
+    }
+
+    // Debounced search — server matches username OR full name OR phone
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.trim().length < 2) {
+            searchResults = emptyList()
+            isSearching = false
+            return@LaunchedEffect
+        }
+        isSearching = true
+        kotlinx.coroutines.delay(350)
+        val payload = JSONObject().put("query", searchQuery.trim())
+        val result = AppServiceContainer.supabaseClient.invokeFunction("search-users", payload)
+        isSearching = false
+        if (result is SupabaseResult.Success) {
+            val arr = result.data.optJSONArray("users") ?: JSONArray()
+            val list = mutableListOf<UserSearchResult>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(UserSearchResult(
+                    id = obj.getString("id"),
+                    name = obj.getString("full_name"),
+                    username = obj.optString("username", null),
+                    avatarUrl = obj.optString("avatar_url", null)
+                ))
+            }
+            searchResults = list
+            refreshFollowStates(list.map { it.id })
+        } else {
+            searchResults = emptyList()
+        }
+    }
+
+    fun toggleFollow(user: UserSearchResult) {
+        val currentlyFollowing = followState[user.id] ?: false
+        val action = if (currentlyFollowing) "unfollow" else "follow"
+        followBusy = followBusy + user.id
+        coroutineScope.launch {
+            val payload = JSONObject()
+                .put("targetUserId", user.id)
+                .put("action", action)
+            val result = AppServiceContainer.supabaseClient.invokeFunction("toggle-follow-user", payload)
+            followBusy = followBusy - user.id
+            when (result) {
+                is SupabaseResult.Success -> {
+                    followState = followState + (user.id to !currentlyFollowing)
+                    followingUsers =
+                        if (!currentlyFollowing) followingUsers + user
+                        else followingUsers.filter { it.id != user.id }
+                }
+                is SupabaseResult.Error ->
+                    Toast.makeText(context, "Action failed", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // A searched/known user is chat-ready when an accepted relationship exists
+    // (i.e. they are in my contacts); otherwise their first message is a request.
+    fun openOrRequest(user: UserSearchResult) {
+        if (user.id in contactIds) {
+            onChatOpened("", user.id, user.name)
+        } else {
+            showSendDialog = user
         }
     }
 
@@ -192,8 +273,16 @@ fun NewMessageScreen(
                             modifier = Modifier.padding(16.dp))
                     }
                 } else {
-                    items(searchResults) { user ->
-                        UserSearchRow(user = user, onClick = { showSendDialog = user })
+                    items(searchResults, key = { it.id }) { user ->
+                        UserSearchRow(
+                            user = user,
+                            isFollowing = followState[user.id] ?: false,
+                            followBusy = user.id in followBusy,
+                            isContact = user.id in contactIds,
+                            requestSent = user.id in requestSentTo,
+                            onFollowToggle = { toggleFollow(user) },
+                            onClick = { openOrRequest(user) }
+                        )
                     }
                 }
             } else {
@@ -207,7 +296,7 @@ fun NewMessageScreen(
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                         )
                     }
-                    items(messageRequests) { req ->
+                    items(messageRequests, key = { "req_${it.id}" }) { req ->
                         MessageRequestRow(
                             request = req,
                             onAccept = {
@@ -218,6 +307,8 @@ fun NewMessageScreen(
                                     }
                                     val result = AppServiceContainer.supabaseClient.invokeFunction("respond-message-request", payload)
                                     if (result is SupabaseResult.Success) {
+                                        // Canonical conversation id — the SAME thread
+                                        // the sender writes into.
                                         val convId = result.data.optString("conversationId", "")
                                         Toast.makeText(context, "Request accepted", Toast.LENGTH_SHORT).show()
                                         messageRequests = messageRequests.filter { it.id != req.id }
@@ -227,18 +318,18 @@ fun NewMessageScreen(
                                     }
                                 }
                             },
-                            onBlock = {
+                            onDecline = {
                                 coroutineScope.launch {
                                     val payload = JSONObject().apply {
                                         put("requestId", req.id)
-                                        put("action", "block")
+                                        put("action", "decline")
                                     }
                                     val result = AppServiceContainer.supabaseClient.invokeFunction("respond-message-request", payload)
                                     if (result is SupabaseResult.Success) {
-                                        Toast.makeText(context, "User blocked", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Request declined", Toast.LENGTH_SHORT).show()
                                         messageRequests = messageRequests.filter { it.id != req.id }
                                     } else {
-                                        Toast.makeText(context, "Failed to block", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Failed to decline", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             }
@@ -271,35 +362,66 @@ fun NewMessageScreen(
                         }
                     }
                 } else {
-                    items(contacts) { contact ->
+                    items(contacts, key = { "contact_${it.id}" }) { contact ->
                         ContactRow(contact = contact, onClick = {
-                            // Open chat with this contact — find or create conversation
+                            // Open chat with this contact — ChatScreen resolves
+                            // the canonical conversation id.
                             onChatOpened("", contact.id, contact.name)
                         })
+                    }
+                }
+
+                // Following section (Instagram model — following ≠ chatting yet)
+                if (followingUsers.isNotEmpty()) {
+                    item {
+                        HorizontalDivider(thickness = 8.dp, color = TriggerDivider)
+                        Text(
+                            "Following (${followingUsers.size})",
+                            fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                            color = TriggerTextSecondary,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+                    items(followingUsers.filter { it.id !in contactIds }, key = { "follow_${it.id}" }) { user ->
+                        UserSearchRow(
+                            user = user,
+                            isFollowing = followState[user.id] ?: true,
+                            followBusy = user.id in followBusy,
+                            isContact = false,
+                            requestSent = user.id in requestSentTo,
+                            onFollowToggle = { toggleFollow(user) },
+                            onClick = { openOrRequest(user) }
+                        )
                     }
                 }
             }
         }
     }
 
-    // Send message dialog (when user taps a search result)
+    // Send message-request dialog (first message to a non-contact)
     showSendDialog?.let { user ->
         var messageText by remember { mutableStateOf("") }
         var isSending by remember { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = { showSendDialog = null },
+            onDismissRequest = { if (!isSending) showSendDialog = null },
             containerColor = Color.White,
             shape = RoundedCornerShape(16.dp),
             title = {
-                Text("Send message to ${user.name}", fontWeight = FontWeight.Bold,
+                Text("Message request to ${user.name}", fontWeight = FontWeight.Bold,
                     color = TriggerTextPrimary, fontSize = 16.sp)
             },
             text = {
                 Column {
                     if (user.username != null) {
                         Text("@${user.username}", color = TriggerTextSecondary, fontSize = 13.sp)
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                     }
+                    Text(
+                        "They can read your messages and accept or decline. " +
+                            "You can send up to 3 messages until they accept.",
+                        color = TriggerTextSecondary, fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
                     OutlinedTextField(
                         value = messageText,
                         onValueChange = { if (it.length <= 500) messageText = it },
@@ -332,12 +454,33 @@ fun NewMessageScreen(
                             }
                             val result = AppServiceContainer.supabaseClient.invokeFunction("send-message-request", payload)
                             isSending = false
-                            if (result is SupabaseResult.Success) {
-                                Toast.makeText(context, "Message request sent", Toast.LENGTH_SHORT).show()
-                                showSendDialog = null
-                            } else {
-                                val err = (result as? SupabaseResult.Error)?.message ?: "Failed to send"
-                                Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                            when (result) {
+                                is SupabaseResult.Success -> {
+                                    val convId = result.data.optString("conversationId", "")
+                                    val remaining = result.data.optInt("messagesRemaining", 2)
+                                    Toast.makeText(
+                                        context,
+                                        "Request sent • $remaining of 3 messages left",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    showSendDialog = null
+                                    requestSentTo = requestSentTo + user.id
+                                    // Open the pending chat — the requester sees the
+                                    // "waiting for acceptance" banner there.
+                                    if (convId.isNotBlank()) {
+                                        onChatOpened(convId, user.id, user.name)
+                                    }
+                                }
+                                is SupabaseResult.Error -> {
+                                    val msg = result.message
+                                    if (msg.contains("already chat", ignoreCase = true)) {
+                                        // ALREADY_CONNECTED — open the existing chat
+                                        showSendDialog = null
+                                        onChatOpened("", user.id, user.name)
+                                    } else {
+                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                    }
+                                }
                             }
                         }
                     },
@@ -364,9 +507,17 @@ fun NewMessageScreen(
 }
 
 @Composable
-private fun UserSearchRow(user: UserSearchResult, onClick: () -> Unit) {
+private fun UserSearchRow(
+    user: UserSearchResult,
+    isFollowing: Boolean,
+    followBusy: Boolean,
+    isContact: Boolean,
+    requestSent: Boolean,
+    onFollowToggle: () -> Unit,
+    onClick: () -> Unit
+) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Avatar
@@ -384,12 +535,51 @@ private fun UserSearchRow(user: UserSearchResult, onClick: () -> Unit) {
             Text(user.name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = TriggerTextPrimary)
             if (user.username != null) {
                 Text("@${user.username}", fontSize = 13.sp, color = TriggerTextSecondary)
-            } else if (user.phone != null) {
-                Text(user.phone, fontSize = 13.sp, color = TriggerTextSecondary)
+            } else if (isContact) {
+                Text("Contact", fontSize = 13.sp, color = TriggerTextSecondary)
             }
         }
-        Icon(Icons.Filled.PersonAdd, contentDescription = "Add",
-            tint = TriggerGreenAccent, modifier = Modifier.size(20.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        // Instagram-model Follow / Following toggle
+        if (isFollowing) {
+            OutlinedButton(
+                onClick = onFollowToggle,
+                enabled = !followBusy,
+                shape = RoundedCornerShape(18.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = TriggerTextSecondary)
+            ) {
+                if (followBusy) {
+                    CircularProgressIndicator(strokeWidth = 1.5.dp, modifier = Modifier.size(12.dp))
+                } else {
+                    Text("Following", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        } else {
+            Button(
+                onClick = onFollowToggle,
+                enabled = !followBusy,
+                shape = RoundedCornerShape(18.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = TriggerGreenAccent)
+            ) {
+                if (followBusy) {
+                    CircularProgressIndicator(strokeWidth = 1.5.dp, modifier = Modifier.size(12.dp), color = Color.White)
+                } else {
+                    Text("Follow", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        when {
+            isContact -> {}
+            requestSent -> Text(
+                "Request sent", fontSize = 11.sp,
+                color = TriggerGreenAccent, fontWeight = FontWeight.SemiBold
+            )
+            else -> Icon(Icons.Filled.PersonAdd, contentDescription = "Message",
+                tint = TriggerGreenAccent, modifier = Modifier.size(20.dp))
+        }
     }
 }
 
@@ -397,7 +587,7 @@ private fun UserSearchRow(user: UserSearchResult, onClick: () -> Unit) {
 private fun MessageRequestRow(
     request: MessageRequestItem,
     onAccept: () -> Unit,
-    onBlock: () -> Unit
+    onDecline: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
@@ -419,6 +609,10 @@ private fun MessageRequestRow(
                     Text("@${request.senderUsername}", fontSize = 12.sp, color = TriggerTextSecondary)
                 }
             }
+            Text(
+                "${request.messageCount}/3",
+                fontSize = 11.sp, color = TriggerTextSecondary, fontWeight = FontWeight.SemiBold
+            )
         }
         Spacer(modifier = Modifier.height(4.dp))
         Text(request.initialMessage, fontSize = 14.sp, color = TriggerTextPrimary,
@@ -437,14 +631,14 @@ private fun MessageRequestRow(
             }
             Spacer(modifier = Modifier.width(8.dp))
             OutlinedButton(
-                onClick = onBlock,
+                onClick = onDecline,
                 shape = RoundedCornerShape(20.dp),
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 6.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = TriggerDanger)
             ) {
                 Icon(Icons.Filled.Close, contentDescription = null, tint = TriggerDanger, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Block", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text("Decline", fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

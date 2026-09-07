@@ -173,6 +173,41 @@ async function handler(req: Request): Promise<Response> {
     return json({ error: "This conversation is blocked", code: ErrorCode.FORBIDDEN }, 403);
   }
 
+  // --- Message-request gating (Instagram model) ---------------------------
+  // While the request is PENDING: the requester (conversation owner) may send
+  // up to 3 messages; the receiver must ACCEPT before replying.
+  if (conv.request_status === "pending") {
+    const isRequester = conv.owner_id === userId;
+    if (isRequester) {
+      const { count: sentCount } = await supabase
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("conversation_id", conv.id)
+        .eq("sender_id", userId);
+      if ((sentCount ?? 0) >= 3) {
+        return json({
+          error: "You can send up to 3 messages while your request is pending",
+          code: "REQUEST_MESSAGE_LIMIT",
+        }, 403);
+      }
+    } else {
+      return json({
+        error: "Accept the message request to reply",
+        code: "REQUEST_NOT_ACCEPTED",
+      }, 403);
+    }
+  }
+
+  // DECLINED: the receiver changed their mind — sending re-opens the chat.
+  // The requester stays blocked until the receiver re-opens it.
+  if (conv.request_status === "declined") {
+    if (conv.owner_id === userId) {
+      return json({ error: "Your message request was declined", code: "REQUEST_DECLINED" }, 403);
+    }
+    await supabase.from("conversations").update({ request_status: "accepted" }).eq("id", conv.id);
+    conv.request_status = "accepted";
+  }
+
   // --- Idempotency check: if this idempotency_key was already used, return the existing message ---
   if (body.idempotency_key) {
     const { data: existing } = await supabase
@@ -236,6 +271,7 @@ async function handler(req: Request): Promise<Response> {
     : body.type === "DOCUMENT" ? "📄 Document"
     : body.type === "LOCATION" ? (body.location_live_minutes ? "📍 Live location" : "📍 Location")
     : body.type === "CONTACT" ? "👤 Contact"
+    : body.type === "CALL_LOG" ? (body.call_type === "video" ? "📞 Video call" : "📞 Voice call")
     : "Message";
 
   await supabase.from("conversations").update({
@@ -243,6 +279,18 @@ async function handler(req: Request): Promise<Response> {
     last_message_type: body.type,
     last_message_at: new Date().toISOString(),
   }).eq("id", conversationId);
+
+  // Keep the PEER's mirror conversation row (per-user chat-list metadata)
+  // in sync too — messages live on the canonical row but the peer's chat
+  // list reads their own mirror row.
+  const receiverId = conv.owner_id === userId ? conv.peer_id : conv.owner_id;
+  if (receiverId) {
+    await supabase.from("conversations").update({
+      last_message: lastMsgPreview,
+      last_message_type: body.type,
+      last_message_at: new Date().toISOString(),
+    }).eq("owner_id", receiverId).eq("peer_id", userId);
+  }
 
   // Increment unread_count for the receiver's conversation atomically.
   // The previous "direct SQL" update referenced `conv.unread_count`, which
@@ -253,7 +301,6 @@ async function handler(req: Request): Promise<Response> {
   // 20260912 + 20260913) does the increment atomically server-side:
   //   update conversations set unread_count = unread_count + 1
   //    where id = p_conversation_id and (owner_id = p_user_id or peer_id = p_user_id)
-  const receiverId = conv.owner_id === userId ? conv.peer_id : conv.owner_id;
   if (receiverId) {
     await supabase.rpc("increment_unread_count", {
       p_conversation_id: conversationId,

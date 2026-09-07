@@ -54,6 +54,33 @@ class PresenceServiceImpl(
         return flow.asStateFlow()
     }
 
+    /**
+     * Fetches the peer's presence row directly via REST. Used right after a
+     * message request is ACCEPTED so the header shows real online/last-seen
+     * immediately instead of waiting for the next realtime event (RLS now
+     * gates user_presences reads to accepted conversations, so before
+     * acceptance this returns nothing and the UI shows the request state).
+     */
+    suspend fun refreshPeerPresence(peerId: String) {
+        if (!com.example.service.MediaUrlResolver.isUuid(peerId)) return
+        val supabaseClient = AppServiceContainer.supabaseClient
+        when (val res = supabaseClient.getTable(
+            "user_presences",
+            "user_id=eq.$peerId&select=is_online,last_seen_at&limit=1"
+        )) {
+            is SupabaseResult.Success -> {
+                val row = res.data.optJSONObject(0) ?: return
+                val isOnline = row.optBoolean("is_online", false)
+                val lastSeen = row.optString("last_seen_at", "")
+                val status = if (isOnline) PresenceStatus.ONLINE else PresenceStatus.OFFLINE
+                val text = if (isOnline) "online"
+                    else com.example.util.LastSeenFormatter.format(lastSeen)
+                setContactPresence(peerId, status, text)
+            }
+            is SupabaseResult.Error -> Log.w(TAG, "refreshPeerPresence failed: ${res.message}")
+        }
+    }
+
     override suspend fun setUserTyping(conversationId: String, isTyping: Boolean) {
         // Real typing indicator — broadcast via Supabase Realtime broadcast channel
         // For now we use a simple approach: update a presence record

@@ -75,30 +75,87 @@ class MessageServiceImpl(
         onLiveLocationEvent = null
     }
 
+    /**
+     * Canonical-row heal: a pair may hold TWO conversation rows (per-user
+     * mirrors for unread/last-read metadata) while messages always live on
+     * the OLDEST row ("canonical"). When a chat is opened with a mirror row
+     * id (e.g. the receiver's dashboard entry after accepting a request),
+     * this resolves the canonical id so every client reads/writes the SAME
+     * thread. Offline-safe: returns the input id when the server is unknown.
+     */
+    suspend fun resolveCanonicalConversationId(conversationId: String): String? {
+        if (!MediaUrlResolver.isUuid(conversationId)) return null
+        val supabaseClient = AppServiceContainer.supabaseClient
+        val me = supabaseClient.currentSession?.user?.id ?: return null
+
+        val self = when (val res = supabaseClient.getTable(
+            "conversations", "id=eq.$conversationId&select=id,owner_id,peer_id,peer_name&limit=1"
+        )) {
+            is SupabaseResult.Success -> res.data.optJSONObject(0) ?: return null
+            is SupabaseResult.Error -> return null
+        }
+        val selfPeerId = self.optString("peer_id", "")
+        val selfOwnerId = self.optString("owner_id", "")
+        val peer = when {
+            selfPeerId.isNotBlank() && selfPeerId != me -> selfPeerId
+            selfOwnerId.isNotBlank() && selfOwnerId != me -> selfOwnerId
+            else -> null // self-chat (owner = peer = me) — already canonical
+        } ?: return conversationId
+
+        val or = "or=(and(owner_id.eq.$me,peer_id.eq.$peer),and(owner_id.eq.$peer,peer_id.eq.$me))"
+        return when (val res = supabaseClient.getTable("conversations", "$or&order=created_at.asc&limit=1")) {
+            is SupabaseResult.Success -> {
+                val row = res.data.optJSONObject(0) ?: return conversationId
+                val canonical = row.optString("id", conversationId)
+                if (MediaUrlResolver.isUuid(canonical)) {
+                    val name = self.optString("peer_name", "").ifBlank { null }
+                    repository.ensureConversationRow(canonical, peer, name)
+                    if (canonical != conversationId) {
+                        // Any local echo stored under the mirror id moves over.
+                        repository.rekeyConversationMessages(conversationId, canonical)
+                    }
+                    canonical
+                } else conversationId
+            }
+            is SupabaseResult.Error -> conversationId
+        }
+    }
+
     /** H4: given a peer USER uuid, resolve (or create) the real conversation. */
     override suspend fun resolveOrCreateConversation(peerId: String): String? {
         if (!MediaUrlResolver.isUuid(peerId)) return null
-        // 1. Local cache (conversations.peerId column, schema v6)
-        repository.getConversationByPeer(peerId)?.let { return it.id }
 
         val supabaseClient = AppServiceContainer.supabaseClient
         val me = supabaseClient.currentSession?.user?.id ?: return null
 
-        // 2. Server lookup in BOTH directions (same query send-message uses).
+        // 1. Server lookup in BOTH directions, OLDEST row first. The pair may
+        //    hold two mirror rows (per-user metadata) while messages live on
+        //    the oldest ("canonical") row — resolving deterministically here
+        //    guarantees both clients land on the SAME thread.
         val or = "or=(and(owner_id.eq.$me,peer_id.eq.$peerId),and(owner_id.eq.$peerId,peer_id.eq.$me))"
-        when (val res = supabaseClient.getTable("conversations", "$or&select=id&limit=1")) {
+        when (val res = supabaseClient.getTable("conversations", "$or&select=id&order=created_at.asc&limit=1")) {
             is SupabaseResult.Success -> {
                 if (res.data.length() > 0) {
                     val id = res.data.getJSONObject(0).optString("id", "")
                     if (MediaUrlResolver.isUuid(id)) {
                         repository.ensureConversationRow(id, peerId, null)
-                        // Re-key any legacy rows cached under the peer uuid.
-                        repository.rekeyConversationMessages(peerId, id)
+                        // Re-key anything cached under the legacy peer uuid or
+                        // under a mirror-row id onto the canonical id.
+                        val cached = repository.getConversationByPeer(peerId)?.id
+                        if (cached != null && cached != id) {
+                            repository.rekeyConversationMessages(cached, id)
+                        } else {
+                            repository.rekeyConversationMessages(peerId, id)
+                        }
                         return id
                     }
                 }
             }
-            is SupabaseResult.Error -> Log.w(TAG, "conversation lookup failed: ${res.message}")
+            is SupabaseResult.Error -> {
+                Log.w(TAG, "conversation lookup failed: ${res.message}")
+                // Offline fallback: trust the local cache (v6 peerId column).
+                repository.getConversationByPeer(peerId)?.let { return it.id }
+            }
         }
 
         // 3. Create (self-chats allowed: owner = peer = me).
@@ -265,7 +322,10 @@ class MessageServiceImpl(
                 }
             }
             val status = if (isOnline) PresenceStatus.ONLINE else PresenceStatus.OFFLINE
-            val text = if (isOnline) "online" else "last seen $lastSeen"
+            // WhatsApp-style formatting: "last seen today at 3:45 PM" /
+            // "last seen yesterday at 9:12 AM" / "last seen 12 Sep at 8:00 AM".
+            // The raw value was previously interpolated as an ISO string.
+            val text = if (isOnline) "online" else com.example.util.LastSeenFormatter.format(lastSeen)
             presenceService.setContactPresence(userId, status, text)
         }
     }
@@ -315,7 +375,9 @@ class MessageServiceImpl(
                 record.optInt("location_live_minutes").takeIf { it > 0 } else null,
             locationComment = record.optString("location_comment", null),
             contactName = record.optString("contact_name", null),
-            contactPhone = record.optString("contact_phone", null)
+            contactPhone = record.optString("contact_phone", null),
+            callType = record.optString("call_type", null)?.takeIf { it.isNotBlank() && it != "null" },
+            callDurationSec = record.optInt("call_duration_sec", 0)
         )
     }
 
@@ -429,6 +491,12 @@ class MessageServiceImpl(
             if (message.locationComment != null) put("location_comment", message.locationComment)
             if (message.contactName != null) put("contact_name", message.contactName)
             if (message.contactPhone != null) put("contact_phone", message.contactPhone)
+            // Call history persistence — server stores messages.call_type /
+            // call_duration_sec so both participants keep the call record.
+            if (message.type == MessageType.CALL_LOG) {
+                message.callType?.let { put("call_type", it) }
+                if (message.callDurationSec > 0) put("call_duration_sec", message.callDurationSec)
+            }
         }
     }
 

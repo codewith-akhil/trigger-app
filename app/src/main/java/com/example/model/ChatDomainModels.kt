@@ -102,7 +102,12 @@ data class DomainMessage(
     val reactions: List<MessageReaction> = emptyList(),
     val uploadProgress: Int? = null, // 0-100 when uploading
     val uploadSpeed: String? = null,
-    val remainingTimeText: String? = null
+    val remainingTimeText: String? = null,
+    // CALL_LOG messages — persisted to messages.call_type / call_duration_sec
+    // so call history survives across devices ("audio/video call history with
+    // duration stored to db").
+    val callType: String? = null,      // "audio" | "video"
+    val callDurationSec: Int = 0
 )
 
 data class DomainConversation(

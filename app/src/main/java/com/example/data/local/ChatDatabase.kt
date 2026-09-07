@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [MessageEntity::class, ConversationEntity::class],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -32,12 +32,24 @@ abstract class ChatDatabase : RoomDatabase() {
                         REMOVE_SEEDED_DATA,
                         ADD_PIN_EDIT_SEQ_IDEMPOTENCY_ARCHIVED,
                         ADD_LOCATION_LIVE_FIELDS,
-                        UNIFY_CONVERSATION_IDS_AND_MEDIA_PATHS
+                        UNIFY_CONVERSATION_IDS_AND_MEDIA_PATHS,
+                        ADD_CALL_LOG_FIELDS
                     )
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        // Migration 6 → 7: call history persistence — messages.callType /
+        // callDurationSec mirror the server's messages.call_type /
+        // call_duration_sec columns so audio/video call history with duration
+        // is stored both locally and in Supabase.
+        private val ADD_CALL_LOG_FIELDS = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN callType TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN callDurationSec INTEGER NOT NULL DEFAULT 0")
             }
         }
 

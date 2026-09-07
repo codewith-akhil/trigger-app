@@ -49,7 +49,7 @@ enum class ChatFilter {
 @Composable
 fun WhatsAppDashboardScreen(
     onOpenChat: (conversationId: String, peerId: String, contactName: String, avatarRes: Int?) -> Unit,
-    onOpenSelectContact: () -> Unit = {},
+    onOpenNewMessage: () -> Unit = {},
     onOpenProfile: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onNavigateToScheduleStream: () -> Unit = {},
@@ -172,7 +172,7 @@ fun WhatsAppDashboardScreen(
             when (selectedTab) {
                 DashboardTab.CHATS -> {
                     FloatingActionButton(
-                        onClick = { onOpenSelectContact() },
+                        onClick = { onOpenNewMessage() },
                         shape = RoundedCornerShape(16.dp),
                         containerColor = TriggerFabGreen,
                         contentColor = Color.White,
@@ -278,7 +278,7 @@ fun WhatsAppDashboardScreen(
                 DashboardTab.UPDATES -> {
                     UpdatesTabContent(
                         onViewStatus = { name -> showStatusStoryDialog = name },
-                        onNewChat = { onOpenSelectContact() }
+                        onNewChat = { onOpenNewMessage() }
                     )
                 }
 
@@ -291,18 +291,12 @@ fun WhatsAppDashboardScreen(
                 }
 
                 DashboardTab.CALLS -> {
+                    // Real call history lives in the Calls tab. The FAB opens
+                    // the New Message page (pick a chat to call) — the previous
+                    // behavior dialed a fake hardcoded call.
                     CallsTabContent(
-                        onCallContact = { name ->
-                            activeCallContactName = name
-                            activeCallIsVideo = false
-                            com.example.di.AppServiceContainer.agoraService.startCall("call_${name.lowercase().replace(" ", "_")}", isVideo = false)
-                            showActiveCallDialog = true
-                        },
-                        onVideoCallContact = { name ->
-                            activeCallContactName = name
-                            activeCallIsVideo = true
-                            com.example.di.AppServiceContainer.agoraService.startCall("call_${name.lowercase().replace(" ", "_")}", isVideo = true)
-                            showActiveCallDialog = true
+                        onOpenChat = { peerId, name ->
+                            onOpenChat("", peerId, name, null)
                         }
                     )
                 }
@@ -1276,9 +1270,84 @@ fun CommunitiesTabContent() {
 
 @Composable
 fun CallsTabContent(
-    onCallContact: (String) -> Unit,
-    onVideoCallContact: (String) -> Unit = onCallContact
+    onOpenChat: (peerId: String, name: String) -> Unit = { _, _ -> }
 ) {
+    // Real call history from `call_sessions` (both directions), joined to
+    // profiles for names/avatars. Duration comes from duration_seconds which
+    // AgoraCallService persists at call end.
+    var callLogs by remember { mutableStateOf<List<CallLogEntry>>(emptyList()) }
+    var isLoadingCalls by remember { mutableStateOf(true) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        val me = com.example.di.AppServiceContainer.supabaseClient.currentSession?.user?.id
+        if (me == null) {
+            isLoadingCalls = false
+            return@LaunchedEffect
+        }
+        try {
+            val res = com.example.di.AppServiceContainer.supabaseClient.getTable(
+                "call_sessions",
+                "or=(caller_id.eq.$me,receiver_id.eq.$me)&order=started_at.desc&limit=50&" +
+                    "select=id,caller_id,receiver_id,call_type,status,started_at,answered_at,duration_seconds"
+            )
+            if (res is com.example.service.supabase.SupabaseResult.Success) {
+                val rows = (0 until res.data.length()).map { res.data.getJSONObject(it) }
+                val otherIds = rows.mapNotNull { row ->
+                    val caller = row.optString("caller_id")
+                    val receiver = row.optString("receiver_id")
+                    if (caller == me) receiver.takeIf { it.isNotBlank() } else caller.takeIf { it.isNotBlank() }
+                }.distinct()
+                val profilesById = if (otherIds.isNotEmpty()) {
+                    val pRes = com.example.di.AppServiceContainer.supabaseClient.getTable(
+                        "profiles",
+                        "id=in.(${otherIds.joinToString(",")})&select=id,full_name,username,avatar_url"
+                    )
+                    if (pRes is com.example.service.supabase.SupabaseResult.Success) {
+                        (0 until pRes.data.length()).associate {
+                            val p = pRes.data.getJSONObject(it)
+                            p.optString("id") to Triple(
+                                p.optString("full_name", "Unknown"),
+                                p.optString("username", null),
+                                p.optString("avatar_url", null)
+                            )
+                        }
+                    } else {
+                        emptyMap()
+                    }
+                } else {
+                    emptyMap()
+                }
+
+                callLogs = rows.map { row ->
+                    val caller = row.optString("caller_id")
+                    val receiver = row.optString("receiver_id")
+                    val other = if (caller == me) receiver else caller
+                    val profile = profilesById[other]
+                    val answeredAt = row.optString("answered_at", "")
+                    val answered = answeredAt.isNotBlank() && answeredAt != "null"
+                    CallLogEntry(
+                        id = row.optString("id"),
+                        otherUserId = other,
+                        otherName = profile?.first ?: "Unknown",
+                        otherUsername = profile?.second,
+                        otherAvatarUrl = profile?.third,
+                        isVideo = row.optString("call_type") == "video",
+                        isIncoming = receiver == me,
+                        isMissed = !answered,
+                        durationSec = row.optInt("duration_seconds", 0),
+                        startedAtIso = row.optString("started_at")
+                    )
+                }
+            } else if (res is com.example.service.supabase.SupabaseResult.Error) {
+                loadError = "Couldn't load call history"
+            }
+        } catch (e: Exception) {
+            loadError = "Couldn't load call history"
+        }
+        isLoadingCalls = false
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -1324,30 +1393,95 @@ fun CallsTabContent(
             }
         }
 
-        item {
-            Text(
-                text = "No recent calls",
-                fontSize = 14.sp,
-                color = GeometricTextSecondary,
-                modifier = Modifier.padding(vertical = 8.dp)
-            )
+        when {
+            isLoadingCalls -> {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        CircularProgressIndicator(strokeWidth = 2.dp)
+                    }
+                }
+            }
+            callLogs.isEmpty() -> {
+                item {
+                    Text(
+                        text = loadError ?: "No recent calls",
+                        fontSize = 14.sp,
+                        color = GeometricTextSecondary,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+            }
+            else -> {
+                items(callLogs, key = { it.id }) { entry ->
+                    CallLogItem(
+                        entry = entry,
+                        onOpenChat = { onOpenChat(entry.otherUserId, entry.otherName) }
+                    )
+                }
+            }
         }
+    }
+}
+
+/** One entry of the call history — sourced from call_sessions. */
+data class CallLogEntry(
+    val id: String,
+    val otherUserId: String,
+    val otherName: String,
+    val otherUsername: String?,
+    val otherAvatarUrl: String?,
+    val isVideo: Boolean,
+    val isIncoming: Boolean,
+    val isMissed: Boolean,
+    val durationSec: Int,
+    val startedAtIso: String
+)
+
+private fun formatCallTimestamp(iso: String): String {
+    if (iso.isBlank()) return ""
+    val millis = try {
+        java.time.Instant.parse(iso).toEpochMilli()
+    } catch (e: Exception) {
+        return ""
+    }
+    val cal = java.util.Calendar.getInstance().apply { timeInMillis = millis }
+    val now = java.util.Calendar.getInstance()
+    val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()).format(cal.time)
+    val sameYear = now.get(java.util.Calendar.YEAR) == cal.get(java.util.Calendar.YEAR)
+    val dayDiff = if (sameYear) {
+        now.get(java.util.Calendar.DAY_OF_YEAR) - cal.get(java.util.Calendar.DAY_OF_YEAR)
+    } else 999
+    return when {
+        dayDiff == 0 -> "Today, $time"
+        dayDiff == 1 -> "Yesterday, $time"
+        else -> java.text.SimpleDateFormat("d MMM, h:mm a", java.util.Locale.getDefault()).format(cal.time)
+    }
+}
+
+private fun formatCallDuration(totalSec: Int): String {
+    if (totalSec <= 0) return ""
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return when {
+        h > 0 -> "%d:%02d:%02d".format(h, m, s)
+        m > 0 -> "%d:%02d".format(m, s)
+        else -> "${s}s"
     }
 }
 
 @Composable
 fun CallLogItem(
-    name: String,
-    time: String,
-    isVideo: Boolean,
-    isIncoming: Boolean,
-    avatarRes: Int?,
-    onCall: () -> Unit
+    entry: CallLogEntry,
+    onOpenChat: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onCall)
+            .clickable(onClick = onOpenChat)
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1358,16 +1492,16 @@ fun CallLogItem(
                 .background(Color(0xFF80CBC4)),
             contentAlignment = Alignment.Center
         ) {
-            if (avatarRes != null) {
-                Image(
-                    painter = painterResource(id = avatarRes),
-                    contentDescription = name,
+            if (entry.otherAvatarUrl != null) {
+                coil.compose.AsyncImage(
+                    model = entry.otherAvatarUrl,
+                    contentDescription = entry.otherName,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize().clip(CircleShape)
                 )
             } else {
                 Text(
-                    text = name.take(1),
+                    text = entry.otherName.take(1),
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp
@@ -1379,38 +1513,40 @@ fun CallLogItem(
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = name,
+                text = entry.otherName,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = GeometricTextDark
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = if (isIncoming) Icons.Filled.CallReceived else Icons.Filled.CallMade,
+                    imageVector = if (entry.isIncoming) Icons.Filled.CallReceived else Icons.Filled.CallMade,
                     contentDescription = null,
-                    tint = if (isIncoming) WhatsAppFabGreen else Color(0xFFD32F2F),
+                    tint = if (entry.isMissed) Color(0xFFD32F2F) else WhatsAppFabGreen,
                     modifier = Modifier.size(14.dp)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
+                val detail = buildString {
+                    if (entry.isMissed) append("Missed") else append(formatCallDuration(entry.durationSec))
+                    val ts = formatCallTimestamp(entry.startedAtIso)
+                    if (ts.isNotBlank()) append(" • $ts")
+                }
                 Text(
-                    text = time,
+                    text = detail,
                     fontSize = 13.sp,
                     color = GeometricTextSecondary
                 )
             }
         }
 
-        IconButton(onClick = onCall) {
-            Icon(
-                imageVector = if (isVideo) Icons.Filled.Videocam else Icons.Filled.Call,
-                contentDescription = "Call",
-                tint = WhatsAppHeaderGreen,
-                modifier = Modifier.size(22.dp)
-            )
-        }
+        Icon(
+            imageVector = if (entry.isVideo) Icons.Filled.Videocam else Icons.Filled.Call,
+            contentDescription = if (entry.isVideo) "Video call" else "Voice call",
+            tint = WhatsAppHeaderGreen,
+            modifier = Modifier.size(22.dp)
+        )
     }
 }
-
 @Composable
 fun StreamTabContent(
     onGoLive: () -> Unit = {},

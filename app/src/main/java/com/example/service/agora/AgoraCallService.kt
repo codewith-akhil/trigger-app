@@ -19,7 +19,7 @@ class AgoraCallService(
     private val rtcManager: AgoraRtcEngineManager,
     private val supabaseClient: SupabaseClient,
     private val scope: CoroutineScope,
-    private val onCallEndedCallback: suspend (contactId: String, type: CallType, durationSec: Int, isMissed: Boolean) -> Unit = { _, _, _, _ -> }
+    private val onCallEndedCallback: suspend (contactId: String, type: CallType, durationSec: Int, isMissed: Boolean, isOutgoing: Boolean) -> Unit = { _, _, _, _, _ -> }
 ) : CallService {
 
     companion object {
@@ -193,7 +193,7 @@ class AgoraCallService(
         updateSupabaseCallStatus(session.callId, "rejected")
         scope.launch {
             if (!session.isIncoming) {
-                onCallEndedCallback(session.contactId, session.type, 0, true)
+                onCallEndedCallback(session.contactId, session.type, 0, true, true)
             }
             delay(500)
             endCallInternal(saveRecord = false)
@@ -209,7 +209,7 @@ class AgoraCallService(
         updateSupabaseCallStatus(session.callId, "ended", finalDuration)
 
         scope.launch {
-            onCallEndedCallback(session.contactId, session.type, finalDuration, wasMissed)
+            onCallEndedCallback(session.contactId, session.type, finalDuration, wasMissed, !session.isIncoming)
             delay(600)
             endCallInternal(saveRecord = false)
         }
@@ -299,7 +299,7 @@ class AgoraCallService(
         val session = _currentCall.value
         if (session != null && saveRecord) {
             scope.launch {
-                onCallEndedCallback(session.contactId, session.type, session.durationSeconds, isMissed)
+                onCallEndedCallback(session.contactId, session.type, session.durationSeconds, isMissed, !session.isIncoming)
             }
         }
 
@@ -411,7 +411,7 @@ class AgoraCallService(
                 Log.i(TAG, "Outgoing call timed out unanswered — marking missed")
                 updateSupabaseCallStatus(current.callId, "missed")
                 _currentCall.update { it?.copy(state = CallState.MISSED) }
-                scope.launch { onCallEndedCallback(current.contactId, current.type, 0, true) }
+                scope.launch { onCallEndedCallback(current.contactId, current.type, 0, true, true) }
                 delay(1500)
                 endCallInternal(saveRecord = false)
             }
