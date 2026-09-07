@@ -285,6 +285,15 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-07 (build recovery):** Sandbox was reset → toolchain + artifacts
+  wiped; full rebuild from `dc176de` reproduced identical signed binaries
+  (APK 150,451,914 B / AAB 74,610,631 B; upload-key cert SHA-1 `5b:7f:4b:cd:
+  c2:09:66:80:4a:58:2f:85:8a:32:1a:2d:78:74:d8:9d`). Artifacts now stored
+  durably and mirrored to the GitHub release **`v1.0-test`** (sha256-verified:
+  APK `53b366e3…`, AAB `07e19a6e…`) so download options can never go blank
+  again. Download page + `/api/download` now read from the persistent
+  artifacts dir; recovery automated via `scripts/trigger-recover.sh`
+  (fast path = re-download from release, `--rebuild` = full toolchain build).
 - **2026-09-07 (this pass):** New Message page end-to-end audit; username/name/
   phone search; follows (Instagram model); message requests with 3-message cap,
   accept/decline, locked receiver composer; presence RLS gating + WhatsApp-style
