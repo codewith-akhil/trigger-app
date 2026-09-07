@@ -217,6 +217,16 @@ resync. Presence RLS also gates Realtime deliveries.
 | Google services | `app/google-services.json` | FCM |
 | Upload keystore | env at build time (`KEYSTORE_PATH`, `STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`) | **never committed**; alias `upload` |
 
+**Auth email — custom SMTP (⚠️ LOCKED — owner-configured, verified working,
+DO NOT MODIFY):** Supabase Auth → custom SMTP via Resend.
+`smtp.resend.com:587` · username `resend` · sender
+`team@beauzead.shop` (name "Trigger App") · min interval 1 s / user.
+Passwords are encrypted at rest by Supabase. Auth OTP/reset emails flow
+through this path — no code or dashboard change is permitted here without
+the owner's explicit say-so. (Note: the `no-reply@triggerapp.com` strings in
+`_shared/resend.ts` are only an in-code fallback for edge-function emails,
+NOT the auth sender — do not confuse the two.)
+
 osmdroid (static + live location) needs no key. Maps render offline tiles.
 
 **Auth flow:** email + password; signup OTP via `email_otp` (Resend);
