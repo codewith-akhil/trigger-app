@@ -280,21 +280,26 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 **Pending / known gaps (next up):**
 1. **Dark theme** — single light scheme today; dark palette constants exist.
-2. **Profile pages** for other users (avatar/name/username/follow counts,
-   follow-from-profile) — data layer ready (`get-follow-info`).
-3. **Follower list screen** with pagination (function supports limit/offset).
-4. **Group chats** — conversations.is_group flag exists, no group flows yet.
-5. **Privacy setting "Last seen & online"** — stored but not enforced in the
+2. **Follower list screen** with pagination (function supports limit/offset).
+3. **Group chats** — conversations.is_group flag exists, no group flows yet.
+4. **Privacy setting "Last seen & online"** — stored but not enforced in the
    presence RLS (only request-acceptance gate is).
-6. **Incoming call push** — call ring is polled (4 s); FCM data-message
+5. **Incoming call push** — call ring is polled (4 s); FCM data-message
    would cut latency + battery cost.
-7. ** Username `citext` search** is ilike-based; consider trigram index for
+6. **Username `citext` search** is ilike-based; consider trigram index for
    scale.
-8. **Namespace rename** `com.example` → `com.trigger.app` (TODO in build file).
-9. **Per-screen colour dupes** → consolidate to `ui/theme` palette.
+7. **Namespace rename** `com.example` → `com.trigger.app` (TODO in build file).
+8. **Per-screen colour dupes** → consolidate to `ui/theme` palette.
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-07 (UI/UX overhaul & User Profile release):** Complete WhatsApp-style
+  chat bubble overhaul with asymmetric shapes, inline single-line timestamps,
+  translucent corner pill badges for media, pinch-to-zoom full-screen media
+  viewer with ExoPlayer and interactive reply bar, chronological message sorting
+  fix (`timestampMillis ASC, seq ASC`), decluttered user search results, and new
+  dedicated `UserProfileScreen` with follower metrics and safety block/report actions.
+  Full documentation available in [`docs/UI_CHANGES_DOCUMENTATION.md`](UI_CHANGES_DOCUMENTATION.md).
 - **2026-09-07 (build recovery):** Sandbox was reset → toolchain + artifacts
   wiped; full rebuild from `dc176de` reproduced identical signed binaries
   (APK 150,451,914 B / AAB 74,610,631 B; upload-key cert SHA-1 `5b:7f:4b:cd:

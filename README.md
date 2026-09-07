@@ -477,6 +477,15 @@ The project includes JVM unit tests and screenshot regression tests using **Robo
 
 ---
 
+## 📚 Documentation
+
+Detailed architectural, product, and UI design documentation is available in the `docs/` folder:
+
+- **[UI & UX Enhancements Documentation](docs/UI_CHANGES_DOCUMENTATION.md)** — Comprehensive line-by-line guide to the WhatsApp chat bubbles overhaul, media cards, pinch-to-zoom media viewer, UserProfileScreen, search refinement, and chronological message ordering.
+- **[Complete Product & Backend Documentation](docs/APP_DOCUMENTATION.md)** — Complete reference for database schemas, Supabase Edge Functions, authentication, Agora audio/video calling, and push notifications.
+
+---
+
 ## 🔒 Security & Best Practices
 
 - **Zero Broad Storage Permissions**: In accordance with Google Play Developer Program policies, the app uses Android's privacy-preserving Photo Picker (`ActivityResultContracts.PickVisualMedia`) for media selection without requiring broad storage permissions (`READ_EXTERNAL_STORAGE`).
