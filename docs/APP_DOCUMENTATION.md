@@ -293,6 +293,31 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-07 (release hosting reverted to local-only; Supabase Storage
+  releases bucket deleted):** Per product decision, the APK/AAB are **no
+  longer stored in Supabase Storage** — the `releases` bucket (5 sha256-verified
+  parts + `latest/manifest.json`) was fully purged and the bucket deleted;
+  all 7 app-data buckets (avatars, chat_media, vault_media, stream_thumbnails,
+  backups, voice_notes, documents) are untouched. Artifacts remain in the
+  durable local artifacts dir **and** the GitHub release `v1.0-test` mirror.
+  The root-cause of the original download failures (single ~151 MB stream
+  dying inside the preview gateway at 15–30 s) is now solved **locally**: the
+  page serves each artifact as 16 MiB parts from `/api/download-part`
+  (byte-range slices of the local files, Content-Length + error handling);
+  the client verifies every part's size + SHA-256 against
+  `artifacts/manifest.json` (10 parts APK / 5 parts AAB) with per-part retry,
+  then assembles and saves the blob. `scripts/make-release-manifest.ts`
+  regenerates the manifest (per-part hashes, versionCode/versionName parsed
+  from `app/build.gradle.kts`, source commit = last code-affecting commit) —
+  it replaces the removed `upload-release.sh` as step 3 of
+  `trigger-recover.sh`, so **future rebuilds need no Supabase interaction at
+  all**: rebuild → regenerate manifest → page serves the new build instantly.
+  `/api/download` remains a 302 redirect to the GitHub mirror for non-browser
+  clients. Verified: all 15 parts HTTP 200 with exact sizes and matching
+  hashes (assembled sha256 APK `3aa7c979…` / AAB `dce1e9e5…` identical to the
+  signed build); browser downloads of both artifacts completed
+  "Saved & checksum-verified" with zero console errors; footer sticky-bottom
+  confirmed on mobile (390×844).
 - **2026-09-07 (release distribution moved to Supabase Storage):** The sandbox
   gateway kept aborting large downloads (`/api/download` streamed ~151 MB
   through the preview proxy and died mid-transfer every time), so the signed
