@@ -64,6 +64,7 @@ data class ContactItem(
 fun NewMessageScreen(
     onBack: () -> Unit,
     onChatOpened: (conversationId: String, contactId: String, contactName: String) -> Unit,
+    onNavigateToUserProfile: (UserSearchResult) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -281,7 +282,7 @@ fun NewMessageScreen(
                             isContact = user.id in contactIds,
                             requestSent = user.id in requestSentTo,
                             onFollowToggle = { toggleFollow(user) },
-                            onClick = { openOrRequest(user) }
+                            onClick = { onNavigateToUserProfile(user) }
                         )
                     }
                 }
@@ -390,7 +391,7 @@ fun NewMessageScreen(
                             isContact = false,
                             requestSent = user.id in requestSentTo,
                             onFollowToggle = { toggleFollow(user) },
-                            onClick = { openOrRequest(user) }
+                            onClick = { onNavigateToUserProfile(user) }
                         )
                     }
                 }
@@ -540,7 +541,7 @@ private fun UserSearchRow(
             }
         }
         Spacer(modifier = Modifier.width(8.dp))
-        // Instagram-model Follow / Following toggle
+        // Instagram-model Follow / Following toggle (ONLY button on the right side)
         if (isFollowing) {
             OutlinedButton(
                 onClick = onFollowToggle,
@@ -569,16 +570,6 @@ private fun UserSearchRow(
                     Text("Follow", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                 }
             }
-        }
-        Spacer(modifier = Modifier.width(8.dp))
-        when {
-            isContact -> {}
-            requestSent -> Text(
-                "Request sent", fontSize = 11.sp,
-                color = TriggerGreenAccent, fontWeight = FontWeight.SemiBold
-            )
-            else -> Icon(Icons.Filled.PersonAdd, contentDescription = "Message",
-                tint = TriggerGreenAccent, modifier = Modifier.size(20.dp))
         }
     }
 }

@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface MessageDao {
 
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY seq ASC, timestampMillis ASC")
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestampMillis ASC, seq ASC")
     fun getMessagesForConversation(conversationId: String): Flow<List<MessageEntity>>
 
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND timestampMillis < :beforeTimestamp ORDER BY timestampMillis DESC LIMIT :limit")

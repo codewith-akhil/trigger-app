@@ -27,6 +27,7 @@ object TriggerDestinations {
     const val DASHBOARD = "dashboard"
     const val CHAT = "chat"
     const val PROFILE = "profile"
+    const val USER_PROFILE = "user_profile"
     const val DELETE_ACCOUNT = "delete_account"
     const val SELECT_CONTACT = "select_contact"
     const val NEW_MESSAGE = "new_message"
@@ -87,6 +88,9 @@ fun TriggerAppNavHost(
     }
     var activeChatAvatarRes by rememberSaveable {
         mutableStateOf<Int?>(null)
+    }
+    var activeUserProfileUser by remember {
+        mutableStateOf<com.example.ui.screens.UserSearchResult?>(null)
     }
 
     // Android 13+ requires a RUNTIME request for POST_NOTIFICATIONS. The
@@ -465,8 +469,33 @@ fun TriggerAppNavHost(
                     activeChatContactName = contactName
                     activeChatAvatarRes = null
                     navController.navigate(TriggerDestinations.CHAT)
+                },
+                onNavigateToUserProfile = { user ->
+                    activeUserProfileUser = user
+                    navController.navigate(TriggerDestinations.USER_PROFILE)
                 }
             )
+        }
+
+        composable(TriggerDestinations.USER_PROFILE) {
+            val user = activeUserProfileUser
+            if (user != null) {
+                com.example.ui.screens.UserProfileScreen(
+                    user = user,
+                    onBack = { navController.popBackStack() },
+                    onOpenChat = { convId, peerId, contactName ->
+                        activeChatConversationId = convId
+                        activeChatPeerId = peerId
+                        activeChatContactName = contactName
+                        activeChatAvatarRes = null
+                        navController.navigate(TriggerDestinations.CHAT)
+                    }
+                )
+            } else {
+                LaunchedEffect(Unit) {
+                    navController.popBackStack()
+                }
+            }
         }
 
         composable(TriggerDestinations.CHAT) {

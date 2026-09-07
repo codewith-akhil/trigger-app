@@ -60,12 +60,12 @@ class ChatViewModel(
 
     // Combined messages: extras (older page) + main flow (latest)
     val messages: StateFlow<List<DomainMessage>> = combine(_liveMessages, _extraMessages) { main, extras ->
-        // Merge by id, then sort by seq + timestampMillis
+        // Merge by id, then sort chronologically by timestampMillis + seq
         val map = LinkedHashMap<String, DomainMessage>()
         // Insert extras first (older), then main (newer will overwrite duplicates)
-        extras.sortedBy { it.seq }.forEach { map[it.id] = it }
+        extras.sortedBy { it.timestampMillis }.forEach { map[it.id] = it }
         main.forEach { map[it.id] = it }
-        map.values.sortedWith(compareBy({ it.seq }, { it.timestampMillis }))
+        map.values.sortedWith(compareBy({ it.timestampMillis }, { it.seq }))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val contactPresence: StateFlow<Pair<PresenceStatus, String>> = presenceService

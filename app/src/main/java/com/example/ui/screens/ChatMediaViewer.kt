@@ -3,10 +3,14 @@ package com.example.ui.screens
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -14,22 +18,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.model.DomainMessage
-import com.example.model.MessageType
-import coil.compose.AsyncImage
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
-import java.util.Locale
+import coil.compose.AsyncImage
+import com.example.model.DomainMessage
+import com.example.model.MessageType
+import com.example.ui.theme.TriggerFabGreen
 
 @Composable
 fun ChatMediaViewer(
@@ -38,8 +44,11 @@ fun ChatMediaViewer(
     onDelete: () -> Unit = {},
     onShare: () -> Unit = {}
 ) {
-    // H7: REAL video playback via media3/ExoPlayer. Previously a static
-    // thumbnail with a fake progress slider and hardcoded "0:14"/"0:42".
+    var isStarred by remember { mutableStateOf(message.isStarred) }
+    var replyText by remember { mutableStateOf("") }
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
 
     Box(
         modifier = Modifier
@@ -49,64 +58,25 @@ fun ChatMediaViewer(
             .navigationBarsPadding()
             .testTag("media_viewer")
     ) {
-        // Top app bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(60.dp)
-                .background(Color.Black.copy(alpha = 0.6f))
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onClose) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Close",
-                    tint = Color.White
-                )
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = message.senderName,
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "${message.timestamp} ${if (message.isViewOnce) "• View once" else ""}",
-                    color = Color(0xFF8696A0),
-                    fontSize = 12.sp
-                )
-            }
-
-            IconButton(onClick = onDelete) {
-                Icon(
-                    imageVector = Icons.Filled.Delete,
-                    contentDescription = "Delete",
-                    tint = Color.White
-                )
-            }
-
-            IconButton(onClick = {
-                onShare()
-                onClose()
-            }) {
-                Icon(
-                    imageVector = Icons.Filled.Share,
-                    contentDescription = "Share",
-                    tint = Color.White
-                )
-            }
-        }
-
         // Center Media Content
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(vertical = 70.dp),
+                .padding(top = 64.dp, bottom = 120.dp)
+                .pointerInput(Unit) {
+                    if (message.type != MessageType.VIDEO) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            scale = (scale * zoom).coerceIn(1f, 4f)
+                            if (scale > 1f) {
+                                offsetX += pan.x
+                                offsetY += pan.y
+                            } else {
+                                offsetX = 0f
+                                offsetY = 0f
+                            }
+                        }
+                    }
+                },
             contentAlignment = Alignment.Center
         ) {
             if (message.type == MessageType.VIDEO) {
@@ -115,13 +85,20 @@ fun ChatMediaViewer(
                     thumbnailUrl = message.mediaThumbnail
                 )
             } else {
-                // Image viewer
-                if (!message.mediaUrl.isNullOrEmpty()) {
+                // Image viewer with pinch to zoom
+                if (!message.mediaUrl.isNullOrEmpty() || !message.mediaThumbnail.isNullOrEmpty()) {
                     AsyncImage(
-                        model = message.mediaUrl,
+                        model = message.mediaUrl ?: message.mediaThumbnail,
                         contentDescription = "Photo",
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer(
+                                scaleX = scale,
+                                scaleY = scale,
+                                translationX = offsetX,
+                                translationY = offsetY
+                            )
                     )
                 } else {
                     Icon(
@@ -134,30 +111,173 @@ fun ChatMediaViewer(
             }
         }
 
-        // Bottom caption bar if present
-        if (message.text.isNotBlank()) {
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth(),
-                color = Color.Black.copy(alpha = 0.7f)
-            ) {
+        // Top app bar (WhatsApp style with black 60% translucent scrim)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .height(64.dp)
+                .background(Color.Black.copy(alpha = 0.65f))
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onClose) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Color.White
+                )
+            }
+
+            Spacer(modifier = Modifier.width(4.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (message.isOutgoing) "You" else message.senderName,
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "${message.timestamp} ${if (message.isViewOnce) "• View once" else ""}",
+                    color = Color(0xFF8696A0),
+                    fontSize = 12.sp
+                )
+            }
+
+            IconButton(onClick = { isStarred = !isStarred }) {
+                Icon(
+                    imageVector = if (isStarred) Icons.Filled.Star else Icons.Filled.StarBorder,
+                    contentDescription = "Star",
+                    tint = if (isStarred) Color(0xFFFFC107) else Color.White
+                )
+            }
+
+            IconButton(onClick = {
+                onShare()
+            }) {
+                Icon(
+                    imageVector = Icons.Filled.Forward,
+                    contentDescription = "Share",
+                    tint = Color.White
+                )
+            }
+
+            IconButton(onClick = onDelete) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Delete",
+                    tint = Color.White
+                )
+            }
+        }
+
+        // Bottom section: Caption + Quick Reactions + Reply bar (Screenshots 6 & 7)
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.75f))
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            // Optional Caption text
+            if (message.text.isNotBlank()) {
                 Text(
                     text = message.text,
                     color = Color.White,
-                    fontSize = 15.sp,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
+                    fontSize = 14.5.sp,
+                    modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
                 )
+            }
+
+            // Quick emoji reactions row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val quickEmojis = listOf("❤️", "😂", "😮", "😢", "🙏", "👏")
+                quickEmojis.forEach { emoji ->
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.12f))
+                            .clickable {
+                                onClose()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(text = emoji, fontSize = 20.sp)
+                    }
+                }
+            }
+
+            // Reply input bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color(0xFF1F2C34))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.SentimentSatisfied,
+                    contentDescription = "Emoji",
+                    tint = Color(0xFF8696A0),
+                    modifier = Modifier.size(24.dp)
+                )
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Box(modifier = Modifier.weight(1f)) {
+                    if (replyText.isEmpty()) {
+                        Text(
+                            text = "Reply...",
+                            color = Color(0xFF8696A0),
+                            fontSize = 15.sp
+                        )
+                    }
+                    BasicTextField(
+                        value = replyText,
+                        onValueChange = { replyText = it },
+                        textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+                        cursorBrush = SolidColor(TriggerFabGreen),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                if (replyText.isNotBlank()) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(TriggerFabGreen)
+                            .clickable {
+                                onClose()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "Send",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
             }
         }
     }
 }
 
 /**
- * H7: real video playback — media3 ExoPlayer driving a PlayerView with the
+ * Real video playback — media3 ExoPlayer driving a PlayerView with the
  * standard transport controls (play/pause, seek, real duration/position).
- * The player is created once per message and released when the viewer closes
- * (DisposableEffect), so no decoder/audio session ever leaks.
  */
 @Composable
 private fun RealVideoPlayer(
@@ -200,7 +320,6 @@ private fun RealVideoPlayer(
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            // No loadable URL — show the thumbnail (if any) or a broken icon.
             if (!thumbnailUrl.isNullOrEmpty() || !mediaUrl.isNullOrEmpty()) {
                 AsyncImage(
                     model = thumbnailUrl ?: mediaUrl,
