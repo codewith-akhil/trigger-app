@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [MessageEntity::class, ConversationEntity::class],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -33,12 +33,22 @@ abstract class ChatDatabase : RoomDatabase() {
                         ADD_PIN_EDIT_SEQ_IDEMPOTENCY_ARCHIVED,
                         ADD_LOCATION_LIVE_FIELDS,
                         UNIFY_CONVERSATION_IDS_AND_MEDIA_PATHS,
-                        ADD_CALL_LOG_FIELDS
+                        ADD_CALL_LOG_FIELDS,
+                        ADD_CONVERSATION_LAST_ACTIVITY
                     )
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        // Migration 7 → 8: conversations.lastActivityMillis — recency ordering
+        // for the chat list (the list previously ordered by UUID, so new
+        // messages never bubbled a conversation to the top).
+        private val ADD_CONVERSATION_LAST_ACTIVITY = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE conversations ADD COLUMN lastActivityMillis INTEGER NOT NULL DEFAULT 0")
             }
         }
 

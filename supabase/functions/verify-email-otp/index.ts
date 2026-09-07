@@ -120,11 +120,10 @@ async function handler(req: Request): Promise<Response> {
   const matched = await verifyCode(code, otp.code_hash);
 
   if (!matched) {
+    // Atomic increment (RPC) — concurrent wrong guesses both read the same
+    // count and wrote the same +1, exceeding max_attempts.
+    await supabase.rpc("bump_otp_attempts", { p_otp_id: otp.id });
     const newAttempts = (otp.attempts ?? 0) + 1;
-    await supabase
-      .from("otp_codes")
-      .update({ attempts: newAttempts })
-      .eq("id", otp.id);
     const remaining = Math.max((otp.max_attempts ?? OTP_MAX_ATTEMPTS) - newAttempts, 0);
     return json(
       { verified: false, error: remaining > 0 ? `Incorrect code. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining.` : "Too many incorrect attempts. Please request a new code.", code: ErrorCode.VALIDATION_FAILED, attemptsRemaining: remaining },
@@ -142,11 +141,23 @@ async function handler(req: Request): Promise<Response> {
   // Without this, email_confirmed_at stays NULL → login fails with "Email not confirmed".
   if (purpose === "signup") {
     // Look up the user by email + confirm their email.
-    const { data: users } = await supabase.auth.admin.listUsers({
-      page: 1,
-      perPage: 1000,
-    });
-    const user = users?.users?.find((u: any) => u.email?.toLowerCase() === email);
+    // profiles.email first (see reset-password note — listUsers page 1 caps
+    // at 1000 users and silently misses later signups).
+    const { data: profileRow } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("email", email)
+      .limit(1);
+    let user: { id: string } | null = profileRow && profileRow.length > 0
+      ? { id: profileRow[0].id }
+      : null;
+    if (!user) {
+      const { data: users } = await supabase.auth.admin.listUsers({
+        page: 1,
+        perPage: 1000,
+      });
+      user = users?.users?.find((u: any) => u.email?.toLowerCase() === email) ?? null;
+    }
     if (user) {
       const { error: confirmError } = await supabase.auth.admin.updateUserById(user.id, {
         email_confirm: true,

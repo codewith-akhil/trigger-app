@@ -85,7 +85,7 @@ class AgoraLiveStreamService(
     ): Result<LiveStreamItem> = withContext(Dispatchers.IO) {
         val streamId = UUID.randomUUID().toString()
         val channelName = "stream_" + UUID.randomUUID().toString().replace("-", "").take(12)
-        val hostUid = abs((supabaseClient.currentUser?.id?.hashCode() ?: System.currentTimeMillis().hashCode()) % 1000000).toLong() + 2000
+val hostUid = ((supabaseClient.currentUser?.id ?: java.util.UUID.randomUUID().toString()).replace("-", "").takeLast(6).toLongOrNull(16) ?: 0L) + 2000L
         val hostName = supabaseClient.currentUser?.fullName ?: "Host"
 
         val item = LiveStreamItem(
@@ -153,7 +153,7 @@ class AgoraLiveStreamService(
     }
 
     override suspend fun joinLiveStream(stream: LiveStreamItem): Result<Unit> = withContext(Dispatchers.IO) {
-        val audienceUid = abs((supabaseClient.currentUser?.id?.hashCode() ?: System.currentTimeMillis().hashCode()) % 1000000).toLong() + 5000
+val audienceUid = ((supabaseClient.currentUser?.id ?: java.util.UUID.randomUUID().toString()).replace("-", "").takeLast(6).toLongOrNull(16) ?: 0L) + 2000L
 
         // 1. Join Agora as Audience
         val joined = rtcManager.joinChannel(
@@ -182,14 +182,14 @@ class AgoraLiveStreamService(
         startDurationTimer()
         startCommentSync(stream.id)
 
-        // Increment viewer count in Supabase
+        // Atomic increment via PostgREST RPC — stale last-write-wins upserts
+        // let concurrent viewers clobber each other's count.
         if (BackendConfig.isSupabaseConfigured) {
             try {
-                val update = JSONObject().apply {
-                    put("id", stream.id)
-                    put("viewer_count", stream.viewerCount + 1)
-                }
-                supabaseClient.upsertRecord("live_streams", update)
+                supabaseClient.callRpc(
+                    "increment_stream_viewers",
+                    JSONObject().put("p_stream_id", stream.id).put("p_delta", 1)
+                )
             } catch (_: Exception) {}
         }
 
@@ -218,12 +218,13 @@ class AgoraLiveStreamService(
                         }
                         supabaseClient.upsertRecord("live_streams", update)
                     } else {
-                        val newCount = (stream.viewerCount - 1).coerceAtLeast(0)
-                        val update = JSONObject().apply {
-                            put("id", stream.id)
-                            put("viewer_count", newCount)
-                        }
-                        supabaseClient.upsertRecord("live_streams", update)
+                        // Atomic decrement (see join side).
+                        try {
+                            supabaseClient.callRpc(
+                                "increment_stream_viewers",
+                                JSONObject().put("p_stream_id", stream.id).put("p_delta", -1)
+                            )
+                        } catch (_: Exception) {}
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Error updating stream status on leave", e)

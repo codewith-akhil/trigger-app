@@ -159,6 +159,10 @@ class StreamScheduleService(
         // can promote it to a live_streams row at the scheduled time.
         scope.launch {
             val scheduledAtIso = buildScheduledAtIso(date, time)
+            if (scheduledAtIso == null) {
+                Log.e(TAG, "scheduleStream: unparsable date/time '$date $time' — stream NOT scheduled (a 'now' fallback previously let the cron start it immediately).")
+                return@launch
+            }
             val row = JSONObject()
                 .put("id", streamId)
                 .put("host_id", hostId)
@@ -347,8 +351,21 @@ class StreamScheduleService(
                         category = row.optString("category", "Tech & Talk"),
                         hostName = row.optString("host_name", ""),
                         hostEmail = row.optString("host_email", ""),
-                        date = scheduledAt.take(10),
-                        time = scheduledAt.substringAfter('T', "").take(8),
+                        // Render in the DEVICE zone — the raw UTC substring
+                        // showed "14:00" for a 2 PM local stream.
+                        date = let {
+                            val cal = java.util.Calendar.getInstance().apply { timeInMillis = parseIsoToMillis(scheduledAt) }
+                            String.format(java.util.Locale.US, "%04d-%02d-%02d",
+                                cal.get(java.util.Calendar.YEAR),
+                                cal.get(java.util.Calendar.MONTH) + 1,
+                                cal.get(java.util.Calendar.DAY_OF_MONTH))
+                        },
+                        time = let {
+                            val cal = java.util.Calendar.getInstance().apply { timeInMillis = parseIsoToMillis(scheduledAt) }
+                            String.format(java.util.Locale.US, "%02d:%02d",
+                                cal.get(java.util.Calendar.HOUR_OF_DAY),
+                                cal.get(java.util.Calendar.MINUTE))
+                        },
                         timestampMillis = parseIsoToMillis(scheduledAt),
                         slotLimit = slotLimit,
                         slotsBooked = row.optInt("slots_booked", 0),
@@ -367,27 +384,30 @@ class StreamScheduleService(
     }
 
     /** Build an ISO-8601 timestamp from the user-selected date + time strings. */
-    private fun buildScheduledAtIso(date: String, time: String): String {
+    /** Null on parse failure — callers MUST abort instead of scheduling.
+     *  The previous "now" fallback made the cron auto-start a stream that was
+     *  meant for days later (parse failure → immediate promotion). */
+    private fun buildScheduledAtIso(date: String, time: String): String? {
         return try {
             val inFmt = SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.US)
             inFmt.timeZone = TimeZone.getDefault()
             val outFmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
             outFmt.timeZone = TimeZone.getDefault()
-            outFmt.format(inFmt.parse("$date $time") ?: Date())
+            val parsed = inFmt.parse("$date $time") ?: return null
+            outFmt.format(parsed)
         } catch (_: Exception) {
-            // Fallback: just emit "now" so the row still gets inserted.
-            val outFmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
-            outFmt.format(Date())
+            null
         }
     }
 
+    /** 0L on parse failure (never fabricate "now"). */
     private fun parseIsoToMillis(iso: String): Long {
         return try {
             val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
             sdf.timeZone = TimeZone.getTimeZone("UTC")
-            sdf.parse(iso)?.time ?: System.currentTimeMillis()
+            sdf.parse(iso)?.time ?: 0L
         } catch (_: Exception) {
-            System.currentTimeMillis()
+            0L
         }
     }
 

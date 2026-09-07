@@ -66,6 +66,10 @@ fun SignUpScreen(
     }
 
     fun handleSignUp() {
+        // Re-entrancy guard: the IME "Done" action bypasses the
+        // enabled=!isLoading button state, letting double-taps fire two
+        // auth calls / navigate twice.
+        if (isSubmitting) return
         errorMessage = null
         val trimmedName = fullName.trim()
         val trimmedEmail = email.trim().lowercase()

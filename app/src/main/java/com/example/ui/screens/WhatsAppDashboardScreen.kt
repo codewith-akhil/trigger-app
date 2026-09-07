@@ -204,12 +204,11 @@ fun WhatsAppDashboardScreen(
                 }
                 DashboardTab.CALLS -> {
                     FloatingActionButton(
-                        onClick = {
-                            activeCallContactName = "Live Contact"
-                            activeCallIsVideo = true
-                            com.example.di.AppServiceContainer.agoraService.startCall("call_general", isVideo = true)
-                            showActiveCallDialog = true
-                        },
+                        // Opens the New Message page to pick a chat to call.
+                        // (The previous behavior dialed a fake hardcoded
+                        // "call_general" live call — contradicted the tab's own
+                        // comment and placed real calls in everyone's log.)
+                        onClick = { onOpenNewMessage() },
                         shape = RoundedCornerShape(16.dp),
                         containerColor = TriggerFabGreen,
                         contentColor = Color.White,
@@ -304,7 +303,13 @@ fun WhatsAppDashboardScreen(
                 DashboardTab.PROFILE -> {
                     ProfileScreen(
                         onBack = { selectedTab = DashboardTab.CHATS },
-                        onLogout = onRestartFlow,
+                        // Same full cleanup as the PROFILE route (NavHost):
+                        // presence offline -> realtime disconnect -> server
+                        // signOut -> Room/vault/wallet wipe, THEN navigate.
+                        // Passing onRestartFlow directly skipped ALL of it.
+                        onLogout = {
+                            com.example.service.AccountStateManager.performLogout(onRestartFlow)
+                        },
                         showHeader = false
                     )
                 }
@@ -2346,7 +2351,7 @@ fun AgoraGoLiveDialog(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                categories.take(3).forEach { cat ->
+                categories.forEach { cat ->
                     val isSelected = streamCategory == cat
                     Surface(
                         shape = RoundedCornerShape(16.dp),

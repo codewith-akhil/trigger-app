@@ -164,9 +164,37 @@ async function handler(req: Request): Promise<Response> {
       return json({ synced: 0, skipped });
     }
 
+    // SENDER-ONLY pushes: the messages UPDATE policy used to allow the
+    // conversation OWNER to update ANY message in the thread — pushing a
+    // local mirror could rewrite the PEER's messages (text/media/status) and
+    // bypass the 15-minute edit window. Now a pushed row updates only rows
+    // the caller itself sent; foreign ids are counted as skipped.
+    const rowIds = rows.map((r) => r.id as string);
+    const { data: existingMsgs } = await supabase
+      .from("messages")
+      .select("id, sender_id")
+      .in("id", rowIds);
+    const ownExisting = new Set(
+      (existingMsgs ?? [])
+        .filter((m: { sender_id: string }) => m.sender_id === userId)
+        .map((m) => m.id)
+    );
+    const pushRows: Record<string, unknown>[] = [];
+    for (const r of rows) {
+      if (!existingMsgs?.some((m: { id: string }) => m.id === r.id) || ownExisting.has(r.id as string)) {
+        pushRows.push(r);
+      } else {
+        skipped++;
+      }
+    }
+
+    if (pushRows.length === 0) {
+      return json({ synced: 0, skipped });
+    }
+
     const { error: upsertError } = await userClient
       .from("messages")
-      .upsert(rows, { onConflict: "id" });
+      .upsert(pushRows, { onConflict: "id" });
 
     if (upsertError) {
       console.error("sync-messages push failed", upsertError);

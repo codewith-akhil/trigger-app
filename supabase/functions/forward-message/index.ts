@@ -41,6 +41,25 @@ async function handler(req: Request): Promise<Response> {
     if (tgtConv.request_status === "blocked") {
       return json({ error: `Conversation ${targetId} is blocked` }, 403);
     }
+    // The message-request gate applied to send-message must also apply to
+    // forwards — pending/declined threads previously accepted forwarded
+    // messages from either side (bypassing the 3-message cap entirely).
+    if (tgtConv.request_status === "declined") {
+      return json({ error: `Conversation ${targetId}: request was declined` }, 403);
+    }
+    if (tgtConv.request_status === "pending") {
+      if (tgtConv.owner_id !== userId) {
+        return json({ error: `Accept the message request in conversation ${targetId} first` }, 403);
+      }
+      const { count: sentCount } = await supabase
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("conversation_id", targetId)
+        .eq("sender_id", userId);
+      if ((sentCount ?? 0) >= 3) {
+        return json({ error: `You can send up to 3 messages while your request in conversation ${targetId} is pending` }, 403);
+      }
+    }
   }
 
   // Insert forwarded copies
@@ -78,12 +97,24 @@ async function handler(req: Request): Promise<Response> {
       // Update conversation last_message
       const preview = orig.type === "TEXT" ? (orig.text ?? "").slice(0, 100)
         : orig.type === "IMAGE" ? "📷 Photo" : orig.type === "VIDEO" ? "🎥 Video"
-        : orig.type === "AUDIO" ? "🎤 Voice message" : orig.type === "DOCUMENT" ? "📄 Document"
-        : orig.type === "LOCATION" ? "📍 Location" : "Message";
+        : orig.type === "AUDIO" || orig.type === "VOICE_NOTE" ? "🎤 Voice message"
+        : orig.type === "DOCUMENT" ? "📄 Document"
+        : orig.type === "LOCATION" ? "📍 Location"
+        : orig.type === "CONTACT" ? "👤 Contact"
+        : orig.type === "CALL_LOG" ? (orig.call_type === "video" ? "📞 Video call" : "📞 Voice call")
+        : "Message";
       await supabase.from("conversations").update({
         last_message: preview, last_message_type: orig.type,
         last_message_at: new Date().toISOString(),
       }).eq("id", targetId);
+      // Forwarded messages never incremented the receiver's unread badge.
+      const receiverId2 = (await supabase.from("conversations").select("owner_id, peer_id").eq("id", targetId).maybeSingle()).data;
+      if (receiverId2) {
+        const other = receiverId2.owner_id === userId ? receiverId2.peer_id : receiverId2.owner_id;
+        if (other) {
+          await supabase.rpc("increment_unread_count", { p_conversation_id: targetId, p_user_id: other });
+        }
+      }
     }
   }
 

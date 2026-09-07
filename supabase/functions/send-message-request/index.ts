@@ -91,21 +91,25 @@ async function handler(req: Request): Promise<Response> {
           code: "REQUEST_MESSAGE_LIMIT",
         }, 403);
       }
-      // Insert this follow-up message into the canonical conversation.
-      const { data: msg, error: msgErr } = await supabase
-        .from("messages")
-        .insert({
-          conversation_id: existingConv.id,
-          sender_id: senderId,
-          type: "TEXT",
-          text: message,
-          status: "SENT",
-          timestamp_millis: Date.now(),
-          is_outgoing: true,
-        })
-        .select()
-        .single();
-      if (msgErr || !msg) return json({ error: "Failed to send message" }, 500);
+      // Insert this follow-up message ATOMICALLY — the count-then-insert
+      // above (and this insert) were two separate steps; two concurrent
+      // requests could both pass the count and push past the 3-message cap.
+      const { data: msg, error: msgErr } = await supabase.rpc(
+        "try_send_pending_message",
+        {
+          p_conversation_id: existingConv.id,
+          p_sender_id: senderId,
+          p_text: message,
+          p_timestamp_millis: null,
+        }
+      );
+      if (msgErr || !msg) {
+        const code = String((msgErr as Record<string, unknown>)?.message ?? "");
+        if (code.includes("REQUEST_MESSAGE_LIMIT")) {
+          return json({ error: `You can send up to ${MAX_REQUEST_MESSAGES} messages while your request is pending`, code: "REQUEST_MESSAGE_LIMIT" }, 403);
+        }
+        return json({ error: "Failed to send message" }, 500);
+      }
       await supabase.from("conversations").update({
         last_message: message.slice(0, 100),
         last_message_type: "TEXT",

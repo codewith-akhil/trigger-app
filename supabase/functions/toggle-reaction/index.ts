@@ -32,19 +32,29 @@ async function handler(req: Request): Promise<Response> {
     return errorResponse("Forbidden", 403, ErrorCode.FORBIDDEN);
   }
 
-  // Check if reaction already exists
+  // A user has AT MOST ONE reaction per message (unique(message_id, user_id)):
+  // same emoji again → remove; different emoji → SWITCH. The old code only
+  // looked for the same emoji, so switching ❤️→👍 hit the unique violation
+  // and 500'd.
   const { data: existing } = await supabase
     .from("message_reactions")
-    .select("id")
+    .select("id, emoji")
     .eq("message_id", messageId)
     .eq("user_id", userId)
-    .eq("emoji", emoji)
     .maybeSingle();
 
-  if (existing) {
+  if (existing && existing.emoji === emoji) {
     // Remove the reaction
     await supabase.from("message_reactions").delete().eq("id", existing.id);
     return json({ reacted: false, emoji });
+  } else if (existing) {
+    // Switch to the new emoji
+    const { error } = await supabase
+      .from("message_reactions")
+      .update({ emoji })
+      .eq("id", existing.id);
+    if (error) return json({ error: "Failed to update reaction" }, 500);
+    return json({ reacted: true, emoji, switched: true });
   } else {
     // Add the reaction
     const { error } = await supabase.from("message_reactions").insert({

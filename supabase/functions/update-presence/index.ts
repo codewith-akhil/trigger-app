@@ -69,13 +69,22 @@ async function handler(req: Request): Promise<Response> {
     const until = body.is_typing !== false
       ? new Date(Date.now() + 6_000).toISOString()
       : null;
-    const { error: typingError } = await userClient
+    const { data: typingRows, error: typingError } = await userClient
       .from("user_presences")
       .update({ typing_until: until })
-      .eq("user_id", userId);
+      .eq("user_id", userId)
+      .select("user_id");
     if (typingError) {
       console.error("update-presence typing failed", typingError);
       return errorResponse("Failed to update typing state", 500, ErrorCode.INTERNAL_ERROR);
+    }
+    // A brand-new user has no presence row yet — the UPDATE silently matched
+    // 0 rows and typing was a permanent no-op for them. Seed the row.
+    if (!typingRows || typingRows.length === 0) {
+      await userClient.from("user_presences").upsert({
+        user_id: userId,
+        typing_until: until,
+      }, { onConflict: "user_id" });
     }
     return json({ updated: true, typing: body.is_typing !== false });
   }

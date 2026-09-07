@@ -121,16 +121,54 @@ async function handler(req: Request): Promise<Response> {
 
     if (rows.length === 0) return json({ synced: 0, skipped });
 
-    const { error: upsertError } = await supabase
+    // OWNERSHIP GUARD — the service-role upsert on client-controlled ids
+    // previously rewrote owner_id/peer_id of ANY conversation (hijack: get a
+    // conversation uuid, push a row, become the owner). Now:
+    //  - existing rows: only updated when the caller OWNS them, and never
+    //    their owner_id/peer_id/request_status;
+    //  - unknown ids: inserted as new pending conversations owned by the
+    //    caller (canonical-thread healing keeps working).
+    const ids = rows.map((r) => r.id as string);
+    const { data: existingRows } = await supabase
       .from("conversations")
-      .upsert(rows, { onConflict: "id" });
-
-    if (upsertError) {
-      console.error("sync-conversations push failed", upsertError);
-      return errorResponse("Failed to sync conversations", 500, ErrorCode.INTERNAL_ERROR);
+      .select("id, owner_id")
+      .in("id", ids);
+    const ownedIds = new Set(
+      (existingRows ?? []).filter((r: { owner_id: string }) => r.owner_id === userId).map((r) => r.id)
+    );
+    const newRows: Record<string, unknown>[] = [];
+    const updateRows: Record<string, unknown>[] = [];
+    for (const r of rows) {
+      if (ownedIds.has(r.id as string)) {
+        const { owner_id: _o, peer_id: _p, ...rest } = r;
+        updateRows.push(rest);
+      } else if (!existingRows?.some((e: { id: string }) => e.id === r.id)) {
+        newRows.push({ ...r, request_status: "pending" });
+      } else {
+        skipped++; // exists but not owned by the caller — refuse silently
+      }
     }
 
-    return json({ synced: rows.length, skipped });
+    if (updateRows.length > 0) {
+      const { error: updErr } = await supabase
+        .from("conversations")
+        .upsert(updateRows, { onConflict: "id" });
+      if (updErr) {
+        console.error("sync-conversations push failed", updErr);
+        return errorResponse("Failed to sync conversations", 500, ErrorCode.INTERNAL_ERROR);
+      }
+    }
+    if (newRows.length > 0) {
+      const { error: insErr } = await supabase
+        .from("conversations")
+        .upsert(newRows, { onConflict: "id" });
+      if (insErr) {
+        console.error("sync-conversations insert failed", insErr);
+        return errorResponse("Failed to sync conversations", 500, ErrorCode.INTERNAL_ERROR);
+      }
+    }
+
+    return json({ synced: updateRows.length + newRows.length, skipped });
   }
 
   if (action === "pull") {

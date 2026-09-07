@@ -21,6 +21,10 @@ object AppServiceContainer {
 
     private var initialized = false
 
+    /** Guard so the ProcessLifecycleOwner observer is added exactly once. */
+    @Volatile
+    var lifecycleObserverRegistered = false
+
     lateinit var context: android.content.Context
         private set
 
@@ -63,7 +67,9 @@ object AppServiceContainer {
     fun initialize(context: Context) {
         if (initialized) return
 
-        this.context = context
+        // Application context only — the previous code pinned the first
+        // Activity to process-wide singletons for the app's lifetime (leak).
+        this.context = context.applicationContext
 
         // Pass context so the Supabase session persists across process death
         supabaseClient = SupabaseClient(context)

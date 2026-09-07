@@ -78,15 +78,25 @@ async function handler(req: Request): Promise<Response> {
   }
 
   if (action === "decline") {
-    await supabase.from("message_requests").update({ status: "declined", responded_at: now }).eq("id", requestId);
+    await supabase.from("message_requests").update({ status: "declined", responded_at: now }).eq("id", requestId)
+    .eq("status", "pending")
+    .select("id");
     await supabase.from("conversations").update({ request_status: "declined" }).eq("id", canonicalId);
     return json({ declined: true, conversationId: canonicalId });
   }
 
   // ---------------- ACCEPT ----------------
-  await supabase.from("message_requests").update({
-    status: "accepted", responded_at: now, conversation_id: canonicalId,
-  }).eq("id", requestId);
+  // CONDITIONAL update — two concurrent responses (accept + decline) both
+  // passed the status check and last-write-won. Only the first wins now.
+  const { data: acceptedRow, error: acceptErr } = await supabase
+    .from("message_requests")
+    .update({ status: "accepted", responded_at: now, conversation_id: canonicalId })
+    .eq("id", requestId)
+    .eq("status", "pending")
+    .select("id");
+  if (acceptErr || !acceptedRow || acceptedRow.length === 0) {
+    return json({ error: "Request already responded to" }, 409);
+  }
 
   // Canonical (sender-owned) row → accepted; receiver reads/writes it.
   await supabase.from("conversations").update({
@@ -116,7 +126,9 @@ async function handler(req: Request): Promise<Response> {
       last_message_at: canonical.last_message_at,
     }).eq("id", existingMirror.id);
   } else {
-    await supabase.from("conversations").insert({
+    // Unique(pair) race with a concurrent accept: on 23505 re-select the
+    // winner's row instead of returning accepted-without-mirror.
+    const { error: mirrorErr } = await supabase.from("conversations").insert({
       owner_id: userId, peer_id: msgReq.sender_id,
       peer_name: msgReq.sender_name, peer_avatar_url: msgReq.sender_avatar_url,
       request_status: "accepted", is_contact: true,
@@ -124,6 +136,16 @@ async function handler(req: Request): Promise<Response> {
       last_message_at: canonical.last_message_at ?? now,
       unread_count: unread,
     });
+    if (mirrorErr) {
+      const { data: winner } = await supabase
+        .from("conversations")
+        .select("id")
+        .eq("owner_id", userId).eq("peer_id", msgReq.sender_id)
+        .maybeSingle();
+      if (!winner) {
+        console.error("mirror insert failed and no row exists", mirrorErr);
+      }
+    }
   }
 
   // Both users become contacts.

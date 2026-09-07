@@ -710,6 +710,7 @@ fun UserProfileScreen(
     // Dialog: Report User
     if (showReportDialog) {
         var reportReason by remember { mutableStateOf("") }
+        var reportOtherDetail by remember { mutableStateOf("") }
         var isReporting by remember { mutableStateOf(false) }
 
         AlertDialog(
@@ -721,34 +722,69 @@ fun UserProfileScreen(
             },
             text = {
                 Column {
-                    Text(
-                        "Please describe the issue. Our moderation team will review this report to keep Trigger safe.",
-                        fontSize = 13.sp,
-                        color = TriggerTextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = reportReason,
-                        onValueChange = { reportReason = it },
-                        placeholder = { Text("Reason for reporting...") },
-                        minLines = 2,
-                        maxLines = 4,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = TriggerGreenAccent,
-                            unfocusedBorderColor = TriggerDivider,
-                            cursorColor = TriggerGreenAccent
-                        ),
-                        enabled = !isReporting,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    // Structured categories (Spam/Harassment/… per the UI doc)
+                    // followed by optional detail — the free-text-only dialog
+                    // made triage impossible.
+                    val categories = listOf("Spam", "Harassment", "Inappropriate Content", "Fake Account", "Other")
+                    categories.forEach { category ->
+                        val selected = reportReason.startsWith(category)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (selected) TriggerGreenAccent.copy(alpha = 0.10f) else Color.Transparent)
+                                .clickable { reportReason = category }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = selected,
+                                onClick = { reportReason = category },
+                                enabled = !isReporting
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(category, fontSize = 14.sp, color = TriggerTextPrimary)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (reportReason == "Other") {
+                        OutlinedTextField(
+                            value = reportOtherDetail,
+                            onValueChange = { reportOtherDetail = it },
+                            placeholder = { Text("Describe the issue…") },
+                            minLines = 2,
+                            maxLines = 4,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = TriggerGreenAccent,
+                                unfocusedBorderColor = TriggerDivider,
+                                cursorColor = TriggerGreenAccent
+                            ),
+                            enabled = !isReporting,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else if (reportReason == "Spam" || reportReason == "Harassment") {
+                        Text(
+                            "Our moderation team will review this report to keep Trigger safe.",
+                            fontSize = 12.sp,
+                            color = TriggerTextSecondary
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
+                        if (reportReason.isBlank()) return@Button
                         isReporting = true
-                        reportUser(reportReason)
+                        // "Other" carries the free-text detail; categories go
+                        // through as their label.
+                        val finalReason = if (reportReason == "Other") {
+                            val detail = reportOtherDetail.trim()
+                            if (detail.isBlank()) return@Button
+                            "Other: $detail"
+                        } else reportReason
+                        reportUser(finalReason)
                         isReporting = false
                         showReportDialog = false
                     },

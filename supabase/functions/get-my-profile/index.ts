@@ -49,7 +49,53 @@ async function handler(req: Request): Promise<Response> {
 
   const countryName = data.country?.country_name ?? null;
 
+  // Hydrate saved app settings too — Notifications/Account/Privacy/Storage
+  // screens read `settings` from this response; it was never included so
+  // every settings screen rendered dead defaults after re-install.
+  const { data: settingsRow } = await supabase
+    .from("user_settings")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  // user_settings columns are snake_case; the client + update-user-settings
+  // wire format is camelCase — map before returning.
+  const settings: Record<string, unknown> = {};
+  if (settingsRow) {
+    const map: Record<string, string> = {
+      security_notifications: "securityNotifications",
+      two_step_enabled: "twoStepEnabled",
+      read_receipts: "readReceipts",
+      fingerprint_lock: "fingerprintLock",
+      last_seen: "lastSeen",
+      profile_photo_visibility: "profilePhotoVisibility",
+      about_visibility: "aboutVisibility",
+      groups_visibility: "groupsVisibility",
+      disappearing_default: "disappearingDefault",
+      enter_is_send: "enterIsSend",
+      media_visibility: "mediaVisibility",
+      font_size: "fontSize",
+      conversation_tones: "conversationTones",
+      high_priority_messages: "highPriorityMessages",
+      message_tone: "messageTone",
+      message_vibrate: "messageVibrate",
+      group_tone: "groupTone",
+      call_ringtone: "callRingtone",
+      use_less_data_for_calls: "useLessDataForCalls",
+      mobile_data_media: "mobileDataMedia",
+      wifi_media: "wifiMedia",
+      roaming_media: "roamingMedia",
+      app_language: "appLanguage",
+    };
+    for (const [col, key] of Object.entries(map)) {
+      if (settingsRow[col] !== undefined && settingsRow[col] !== null) {
+        settings[key] = settingsRow[col];
+      }
+    }
+  }
+
   return json({
+    settings,
     profile: {
       id: data.id,
       full_name: data.full_name ?? "",

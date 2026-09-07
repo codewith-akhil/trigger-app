@@ -40,6 +40,10 @@ class AgoraCallService(
     private var ringTimeoutJob: Job? = null
     private var incomingMonitorJob: Job? = null
 
+    private val incomingCallNotificationHelper by lazy {
+        com.example.service.IncomingCallNotificationHelper(com.example.di.AppServiceContainer.context)
+    }
+
     val rtcEngineManager: AgoraRtcEngineManager
         get() = rtcManager
 
@@ -87,7 +91,7 @@ class AgoraCallService(
         val callId = UUID.randomUUID().toString()
         val channelName = generateChannelName()
         val isVideo = type == CallType.VIDEO
-        val localUid = abs((supabaseClient.currentUser?.id?.hashCode() ?: System.currentTimeMillis().hashCode()) % 1000000).toLong() + 1000
+        val localUid = stableAgoraUid(supabaseClient.currentUser?.id)
 
         val session = CallSession(
             callId = callId,
@@ -165,7 +169,7 @@ class AgoraCallService(
         updateSupabaseCallStatus(session.callId, "connecting")
 
         scope.launch {
-            val localUid = abs((supabaseClient.currentUser?.id?.hashCode() ?: System.currentTimeMillis().hashCode()) % 1000000).toLong() + 1000
+            val localUid = stableAgoraUid(supabaseClient.currentUser?.id)
 
             val joined = rtcManager.joinChannel(
                 channelName = channelName,
@@ -317,6 +321,17 @@ class AgoraCallService(
      * Realtime because the shared realtime channel applies a conversation_id
      * filter that call_sessions rows don't satisfy.
      */
+    /**
+     * Collision-safe Agora uid: takes the last 6 hex chars of the user uuid
+     * (uniform 24 bits + 1000 offset). hashCode()%1e6 collided for some user
+     * pairs → both joined the channel as the SAME uid and kicked each other.
+     */
+    private fun stableAgoraUid(userId: String?): Long {
+        val id = userId ?: return (System.currentTimeMillis() % 1_000_000L) + 1000L
+        val hex = id.replace("-", "").takeLast(6)
+        return (hex.toLongOrNull(16) ?: (id.hashCode().toLong() and 0xFFFFFFL)) + 1000L
+    }
+
     private fun startIncomingCallMonitor() {
         if (incomingMonitorJob != null) return
         incomingMonitorJob = scope.launch(Dispatchers.IO) {
@@ -348,6 +363,16 @@ class AgoraCallService(
                                     )
                                     _currentCall.value = session
                                     startIncomingTimeout()
+                                    // Heads-up/full-screen notification so an
+                                    // incoming call is visible (and answerable)
+                                    // while the app is BACKGROUND — previously
+                                    // the ring only existed in-app and a
+                                    // backgrounded user missed every call.
+                                    incomingCallNotificationHelper.showIncomingCallNotification(
+                                        callId = session.callId,
+                                        callerName = session.contactName ?: "Incoming call",
+                                        isVideo = session.type == CallType.VIDEO
+                                    )
                                 }
                             }
                         }
@@ -364,10 +389,12 @@ class AgoraCallService(
                         if (res is SupabaseResult.Success) {
                             if (res.data.length() == 0) {
                                 _currentCall.value = null
+                                incomingCallNotificationHelper.cancelCallNotification()
                             } else {
                                 val status = res.data.getJSONObject(0).optString("status", "calling")
                                 if (status !in listOf("calling", "ringing")) {
                                     _currentCall.value = null
+                                    incomingCallNotificationHelper.cancelCallNotification()
                                 }
                             }
                         }

@@ -292,7 +292,10 @@ class ChatViewModel(
         // Multi-device sync: pull any messages we missed since the last sync.
         viewModelScope.launch {
             try {
-                val sinceTs = prefs.getLong(KEY_LAST_SYNC_TS, 0L)
+                // Per-conversation watermark — the global key made "open A,
+                // then B" pull B only for messages newer than A's last pull,
+                // so B's older history never reached Room.
+                val sinceTs = prefs.getLong("last_sync_ts_$conversationId", 0L)
                 messageService.syncMessages(conversationId = conversationId, sinceTs = sinceTs)
             } catch (e: Exception) {
                 // Non-fatal — Room is the local cache.
@@ -335,6 +338,19 @@ class ChatViewModel(
             delay(400)
             presenceService.setUserTyping(peerId, newText.isNotBlank())
         }
+    }
+
+    /**
+     * Sends [text] as an outgoing text message from the media viewer's reply
+     * bar. Routes through the same pipeline as the composer (request gating,
+     * idempotency, optimistic insert) — the viewer previously discarded the
+     * typed reply entirely (send button just closed the viewer).
+     */
+    fun sendReplyFromViewer(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        inputText.value = trimmed
+        sendTextMessage()
     }
 
     fun sendTextMessage() {

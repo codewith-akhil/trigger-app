@@ -4,6 +4,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,7 +43,11 @@ fun ChatMediaViewer(
     message: DomainMessage,
     onClose: () -> Unit,
     onDelete: () -> Unit = {},
-    onShare: () -> Unit = {}
+    onShare: () -> Unit = {},
+    // Wired to the VM — the quick-emoji row and reply bar were silent
+    // no-ops (they only closed the viewer) while the UI docs claim they work.
+    onReact: (String) -> Unit = {},
+    onSendReply: (String) -> Unit = {}
 ) {
     var isStarred by remember { mutableStateOf(message.isStarred) }
     var replyText by remember { mutableStateOf("") }
@@ -177,6 +182,9 @@ fun ChatMediaViewer(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                // Lift the reply bar above the IME — previously the keyboard
+                // covered it while typing.
+                .imePadding()
                 .background(Color.Black.copy(alpha = 0.75f))
                 .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
@@ -206,6 +214,7 @@ fun ChatMediaViewer(
                             .clip(CircleShape)
                             .background(Color.White.copy(alpha = 0.12f))
                             .clickable {
+                                onReact(emoji)
                                 onClose()
                             },
                         contentAlignment = Alignment.Center
@@ -258,7 +267,10 @@ fun ChatMediaViewer(
                             .clip(CircleShape)
                             .background(TriggerFabGreen)
                             .clickable {
-                                onClose()
+                                if (replyText.isNotBlank()) {
+                                    onSendReply(replyText)
+                                    onClose()
+                                }
                             },
                         contentAlignment = Alignment.Center
                     ) {

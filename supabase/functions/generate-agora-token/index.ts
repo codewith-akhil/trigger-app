@@ -108,6 +108,15 @@ async function handler(req: Request): Promise<Response> {
     return errorResponse("uid must be between 1 and 4294967295", 400);
   }
 
+  // Strict role + expiry validation — an unknown role silently became
+  // PUBLISHER and a string expirationSeconds produced NaN (NaN expiry =>
+  // token instantly invalid).
+  if (body.role !== undefined && !["publisher", "host", "subscriber", "audience"].includes(String(body.role))) {
+    return errorResponse("role must be publisher|host|subscriber|audience", 422);
+  }
+  if (body.expirationSeconds !== undefined && typeof body.expirationSeconds !== "number") {
+    return errorResponse("expirationSeconds must be a number", 422);
+  }
   const roleEnum = resolveRole(body.role);
   const expirationSeconds = Math.min(
     Math.max(body.expirationSeconds ?? 3600, 60),

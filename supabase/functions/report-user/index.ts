@@ -14,6 +14,9 @@ async function handler(req: Request): Promise<Response> {
   let body: Body; try { body = await req.json(); } catch { return json({ error: "Invalid body" }, 400); }
   const reportedId = body.reported_user_id ?? ""; const reason = (body.reason ?? "").trim();
   if (!reportedId) return json({ error: "reported_user_id required" }, 422);
+  // UUID-validate — an arbitrary string hit the DB cast and surfaced as 500.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID_RE.test(reportedId)) return json({ error: "reported_user_id must be a UUID" }, 422);
   if (!reason) return json({ error: "reason required" }, 422);
   if (reason.length > 1000) return json({ error: "Reason too long (max 1000)" }, 422);
   const supabase = createAdminClient();

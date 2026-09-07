@@ -12,7 +12,13 @@ import com.example.model.DomainMessage
     tableName = "messages",
     indices = [
         Index(value = ["conversationId"]),
-        Index(value = ["timestampMillis"])
+        Index(value = ["timestampMillis"]),
+        // Declared to match the index created by the 3→4 migration
+        // (index_messages_seq). Room validates the expected schema on EVERY
+        // open — an actual index the entity doesn't declare crashes
+        // checkIdentity ("Migration didn't properly handle messages") for
+        // every device that ever migrated 3→4.
+        Index(value = ["seq"])
     ]
 )
 data class MessageEntity(

@@ -23,6 +23,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -40,6 +41,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,6 +81,20 @@ import com.example.ui.viewmodel.ChatViewModel
 import com.example.ui.viewmodel.SearchFilter
 import kotlinx.coroutines.launch
 import java.io.File
+
+/** WhatsApp-style day separator label: Today / Yesterday / "7 September 2026". */
+internal fun formatDateSeparatorLabel(millis: Long): String {
+    val cal = java.util.Calendar.getInstance().apply { timeInMillis = millis }
+    val today = java.util.Calendar.getInstance()
+    val yesterday = java.util.Calendar.getInstance().apply { add(java.util.Calendar.DAY_OF_YEAR, -1) }
+    return when {
+        cal.get(java.util.Calendar.YEAR) == today.get(java.util.Calendar.YEAR) &&
+                cal.get(java.util.Calendar.DAY_OF_YEAR) == today.get(java.util.Calendar.DAY_OF_YEAR) -> "Today"
+        cal.get(java.util.Calendar.YEAR) == yesterday.get(java.util.Calendar.YEAR) &&
+                cal.get(java.util.Calendar.DAY_OF_YEAR) == yesterday.get(java.util.Calendar.DAY_OF_YEAR) -> "Yesterday"
+        else -> java.text.SimpleDateFormat("d MMMM yyyy", java.util.Locale.getDefault()).format(cal.time)
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -465,6 +481,20 @@ fun ChatScreen(
             if (nearBottom) {
                 listState.animateScrollToItem(messages.size - 1)
             }
+        }
+    }
+
+    // Open the chat at the NEWEST message. The first emission's
+    // visibleItemsInfo is empty (no layout pass yet) so the near-bottom gate
+    // above never fired and every chat opened at its OLDEST message.
+    var didInitialScroll by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(readyConvId) {
+        didInitialScroll = false
+    }
+    LaunchedEffect(messages.size) {
+        if (!didInitialScroll && messages.isNotEmpty()) {
+            listState.scrollToItem(messages.size - 1)
+            didInitialScroll = true
         }
     }
 
@@ -877,15 +907,28 @@ fun ChatScreen(
                     }
                 }
 
+                // Per-message day separators — computed from timestampMillis.
+                // (A hardcoded "Today" separator previously labeled ALL history
+                // as today.)
+                val daySeparators = remember(messages) {
+                    val cal = java.util.Calendar.getInstance()
+                    var prevDay = Long.MIN_VALUE
+                    messages.map { m ->
+                        cal.timeInMillis = m.timestampMillis
+                        val day = cal.get(java.util.Calendar.YEAR) * 1000L +
+                                cal.get(java.util.Calendar.DAY_OF_YEAR)
+                        val label = if (day != prevDay) formatDateSeparatorLabel(m.timestampMillis) else null
+                        prevDay = day
+                        label
+                    }
+                }
+
                 // Messages list
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
                 ) {
-                    item {
-                        DateSeparator(dateText = "Today")
-                    }
 
                     if (conversationInfo?.disappearingDuration != DisappearingDuration.OFF) {
                         item {
@@ -893,12 +936,15 @@ fun ChatScreen(
                         }
                     }
 
-                    items(messages, key = { it.id }) { message ->
+                    itemsIndexed(messages, key = { _, m -> m.id }) { msgIndex, message ->
                         val isSelected = selectedIds.contains(message.id)
                         val uploadTask = activeUploads.find { it.messageId == message.id }
                         val isAudioPlaying = currentlyPlayingAudioId == message.id
 
                         Box(modifier = Modifier.fillMaxWidth()) {
+                            daySeparators.getOrNull(msgIndex)?.let { label ->
+                                DateSeparator(dateText = label)
+                            }
                             DomainChatBubble(
                                 message = message,
                                 isSelected = isSelected,
@@ -1052,6 +1098,12 @@ fun ChatScreen(
         ChatMediaViewer(
             message = activeViewerMessageValue,
             onClose = { viewModel.activeViewerMessage.value = null },
+            onReact = { emoji ->
+                viewModel.addReaction(activeViewerMessageValue.id, emoji)
+            },
+            onSendReply = { text ->
+                viewModel.sendReplyFromViewer(text)
+            },
             onDelete = {
                 viewModel.deleteMessageForMe(activeViewerMessageValue)
                 viewModel.activeViewerMessage.value = null
@@ -1111,8 +1163,10 @@ fun ChatScreen(
                 viewModel.setBlocked(false)
             },
             onReportUser = { reason ->
-                // Report the contact (peer) — we use the contactId as the reported user id
-                viewModel.reportUser(peerId, reason) {
+                // Use the RESOLVED peer id — the raw nav arg can be blank when
+                // the chat was opened by conversation id (Calls tab entry),
+                // which made the report fail server-side.
+                viewModel.reportUser(readyPeerId, reason) {
                     showContactInfoSheet = false
                 }
             },

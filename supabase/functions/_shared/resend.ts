@@ -39,7 +39,9 @@ export async function sendEmail(payload: EmailPayload): Promise<{ id?: string; e
   if (payload.text) {
     body.text = payload.text;
   } else {
-    body.text = `${payload.subject}\n\nEnter this 6-digit code in the Trigger App to continue. The code expires in 10 minutes.\n\nNever share this code with anyone — Trigger App will never ask for it.\n\nIf you didn't request this, you can safely ignore this email.`;
+    // Neutral fallback — the old text claimed every email was a "6-digit
+  // code" OTP, so support/stream/booking emails carried a nonsense sentence.
+  body.text = `${payload.subject}\n\nThis is a message from Trigger App. Open the app or view this email in an HTML-capable client for the full content.\n\nIf you didn't expect this email, you can safely ignore it.`;
   }
   if (payload.replyTo ?? defaultReplyTo) {
     body.reply_to = payload.replyTo ?? defaultReplyTo;
@@ -235,7 +237,7 @@ export function renderStreamScheduledEmail(opts: {
       <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">Slots</td><td style="padding:10px 16px;color:#e9edef;font-size:14px;">${escapeHtml(opts.slotInfo)}</td></tr>
       <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">Pricing</td><td style="padding:10px 16px;color:#00a884;font-size:14px;font-weight:600;">${escapeHtml(opts.pricingBadge)}</td></tr>
     </table>
-    <p style="margin:16px 0 6px 0;"><a href="${opts.shareLink}" style="display:inline-block;background:#00a884;color:#0b141a;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:24px;font-size:14px;">Share stream link</a></p>`;
+    <p style="margin:16px 0 6px 0;"><a href="${escapeHtml(opts.shareLink)}" style="display:inline-block;background:#00a884;color:#0b141a;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:24px;font-size:14px;">Share stream link</a></p>`;
   return brandShell("Stream scheduled", body);
 }
 
@@ -256,6 +258,6 @@ export function renderBookingConfirmationEmail(opts: {
       <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">When</td><td style="padding:10px 16px;color:#e9edef;font-size:14px;">${escapeHtml(opts.scheduledDateTime)}</td></tr>
       <tr><td style="padding:10px 16px;color:#8696a0;font-size:13px;">Paid</td><td style="padding:10px 16px;color:#00a884;font-size:14px;font-weight:600;">${escapeHtml(opts.pricingBadge)}</td></tr>
     </table>
-    <p style="margin:16px 0 6px 0;"><a href="${opts.shareLink}" style="display:inline-block;background:#00a884;color:#0b141a;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:24px;font-size:14px;">Join stream</a></p>`;
+    <p style="margin:16px 0 6px 0;"><a href="${escapeHtml(opts.shareLink)}" style="display:inline-block;background:#00a884;color:#0b141a;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:24px;font-size:14px;">Join stream</a></p>`;
   return brandShell("Slot confirmed", body);
 }

@@ -16,7 +16,7 @@ async function handler(req: Request): Promise<Response> {
   if (!userId) return errorResponse("Unauthorized", 401, ErrorCode.UNAUTHORIZED);
   let body: Body; try { body = await req.json(); } catch { return json({ error: "Invalid body" }, 400); }
   const convId = body.conversation_id ?? ""; const query = (body.query ?? "").trim();
-  const searchType = body.search_type ?? "text"; const limit = Math.min(body.limit ?? 50, 100);
+  const searchType = body.search_type ?? "text"; const limit = Math.min(typeof body.limit === "number" ? body.limit : 50, 100);
   if (!convId) return json({ error: "conversation_id required" }, 422);
 
   const supabase = createAdminClient();

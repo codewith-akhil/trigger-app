@@ -108,8 +108,21 @@ async function handler(req: Request): Promise<Response> {
   }
 
   // --- Look up the user by email + update their password ---
-  const { data: users } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  const user = users?.users?.find((u: any) => u.email?.toLowerCase() === email);
+  // profiles.email lookup first (UNIQUE + not capped at 1000 rows like the
+  // listUsers page-1 scan, which silently missed users #1001+ → their reset
+  // returned "No account found" forever).
+  const { data: profileRow } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("email", email)
+    .limit(1);
+  let user: { id: string } | null = profileRow && profileRow.length > 0
+    ? { id: profileRow[0].id }
+    : null;
+  if (!user) {
+    const { data: users } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    user = users?.users?.find((u: any) => u.email?.toLowerCase() === email) ?? null;
+  }
   if (!user) {
     return json({ reset: false, error: "No account found with this email address.", code: ErrorCode.NOT_FOUND }, 404);
   }

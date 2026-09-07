@@ -285,7 +285,7 @@ fun TriggerAppNavHost(
                     activeChatPeerId = peerId
                     activeChatContactName = contactName
                     activeChatAvatarRes = avatarRes
-                    navController.navigate(TriggerDestinations.CHAT)
+                    navController.navigate(TriggerDestinations.CHAT) { launchSingleTop = true }
                 },
                 onOpenNewMessage = {
                     // The New Message page is the single entry point for
@@ -452,7 +452,7 @@ fun TriggerAppNavHost(
                     activeChatPeerId = peerId
                     activeChatContactName = contactName
                     activeChatAvatarRes = avatarRes
-                    navController.navigate(TriggerDestinations.CHAT)
+                    navController.navigate(TriggerDestinations.CHAT) { launchSingleTop = true }
                 }
             )
         }
@@ -468,7 +468,7 @@ fun TriggerAppNavHost(
                     activeChatPeerId = peerId
                     activeChatContactName = contactName
                     activeChatAvatarRes = null
-                    navController.navigate(TriggerDestinations.CHAT)
+                    navController.navigate(TriggerDestinations.CHAT) { launchSingleTop = true }
                 },
                 onNavigateToUserProfile = { user ->
                     activeUserProfileUser = user
@@ -488,7 +488,7 @@ fun TriggerAppNavHost(
                         activeChatPeerId = peerId
                         activeChatContactName = contactName
                         activeChatAvatarRes = null
-                        navController.navigate(TriggerDestinations.CHAT)
+                        navController.navigate(TriggerDestinations.CHAT) { launchSingleTop = true }
                     }
                 )
             } else {

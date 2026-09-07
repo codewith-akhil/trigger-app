@@ -51,7 +51,7 @@ interface MessageDao {
     @Query("DELETE FROM messages WHERE conversationId = :conversationId")
     suspend fun clearConversationMessages(conversationId: String)
 
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND text LIKE '%' || :query || '%' ORDER BY timestampMillis DESC")
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND text LIKE '%' || :query || '%' ESCAPE '\\' ORDER BY timestampMillis DESC")
     fun searchMessages(conversationId: String, query: String): Flow<List<MessageEntity>>
 
     // View-once media is excluded: it must only be viewable in the chat bubble

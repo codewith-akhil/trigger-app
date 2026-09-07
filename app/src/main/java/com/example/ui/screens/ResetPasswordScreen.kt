@@ -53,6 +53,10 @@ fun ResetPasswordScreen(
     val scrollState = rememberScrollState()
 
     fun handleReset() {
+        // Re-entrancy guard: the IME "Done" action bypasses the
+        // enabled=!isLoading button state, letting double-taps fire two
+        // auth calls / navigate twice.
+        if (isSubmitting) return
         errorMessage = null
         if (newPassword.isEmpty()) {
             errorMessage = "Please enter a new password"

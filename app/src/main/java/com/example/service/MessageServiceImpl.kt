@@ -43,13 +43,20 @@ class MessageServiceImpl(
         private const val TAG = "MessageServiceImpl"
         private const val PREFS_NAME = "trigger_chat_prefs"
         private const val KEY_LAST_SYNC_TS = "last_sync_ts"
+
+        /** Watermarks are PER CONVERSATION: a single global watermark made
+         *  "open chat A, then chat B" pull B only for messages newer than
+         *  A's last pull — B's older history never reached Room. */
+        private fun lastSyncKey(conversationId: String) = "last_sync_ts_$conversationId"
         private const val EDIT_WINDOW_MS = 15L * 60 * 1000  // 15 minutes
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // Active realtime subscriptions per conversation
-    private val activeSubscriptions = mutableSetOf<String>()
+    @Volatile private var currentRealtimeFilter: String? = null
+    @Volatile private var realtimeCollectorStarted = false
+    @Volatile private var activeConversationId: String? = null
 
     // Live-location (C7): ChatViewModel plugs a listener in init and clears it
     // in onCleared() — events for live_location_shares carry fresh peer coords.
@@ -71,7 +78,9 @@ class MessageServiceImpl(
      * ones.
      */
     fun reset() {
-        activeSubscriptions.clear()
+        currentRealtimeFilter = null
+        realtimeCollectorStarted = false
+        activeConversationId = null
         onLiveLocationEvent = null
     }
 
@@ -190,59 +199,68 @@ class MessageServiceImpl(
     }
 
     private fun ensureRealtimeSubscription(conversationId: String) {
-        if (activeSubscriptions.contains(conversationId)) return
-        activeSubscriptions.add(conversationId)
+        activeConversationId = conversationId
+        val filter = "conversation_id=eq.$conversationId"
 
-        val supabaseClient = AppServiceContainer.supabaseClient
-        // Connect to Realtime for messages + conversations + user_presences.
-        // Filter messages by conversation_id so we don't get every message
-        // in the system delivered over the wire.
-        supabaseClient.connectRealtime(
-            tables = listOf(
-                "public.messages",
-                "public.conversations",
-                "public.user_presences",
-                "public.live_location_shares"
-            ),
-            filter = "conversation_id=eq.$conversationId"
-        )
-
-        // Live-location (C7): live_location_shares events are forwarded to the
-        // ChatViewModel listener registered on [onLiveLocationEvent].
-        // Collect realtime events and update the local Room DB
-        scope.launch {
-            supabaseClient.realtimeEvents.collect { event ->
-                try {
-                    when (event.table) {
-                        "messages" -> handleRealtimeMessageEvent(event, conversationId)
-                        "user_presences" -> handleRealtimePresenceEvent(event)
-                        "live_location_shares" -> onLiveLocationEvent?.invoke(event)
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to handle realtime event: ${e.message}")
-                }
-            }
+        // RE-FILTER when the open chat changes: the websocket pinpoints ONE
+        // conversation_id, and the previous early-return left the socket
+        // filtered to the LAST chat — returning to an earlier chat silently
+        // lost all of its live messages (incl. after every reconnect).
+        if (currentRealtimeFilter != filter) {
+            currentRealtimeFilter = filter
+            AppServiceContainer.supabaseClient.connectRealtime(
+                tables = listOf(
+                    "public.messages",
+                    "public.conversations",
+                    "public.user_presences",
+                    "public.live_location_shares"
+                ),
+                filter = filter
+            )
         }
 
-        // Also collect the reconnect signal so we can pull any messages that
-        // were missed during the WebSocket disconnect.
-        scope.launch {
-            supabaseClient.reconnectSignals.collect {
-                Log.i(TAG, "Realtime reconnected — pulling missed messages")
-                try {
-                    val lastTs = prefs?.getLong(KEY_LAST_SYNC_TS, 0L) ?: 0L
-                    syncMessages(conversationId = conversationId, sinceTs = lastTs)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Post-reconnect sync failed: ${e.message}")
+        // ONE collector for the process — observeMessages() used to add two
+        // immortal collectors PER OPEN, leaking coroutines on every chat.
+        if (!realtimeCollectorStarted) {
+            realtimeCollectorStarted = true
+
+            // Live-location (C7): live_location_shares events are forwarded to
+            // the ChatViewModel listener registered on [onLiveLocationEvent].
+            scope.launch {
+                AppServiceContainer.supabaseClient.realtimeEvents.collect { event ->
+                    try {
+                        when (event.table) {
+                            "messages" -> handleRealtimeMessageEvent(event)
+                            "user_presences" -> handleRealtimePresenceEvent(event)
+                            "live_location_shares" -> onLiveLocationEvent?.invoke(event)
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to handle realtime event: ${e.message}")
+                    }
+                }
+            }
+
+            // Reconnect signal — pull what the CURRENT chat missed during the
+            // WebSocket gap, using ITS OWN watermark.
+            scope.launch {
+                AppServiceContainer.supabaseClient.reconnectSignals.collect {
+                    val conv = activeConversationId ?: return@collect
+                    Log.i(TAG, "Realtime reconnected — pulling missed messages for $conv")
+                    try {
+                        val lastTs = prefs?.getLong(lastSyncKey(conv), 0L) ?: 0L
+                        syncMessages(conversationId = conv, sinceTs = lastTs)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Post-reconnect sync failed: ${e.message}")
+                    }
                 }
             }
         }
     }
 
-    private suspend fun handleRealtimeMessageEvent(event: RealtimeEvent, conversationId: String) {
+    private suspend fun handleRealtimeMessageEvent(event: RealtimeEvent) {
         val record = event.record ?: return
-        val msgConversationId = record.optString("conversation_id", "")
-        if (msgConversationId != conversationId && msgConversationId.isNotEmpty()) return  // not our conversation
+        // Room caches ALL conversations — apply events wherever they belong
+        // instead of dropping everything not matching one captured id.
 
         when (event.eventType) {
             "INSERT" -> {
@@ -266,10 +284,15 @@ class MessageServiceImpl(
                 } else if (status == "DELIVERED") {
                     repository.updateMessageStatus(msgId, MessageStatus.DELIVERED)
                 }
-                // Check if text was edited
-                val text = record.optString("text", "")
-                if (text.isNotEmpty() && !record.isNull("text")) {
-                    repository.updateMessageText(msgId, text)
+                // Only treat as an EDIT when the server row actually carries
+                // edited_at. Read receipts / pin / star also UPDATE the row
+                // (with unchanged text) and previously stamped every one of
+                // them as "edited" on the receiving device.
+                if (!record.isNull("edited_at")) {
+                    val text = record.optString("text", "")
+                    if (text.isNotEmpty()) {
+                        repository.updateMessageText(msgId, text)
+                    }
                 }
                 // Update pinned + edited_at + starred flags
                 if (!record.isNull("is_pinned")) {
@@ -279,6 +302,17 @@ class MessageServiceImpl(
                 if (!record.isNull("is_starred")) {
                     val starred = record.optBoolean("is_starred", false)
                     repository.setMessageStarred(msgId, starred)
+                }
+                // Reactions — the DB trigger denormalizes message_reactions
+                // into messages.reactions; without parsing this the recipient
+                // NEVER saw any reaction (not live, not on sync).
+                if (record.has("reactions") && !record.isNull("reactions")) {
+                    val reactionsObj = when (val raw = record.get("reactions")) {
+                        is JSONObject -> raw
+                        is String -> try { JSONObject(raw) } catch (e: Exception) { null }
+                        else -> null
+                    }
+                    repository.updateMessageReactions(msgId, reactionsJsonToRaw(reactionsObj))
                 }
                 // Check if deleted for everyone
                 if (record.optBoolean("is_deleted_for_everyone", false)) {
@@ -296,6 +330,27 @@ class MessageServiceImpl(
         }
     }
 
+    /**
+     * Local expiry for typing/recording states: if the peer's process dies
+     * before typing_until=null, NO further event arrives and the receiver
+     * showed "typing…" forever. One job per (user,state) — a newer event
+     * replaces the previous schedule.
+     */
+    private val presenceExpiryJobs = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+
+    private fun schedulePresenceExpiry(userId: String, untilMs: Long, state: PresenceStatus) {
+        val key = "$userId:${state.name}"
+        presenceExpiryJobs.remove(key)?.cancel()
+        presenceExpiryJobs[key] = scope.launch {
+            val delayMs = (untilMs - System.currentTimeMillis()).coerceIn(0L, 30_000L)
+            kotlinx.coroutines.delay(delayMs)
+            (presenceService as? PresenceServiceImpl)?.setContactPresence(
+                userId, PresenceStatus.ONLINE, "online"
+            )
+            presenceExpiryJobs.remove(key)
+        }
+    }
+
     private fun handleRealtimePresenceEvent(event: RealtimeEvent) {
         val record = event.record ?: return
         val isOnline = record.optBoolean("is_online", false)
@@ -310,6 +365,7 @@ class MessageServiceImpl(
                 val untilMs = parseIsoToMillis(typingUntil)
                 if (untilMs > System.currentTimeMillis()) {
                     presenceService.setContactPresence(userId, PresenceStatus.TYPING, "typing…")
+                    schedulePresenceExpiry(userId, untilMs, PresenceStatus.TYPING)
                     return
                 }
             }
@@ -318,6 +374,7 @@ class MessageServiceImpl(
                 val untilMs = parseIsoToMillis(recordingUntil)
                 if (untilMs > System.currentTimeMillis()) {
                     presenceService.setContactPresence(userId, PresenceStatus.RECORDING_AUDIO, "recording audio…")
+                    schedulePresenceExpiry(userId, untilMs, PresenceStatus.RECORDING_AUDIO)
                     return
                 }
             }
@@ -374,11 +431,70 @@ class MessageServiceImpl(
             locationLiveMinutes = if (!record.isNull("location_live_minutes"))
                 record.optInt("location_live_minutes").takeIf { it > 0 } else null,
             locationComment = record.optString("location_comment", null),
+            reactions = parseReactionsFromServer(record),
             contactName = record.optString("contact_name", null),
             contactPhone = record.optString("contact_phone", null),
             callType = record.optString("call_type", null)?.takeIf { it.isNotBlank() && it != "null" },
             callDurationSec = record.optInt("call_duration_sec", 0)
         )
+    }
+
+    /**
+     * messages.reactions jsonb ("emoji": {"count": n, "users": [uuid…]}) →
+     * the Room raw form "emoji:count:me(true|false);…" — userReacted is
+     * computed against the CURRENT user (a per-viewer fact the server cannot
+     * store).
+     */
+    private fun parseReactionsFromServer(record: JSONObject): List<com.example.model.MessageReaction> {
+        val obj = record.optJSONObject("reactions") ?: return emptyList()
+        val myId = AppServiceContainer.supabaseClient.currentUser?.id
+        val out = mutableListOf<com.example.model.MessageReaction>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val emoji = keys.next()
+            val entry = obj.optJSONObject(emoji) ?: continue
+            val count = entry.optInt("count", 0)
+            val users = entry.optJSONArray("users")
+            var reacted = false
+            if (users != null && myId != null) {
+                for (i in 0 until users.length()) {
+                    if (users.optString(i) == myId) {
+                        reacted = true
+                        break
+                    }
+                }
+            }
+            if (count > 0) {
+                out.add(com.example.model.MessageReaction(emoji, count, reacted))
+            }
+        }
+        return out
+    }
+
+    /** Domain/Room bridge: List<MessageReaction> → "emoji:count:me;…" raw. */
+    private fun reactionsJsonToRaw(obj: JSONObject?): String {
+        if (obj == null) return ""
+        val myId = AppServiceContainer.supabaseClient.currentUser?.id
+        val parts = mutableListOf<String>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val emoji = keys.next()
+            val entry = obj.optJSONObject(emoji) ?: continue
+            val count = entry.optInt("count", 0)
+            if (count <= 0) continue
+            val users = entry.optJSONArray("users")
+            var reacted = false
+            if (users != null && myId != null) {
+                for (i in 0 until users.length()) {
+                    if (users.optString(i) == myId) {
+                        reacted = true
+                        break
+                    }
+                }
+            }
+            parts.add("$emoji:$count:$reacted")
+        }
+        return parts.joinToString(";")
     }
 
     private fun parseIsoToMillis(iso: String): Long {
@@ -464,7 +580,11 @@ class MessageServiceImpl(
         peerId: String?,
         peerName: String?
     ): JSONObject {
-        val idempotencyKey = message.idempotencyKey ?: java.util.UUID.randomUUID().toString()
+        // Retry-stable idempotency: the message id IS the retry identity (the
+        // same Room row is retried). A fresh random key per attempt made every
+        // retry insert a DUPLICATE server row for callers that don't set an
+        // explicit key (e.g. the CALL_LOG path).
+        val idempotencyKey = message.idempotencyKey ?: message.id
         return JSONObject().apply {
             put("conversation_id", message.conversationId)
             put("type", message.type.name)
@@ -603,7 +723,12 @@ class MessageServiceImpl(
     }
 
     override fun searchMessages(conversationId: String, query: String): Flow<List<DomainMessage>> {
-        return repository.searchMessages(conversationId, query)
+        // Escape LIKE wildcards — a "%"/"_" query previously matched EVERYTHING.
+        val escaped = query
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        return repository.searchMessages(conversationId, escaped)
     }
 
     override fun getMediaMessages(conversationId: String): Flow<List<DomainMessage>> {
@@ -901,8 +1026,12 @@ class MessageServiceImpl(
                         }
                     }
                 }
-                // Persist the untilTs for the next sync
-                prefs?.edit()?.putLong(KEY_LAST_SYNC_TS, untilTs)?.apply()
+                // Persist the watermark — per conversation when scoped (the
+                // global key is only maintained for unscoped pulls).
+                prefs?.edit()?.apply {
+                    if (conversationId != null) putLong(lastSyncKey(conversationId), untilTs)
+                    putLong(KEY_LAST_SYNC_TS, untilTs)
+                }?.apply()
                 untilTs
             }
             is SupabaseResult.Error -> {

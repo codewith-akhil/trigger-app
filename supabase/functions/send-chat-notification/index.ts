@@ -126,7 +126,24 @@ async function handler(req: Request): Promise<Response> {
       return errorResponse("Failed to resolve conversation", 500, ErrorCode.INTERNAL_ERROR);
     }
     if (!conv) return errorResponse("Conversation not found", 404, ErrorCode.NOT_FOUND);
-    recipientId = conv.owner_id === senderId ? conv.peer_id : conv.owner_id;
+    if (isInternal) {
+      // Server-originated (send-message) calls pass the recipient explicitly —
+      // senderId is null here, and the old `owner===null ? peer : owner`
+      // arithmetic resolved to the SENDER's own id for owner-initiated
+      // conversations, so the push targeted the sender and got skipped as
+      // "online".
+      recipientId = (body as Record<string, unknown>).recipientId as string ?? null;
+      if (!recipientId) {
+        recipientId = conv.owner_id === (body as Record<string, unknown>).senderId ? conv.peer_id : conv.owner_id;
+      }
+    } else {
+      // User-JWT callers must be a participant — previously a third party
+      // resolved to the owner and could probe arbitrary conversations.
+      if (senderId !== conv.owner_id && senderId !== conv.peer_id) {
+        return errorResponse("Not a participant in this conversation", 403, ErrorCode.FORBIDDEN);
+      }
+      recipientId = conv.owner_id === senderId ? conv.peer_id : conv.owner_id;
+    }
     if (!recipientId) {
       // Conversation has no real auth-user peer (e.g. a simulated contact) — nothing to push.
       return json({ sent: 0, skipped: true, reason: "no_recipient", deactivated: 0, errors: [] });

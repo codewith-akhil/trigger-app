@@ -17,8 +17,9 @@
 // ----------------------------------------------------------------------------
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { handleOptions, json, errorResponse } from "../_shared/cors.ts";
-import { resolveUserId } from "../_shared/supabase.ts";
+import { handleOptions, json, errorResponse, ErrorCode } from "../_shared/cors.ts";
+import { checkRateLimit } from "../_shared/rate_limit.ts";
+import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
 import { sendEmail, renderStreamScheduledEmail } from "../_shared/resend.ts";
 
 interface Body {
@@ -45,6 +46,8 @@ async function handler(req: Request): Promise<Response> {
   const userId = await resolveUserId(authHeader);
   if (!userId) return errorResponse("Unauthorized", 401);
 
+  const supabase = createAdminClient();
+
   let body: Body;
   try {
     body = await req.json();
@@ -54,6 +57,18 @@ async function handler(req: Request): Promise<Response> {
 
   const hostEmail = (body.hostEmail ?? "").trim().toLowerCase();
   if (!isValidEmail(hostEmail)) return errorResponse("A valid hostEmail is required", 422);
+  // Arbitrary-recipient lock: the email may only go to the
+  // AUTHENTICATED caller's own address (open relay otherwise).
+  {
+    const callerEmail = ((await supabase.from("profiles").select("email").eq("id", userId).maybeSingle()).data?.email ?? "").trim().toLowerCase();
+    if (callerEmail && hostEmail !== callerEmail) {
+      return errorResponse("hostEmail must belong to the authenticated user", 403, ErrorCode.FORBIDDEN);
+    }
+  }
+  const rlEmail = checkRateLimit(req, userId, { maxRequests: 5, windowSeconds: 3600, name: "email_send" });
+  if (!rlEmail.allowed) {
+    return json({ error: rlEmail.message, code: ErrorCode.RATE_LIMITED, retryAfter: rlEmail.retryAfter }, 429);
+  }
   if (!body.streamTitle?.trim()) return errorResponse("streamTitle is required", 422);
   if (!body.scheduledDateTime?.trim()) return errorResponse("scheduledDateTime is required", 422);
 

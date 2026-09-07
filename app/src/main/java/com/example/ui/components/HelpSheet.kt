@@ -88,7 +88,8 @@ fun HelpModalBottomSheet(
             HelpOptionItem(
                 icon = Icons.Outlined.Info,
                 title = "App Info",
-                subtitle = "Trigger App v2.26.1 • Secure & Private",
+                // BuildConfig — a hardcoded "v2.26.1" drifted from the real version.
+                subtitle = "Trigger App v${com.example.BuildConfig.VERSION_NAME} • Secure & Private",
                 onClick = onDismiss
             )
         }

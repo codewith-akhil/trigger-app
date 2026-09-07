@@ -665,6 +665,23 @@ fun ProfileScreen(
 
                     HorizontalDivider(color = TriggerDivider, thickness = 1.dp)
 
+                    // 3b) Links — opens the LinksEditDialog. The dialog existed
+                    // but NO row could ever set showEditLinksDialog=true, so
+                    // the editor was unreachable.
+                    ProfileDetailItem(
+                        icon = Icons.Outlined.Link,
+                        label = "Links",
+                        value = run {
+                            val n = try { org.json.JSONArray(profile.links).length() } catch (e: Exception) { 0 }
+                            if (n > 0) "$n link${if (n == 1) "" else "s"}" else "Add links"
+                        },
+                        isValueGreen = false,
+                        onClick = { showEditLinksDialog = true },
+                        testTag = "profile_links_item"
+                    )
+
+                    HorizontalDivider(color = TriggerDivider, thickness = 1.dp)
+
                     // 4) Email — read-only (no edit icon, not clickable)
                     ProfileDetailItem(
                         icon = Icons.Outlined.Email,

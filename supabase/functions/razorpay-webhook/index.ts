@@ -57,6 +57,16 @@ interface RazorpayEvent {
   };
 }
 
+/** Length-safe, early-exit-free string compare (signature verification). */
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 async function hmacSha256Hex(key: string, message: string): Promise<string> {
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
@@ -85,9 +95,9 @@ async function handler(req: Request): Promise<Response> {
   const rawBody = await req.text();
   const signature = req.headers.get("X-Razorpay-Signature") ?? "";
 
-  // --- Verify signature ----------------------------------------------------
+  // --- Verify signature (timing-safe) --------------------------------------
   const expectedSig = await hmacSha256Hex(webhookSecret, rawBody);
-  if (!signature || expectedSig !== signature.toLowerCase()) {
+  if (!signature || !timingSafeEqualHex(expectedSig, signature.toLowerCase())) {
     console.warn("razorpay-webhook: signature mismatch");
     return json({ error: "Invalid signature" }, 401);
   }
@@ -199,18 +209,31 @@ async function handler(req: Request): Promise<Response> {
   }
 
   if (eventType === "payment.refunded") {
-    // Mark the original transaction as failed (refunded). Use a two-step
-    // update since supabase-js doesn't support raw SQL expressions.
+    // Refund accounting: mark the original credit refunded AND insert the
+    // compensating DEBIT — the host previously KEPT the credited balance
+    // after the attendee's money was refunded.
     const { data: origTx } = await supabase
       .from("wallet_transactions")
-      .select("description")
+      .select("description, user_id, amount, currency, status")
       .eq("reference_id", referenceId)
       .maybeSingle();
     if (origTx) {
       await supabase
         .from("wallet_transactions")
-        .update({ status: "failed", description: (origTx.description ?? "") + " [REFUNDED]" })
+        .update({ status: "refunded", description: (origTx.description ?? "") + " [REFUNDED]" })
         .eq("reference_id", referenceId);
+      const debitRef = `${referenceId}-REFUND`;
+      await supabase
+        .from("wallet_transactions")
+        .upsert({
+          user_id: origTx.user_id,
+          type: "debit",
+          amount: origTx.amount,
+          currency: origTx.currency,
+          description: "Refund reversal",
+          reference_id: debitRef,
+          status: "completed",
+        }, { onConflict: "reference_id" });
     }
     return json({ ok: true, refunded: true, referenceId });
   }

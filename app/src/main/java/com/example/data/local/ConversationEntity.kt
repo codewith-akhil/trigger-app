@@ -15,6 +15,8 @@ data class ConversationEntity(
     val initialColor: Long = 0xFF00A884,
     val lastMessage: String = "",
     val timestamp: String = "",
+    /** Epoch millis of the last activity — drives recency ordering (v8). */
+    val lastActivityMillis: Long = 0L,
     val unreadCount: Int = 0,
     val isPinned: Boolean = false,
     val hasStatusUpdate: Boolean = false,

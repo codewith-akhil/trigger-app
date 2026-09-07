@@ -35,8 +35,12 @@ interface Body {
 }
 
 function generateSixDigitCode(): string {
+  // Rejection sampling — no modulo bias.
   const buf = new Uint32Array(1);
-  crypto.getRandomValues(buf);
+  const LIMIT = Math.floor(4294967296 / 900000) * 900000;
+  do {
+    crypto.getRandomValues(buf);
+  } while (buf[0] >= LIMIT);
   return String(100000 + (buf[0] % 900000));
 }
 
@@ -145,7 +149,7 @@ async function handler(req: Request): Promise<Response> {
     const [salt, storedHash] = otp.code_hash.split(":");
     const candidate = await sha256Hex(`${code}:${salt}`);
     if (candidate !== storedHash) {
-      await supabase.from("otp_codes").update({ attempts: (otp.attempts ?? 0) + 1 }).eq("id", otp.id);
+      await supabase.rpc("bump_otp_attempts", { p_otp_id: otp.id });
       return json({ deleted: false, error: "Incorrect code." }, 400);
     }
 

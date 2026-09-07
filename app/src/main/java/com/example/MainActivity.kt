@@ -17,7 +17,13 @@ import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.TriggerDarkBackground
 import com.example.ui.theme.TriggerHeaderGreen
 
-class MainActivity : ComponentActivity() {
+class MainActivity : androidx.fragment.app.FragmentActivity() {
+
+    companion object {
+        /** True while the app-lock gate is up (biometric setting enabled). */
+        @Volatile
+        var isAppLocked: Boolean = false
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.example.di.AppServiceContainer.initialize(this)
@@ -49,17 +55,28 @@ class MainActivity : ComponentActivity() {
         // ProcessLifecycleOwner observer — detects real app foreground/background
         // transitions (not just login/logout). Calls presence onAppForeground/
         // onAppBackground so the heartbeat starts/stops correctly.
-        ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
-            override fun onStart(owner: LifecycleOwner) {
-                // App came to foreground
-                (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppForeground()
-            }
+        // Registered ONCE per process: onCreate re-runs on every Activity
+        // recreation and previously stacked duplicate observers (N duplicate
+        // presence writes per transition).
+        if (!com.example.di.AppServiceContainer.lifecycleObserverRegistered) {
+            com.example.di.AppServiceContainer.lifecycleObserverRegistered = true
+            ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+                override fun onStart(owner: LifecycleOwner) {
+                    // App came to foreground
+                    (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppForeground()
+                    // App lock (Privacy → "Unlock with biometric"): re-lock on
+                    // every foreground. The flag is a local cache of the
+                    // server setting, written by PrivacySettingsScreen.
+                    val lockPrefs = getSharedPreferences("app_lock_prefs", MODE_PRIVATE)
+                    isAppLocked = lockPrefs.getBoolean("fingerprintLock", false)
+                }
 
-            override fun onStop(owner: LifecycleOwner) {
-                // App went to background
-                (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppBackground()
-            }
-        })
+                override fun onStop(owner: LifecycleOwner) {
+                    // App went to background
+                    (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppBackground()
+                }
+            })
+        }
 
         setContent {
             MyApplicationTheme {
@@ -67,7 +84,12 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = TriggerDarkBackground
                 ) {
-                    TriggerAppNavHost()
+                    // App-lock gate: block the whole UI until authenticated.
+                    if (isAppLocked) {
+                        com.example.ui.components.AppLockScreen(onUnlocked = { isAppLocked = false })
+                    } else {
+                        TriggerAppNavHost()
+                    }
                 }
             }
         }

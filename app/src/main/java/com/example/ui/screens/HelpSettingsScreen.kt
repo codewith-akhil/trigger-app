@@ -400,7 +400,7 @@ fun HelpSettingsScreen(
                 Column {
                     Text("Version $appVersionName (Build $appVersionCode)", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 14.sp)
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("Agora WebRTC Calling Engine v4.3.0", color = TextSecondary, fontSize = 13.sp)
+                    Text("Agora WebRTC Calling Engine v4.4.1", color = TextSecondary, fontSize = 13.sp)
                     Text("Realtime Local Message Repository", color = TextSecondary, fontSize = 13.sp)
                     Text("Jetpack Compose & Material Design 3", color = TextSecondary, fontSize = 13.sp)
                     Spacer(modifier = Modifier.height(10.dp))

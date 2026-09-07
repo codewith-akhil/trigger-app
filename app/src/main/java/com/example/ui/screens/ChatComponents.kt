@@ -717,7 +717,7 @@ fun DomainChatBubble(
                                         )
                                         Spacer(modifier = Modifier.width(3.dp))
                                         Text(
-                                            text = formatMediaDuration(message.mediaDurationSec.coerceAtLeast(7)),
+                                            text = formatMediaDuration(message.mediaDurationSec),
                                             color = Color.White,
                                             fontSize = 10.5.sp,
                                             fontWeight = FontWeight.Medium
@@ -918,7 +918,7 @@ fun DomainChatBubble(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = ChatConfig.formatFileSize(message.fileSize.coerceAtLeast(1024 * 240)),
+                                        text = if (message.fileSize > 0) ChatConfig.formatFileSize(message.fileSize) else "",
                                         fontSize = 11.sp,
                                         color = Color(0xFF667781)
                                     )

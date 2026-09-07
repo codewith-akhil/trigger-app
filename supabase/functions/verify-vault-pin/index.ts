@@ -68,8 +68,9 @@ async function handler(req: Request): Promise<Response> {
   const candidate = await hashPin(pin, salt);
 
   if (candidate !== storedHash) {
+    // Atomic increment — concurrent guesses both wrote the same +1.
+    await supabase.rpc("bump_vault_pin_attempts", { p_user_id: userId });
     const newAttempts = (row.attempts ?? 0) + 1;
-    await supabase.from("vault_pins").update({ attempts: newAttempts }).eq("user_id", userId);
     const remaining = Math.max(5 - newAttempts, 0);
     return json(
       { unlocked: false, error: "Incorrect PIN", attemptsRemaining: remaining },

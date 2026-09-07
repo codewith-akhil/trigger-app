@@ -41,6 +41,7 @@ fun PrivacySettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
     val client = AppServiceContainer.supabaseClient
 
     var readReceiptsEnabled by remember { mutableStateOf(true) }
@@ -318,6 +319,11 @@ fun PrivacySettingsScreen(
                             onCheckedChange = {
                                 fingerprintLockEnabled = it
                                 persistSetting("fingerprintLock", it)
+                                // Local cache for the MainActivity foreground
+                                // gate (the server value alone can't gate
+                                // synchronously at lifecycle time).
+                                context.getSharedPreferences("app_lock_prefs", android.content.Context.MODE_PRIVATE)
+                                    .edit().putBoolean("fingerprintLock", it).apply()
                             },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.White,

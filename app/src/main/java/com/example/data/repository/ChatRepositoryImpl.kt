@@ -59,7 +59,22 @@ class ChatRepositoryImpl(
 
     fun getMessages(conversationId: String): Flow<List<DomainMessage>> {
         return messageDao.getMessagesForConversation(conversationId).map { list ->
-            list.map { it.toDomainMessage() }
+            list.map { entity ->
+                val msg = entity.toDomainMessage()
+                // Private-bucket media (voice notes, documents) carries
+                // expiring signed URLs — re-sign on render instead of showing
+                // dead media after expiry.
+                if (com.example.service.MediaUrlResolver.isExpiringUrl(msg.mediaUrl) &&
+                    msg.mediaBucket != null &&
+                    msg.mediaBucket != com.example.service.MediaUrlResolver.CHAT_MEDIA_BUCKET
+                ) {
+                    msg.copy(
+                        mediaUrl = com.example.service.MediaUrlResolver.resolveWithRefresh(
+                            msg.mediaUrl, msg.mediaBucket, msg.mediaPath
+                        )
+                    )
+                } else msg
+            }
         }
     }
 
@@ -109,7 +124,12 @@ class ChatRepositoryImpl(
             MessageType.CALL_LOG -> message.text
             else -> message.text
         }
-        conversationDao.updateLastMessage(message.conversationId, lastMsgPreview, message.timestamp)
+        conversationDao.updateLastMessage(
+            message.conversationId,
+            lastMsgPreview,
+            message.timestamp,
+            message.timestampMillis
+        )
 
         // Status transitions are driven by the send-message edge function (SENT)
         // and Supabase Realtime (DELIVERED/READ). No fake delay() ticks.
@@ -122,6 +142,11 @@ class ChatRepositoryImpl(
 
     suspend fun updateMessageStatus(messageId: String, status: MessageStatus) {
         messageDao.updateMessageStatus(messageId, status.name)
+    }
+
+    /** Overwrites the stored reaction aggregate (server → raw form). */
+    suspend fun updateMessageReactions(messageId: String, raw: String) {
+        messageDao.updateMessageReactions(messageId, raw)
     }
 
     suspend fun toggleReaction(messageId: String, emoji: String) {
@@ -163,7 +188,7 @@ class ChatRepositoryImpl(
 
     suspend fun clearChat(conversationId: String) {
         messageDao.clearConversationMessages(conversationId)
-        conversationDao.updateLastMessage(conversationId, "", "")
+        conversationDao.updateLastMessage(conversationId, "", "", 0L)
     }
 
     fun searchMessages(conversationId: String, query: String): Flow<List<DomainMessage>> {

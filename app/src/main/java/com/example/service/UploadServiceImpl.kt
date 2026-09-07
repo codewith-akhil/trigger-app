@@ -14,6 +14,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.InputStream
@@ -57,11 +58,13 @@ class UploadServiceImpl(
 
         val job = scope.launch {
             try {
-                // Get the file bytes from the content:// URI
-                val context = AppServiceContainer.context
-                val fileBytes = readFileBytes(task.filePath ?: "")
-
-                if (fileBytes == null || fileBytes.isEmpty()) {
+                // Resolve the upload source WITHOUT materializing the whole
+                // file in RAM (a 250 MB video previously did readBytes() →
+                // OOM). We only query its size; bytes stream during upload.
+                val uploadSource = withContext(Dispatchers.IO) {
+                    resolveUploadSource(task.filePath ?: "")
+                }
+                if (uploadSource == null || uploadSource.size <= 0L) {
                     throw Exception("Could not read file")
                 }
 
@@ -76,7 +79,9 @@ class UploadServiceImpl(
                 // Build the upload request to the edge function
                 val supabaseClient = AppServiceContainer.supabaseClient
                 val baseUrl = com.example.config.BackendConfig.SUPABASE_URL
-                val token = supabaseClient.currentSession?.accessToken
+                // Refresh-before-use: a stale ~1 h old access token made every
+                // upload 401 until some other call happened to refresh it.
+                val token = supabaseClient.ensureFreshAccessToken()
                     ?: com.example.config.BackendConfig.SUPABASE_ANON_KEY
                 val anonKey = com.example.config.BackendConfig.SUPABASE_ANON_KEY
 
@@ -85,24 +90,37 @@ class UploadServiceImpl(
                 tasksMap[task.id] = uploadingTask
                 refreshState()
 
-                // Create the request body with the file bytes
+                // Create the STREAMING request body — bytes are piped from the
+                // content:// URI / file straight to the socket.
                 val mimeType = task.mimeType ?: "application/octet-stream"
-                val requestBody = fileBytes.toRequestBody(mimeType.toMediaType())
+                val requestBody = StreamingSourceRequestBody(
+                    contentType = mimeType.toMediaType(),
+                    size = uploadSource.size,
+                    opener = uploadSource.open
+                )
 
+                // x-file-name must be Latin-1 per OkHttp — non-ASCII filenames
+                // (e.g. Hindi) previously crashed the header write. Percent-
+                // encode; the edge function decodes it.
+                val encodedFileName = android.net.Uri.encode(task.fileName)
                 val request = Request.Builder()
                     .url("$baseUrl/functions/v1/upload-chat-media")
                     .addHeader("Authorization", "Bearer $token")
                     .addHeader("apikey", anonKey)
                     .addHeader("Content-Type", mimeType)
                     .addHeader("x-file-type", fileType)
-                    .addHeader("x-file-name", task.fileName)
+                    .addHeader("x-file-name", encodedFileName)
                     .addHeader("x-mime-type", mimeType)
-                    .addHeader("x-file-size", fileBytes.size.toString())
+                    .addHeader("x-file-size", uploadSource.size.toString())
                     .post(requestBody)
                     .build()
 
-                // Execute the upload
-                val response = uploadClient.newCall(request).execute()
+                // Execute the upload — OkHttp calls MUST leave the caller's
+                // (main) dispatcher; previously execute() ran on Main and
+                // threw NetworkOnMainThreadException on EVERY media send.
+                val response = withContext(Dispatchers.IO) {
+                    uploadClient.newCall(request).execute()
+                }
                 val responseBody = response.body?.string() ?: ""
 
                 if (response.isSuccessful) {
@@ -132,7 +150,7 @@ class UploadServiceImpl(
 
                     // Update the message with the real media URL
                     val completedTask = task.copy(
-                        uploadedBytes = fileBytes.size.toLong(),
+                        uploadedBytes = uploadSource.size,
                         isCompleted = true,
                         remainingSeconds = 0,
                         mediaUrl = finalUrl,
@@ -156,6 +174,7 @@ class UploadServiceImpl(
             } catch (e: CancellationException) {
                 tasksMap.remove(task.id)
                 refreshState()
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Upload failed: ${e.message}")
                 val failedTask = task.copy(
@@ -177,24 +196,64 @@ class UploadServiceImpl(
     }
 
     /**
-     * Reads file bytes from a content:// URI or file path.
+     * Streaming upload body — wraps a lazily-opened InputStream so the file
+     * never has to fit in the Java heap.
      */
-    private fun readFileBytes(path: String): ByteArray? {
+    private class StreamingSourceRequestBody(
+        private val contentType: okhttp3.MediaType,
+        private val size: Long,
+        private val opener: () -> InputStream?
+    ) : RequestBody() {
+        override fun contentType(): okhttp3.MediaType? = contentType
+        override fun contentLength(): Long = size
+        override fun writeTo(sink: okio.BufferedSink) {
+            val source = opener() ?: throw java.io.IOException("Upload source unavailable")
+            source.use { input ->
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val read = input.read(buf)
+                    if (read == -1) break
+                    sink.write(buf, 0, read)
+                }
+            }
+        }
+    }
+
+    /**
+     * Resolves (size, stream-opener) from a content:// URI or file path
+     * WITHOUT reading the bytes into memory. Must be called on IO.
+     */
+    private fun resolveUploadSource(path: String): UploadSource? {
         return try {
             val context = AppServiceContainer.context
             if (path.startsWith("content://")) {
                 val uri = android.net.Uri.parse(path)
-                context.contentResolver.openInputStream(uri)?.use { stream: InputStream ->
-                    stream.readBytes()
+                var size = -1L
+                // Prefer the OpenableColumns SIZE, fall back to the stream length.
+                context.contentResolver.query(
+                    uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst() && !cursor.isNull(0)) size = cursor.getLong(0)
                 }
+                if (size <= 0L) {
+                    context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { fd ->
+                        size = fd.length
+                    }
+                }
+                if (size <= 0L) return null
+                UploadSource(size) { context.contentResolver.openInputStream(uri) }
             } else {
-                java.io.File(path).readBytes()
+                val file = java.io.File(path)
+                if (!file.exists() || file.length() <= 0L) return null
+                UploadSource(file.length()) { file.inputStream() }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to read file: ${e.message}")
+            Log.e(TAG, "Failed to resolve upload source: ${e.message}")
             null
         }
     }
+
+    private class UploadSource(val size: Long, val open: () -> InputStream?)
 
     /**
      * Extracts the object path (the part after /object/public/{bucket}/) from

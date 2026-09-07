@@ -61,8 +61,8 @@ function renderSupportEmail(opts: {
         <tr>
           <td style="padding:24px 28px;">
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-              <tr><td style="padding:6px 0;color:#666;font-size:12px;width:80px;">From</td><td style="padding:6px 0;color:#1a1a1a;font-size:14px;"><strong>${opts.userName}</strong> &lt;${opts.userEmail}&gt;</td></tr>
-              <tr><td style="padding:6px 0;color:#666;font-size:12px;">Subject</td><td style="padding:6px 0;color:#1a1a1a;font-size:14px;">${opts.subject}</td></tr>
+              <tr><td style="padding:6px 0;color:#666;font-size:12px;width:80px;">From</td><td style="padding:6px 0;color:#1a1a1a;font-size:14px;"><strong>${escapeHtml(opts.userName)}</strong> &lt;${escapeHtml(opts.userEmail)}&gt;</td></tr>
+              <tr><td style="padding:6px 0;color:#666;font-size:12px;">Subject</td><td style="padding:6px 0;color:#1a1a1a;font-size:14px;">${escapeHtml(opts.subject)}</td></tr>
             </table>
             <div style="height:1px;background:#eee;margin:16px 0;"></div>
             <div style="font-size:14px;line-height:1.6;color:#1a1a1a;white-space:pre-wrap;">${escapeHtml(opts.message)}</div>

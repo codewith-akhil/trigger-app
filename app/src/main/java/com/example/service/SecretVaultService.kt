@@ -43,7 +43,7 @@ data class VaultMediaItem(
 
 class SecretVaultService(private val context: Context) {
     private val TAG = "SecretVaultService"
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val scope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
 
     private val prefs: SharedPreferences = context.getSharedPreferences("trigger_secret_vault_prefs", Context.MODE_PRIVATE)
 
@@ -249,7 +249,7 @@ class SecretVaultService(private val context: Context) {
     suspend fun hasServerPin(): Boolean? {
         val payload = JSONObject().put("pin", "")
         return when (val res = client.invokeFunction("verify-vault-pin", payload)) {
-            is SupabaseResult.Success -> res.data.optBoolean("verified", false) || true
+            is SupabaseResult.Success -> res.data.optBoolean("verified", false)
             is SupabaseResult.Error -> {
                 val msg = res.message.lowercase(Locale.getDefault())
                 when {

@@ -36,41 +36,7 @@ class DashboardViewModel : ViewModel() {
                 }
                 val result = supabaseClient.invokeFunction("sync-conversations", payload)
                 if (result is com.example.service.supabase.SupabaseResult.Success) {
-                    val arr = result.data.optJSONArray("conversations") ?: return@launch
-                    for (i in 0 until arr.length()) {
-                        val obj = arr.getJSONObject(i)
-                        // H4/H5: persist the OTHER user's uuid on the row so a
-                        // chat opened by conversation uuid can still key
-                        // presence/typing/calls (which are peer-keyed).
-                        val myId = supabaseClient.currentUser?.id ?: ""
-                        val ownerId = obj.optString("owner_id", "")
-                        val peerRaw = obj.optString("peer_id", "")
-                        val otherId = when {
-                            ownerId == myId -> peerRaw
-                            peerRaw == myId -> ownerId
-                            else -> peerRaw
-                        }
-                        // Insert/update each conversation in Room
-                        val conv = com.example.data.local.ConversationEntity(
-                            id = obj.getString("id"),
-                            peerId = otherId.takeIf { it.isNotBlank() },
-                            name = obj.optString("peer_name", "Unknown"),
-                            avatarRes = null,
-                            initialColor = obj.optLong("peer_avatar_color", 0xFF00A884),
-                            lastMessage = obj.optString("last_message", ""),
-                            timestamp = obj.optString("last_message_at", ""),
-                            unreadCount = obj.optInt("unread_count", 0),
-                            isPinned = obj.optBoolean("is_pinned", false),
-                            hasStatusUpdate = false,
-                            isGroup = obj.optBoolean("is_group", false),
-                            isOnline = false,
-                            lastSeenText = "offline",
-                            disappearingDuration = obj.optString("disappearing_duration", "OFF"),
-                            isMuted = obj.optBoolean("is_muted", false),
-                            isBlocked = obj.optBoolean("is_blocked", false)
-                        )
-                        repository.insertConversation(conv)
-                    }
+                    result.data.optJSONArray("conversations")?.let { applyConversationPull(it) }
                 } else if (result is com.example.service.supabase.SupabaseResult.Error) {
                     _errorMessage.value = result.message.ifBlank { "Failed to sync conversations." }
                 }
@@ -78,6 +44,71 @@ class DashboardViewModel : ViewModel() {
                 _errorMessage.value = e.message ?: "Failed to sync conversations."
             } finally {
                 _isSyncing.value = false
+            }
+        }
+    }
+
+    /**
+     * Applies a `sync-conversations` pull payload to Room. Both the initial
+     * sync and retrySync() route through here — retrySync() previously rebuilt
+     * the entity WITHOUT [peerId], silently severing presence/typing/calls for
+     * every conversation after the first retry.
+     */
+    private suspend fun applyConversationPull(arr: org.json.JSONArray) {
+        val myId = supabaseClient.currentUser?.id ?: ""
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            // H4/H5: persist the OTHER user's uuid on the row so a chat opened
+            // by conversation uuid can still key presence/typing/calls.
+            val ownerId = obj.optString("owner_id", "")
+            val peerRaw = obj.optString("peer_id", "")
+            val otherId = when {
+                ownerId == myId -> peerRaw
+                peerRaw == myId -> ownerId
+                else -> peerRaw
+            }
+            val id = obj.getString("id")
+            // isArchived is a LOCAL-ONLY flag (not part of the server pull).
+            // insertConversation is REPLACE — without preserving it, every
+            // sync silently un-archived all archived chats.
+            val existing = repository.getConversationByIdOnce(id)
+            val conv = com.example.data.local.ConversationEntity(
+                id = id,
+                peerId = otherId.takeIf { it.isNotBlank() },
+                name = obj.optString("peer_name", "Unknown"),
+                avatarRes = null,
+                initialColor = obj.optLong("peer_avatar_color", 0xFF00A884),
+                lastMessage = obj.optString("last_message", ""),
+                timestamp = obj.optString("last_message_at", ""),
+                lastActivityMillis = parseIsoToMillis(obj.optString("last_message_at", "")),
+                unreadCount = obj.optInt("unread_count", 0),
+                isPinned = obj.optBoolean("is_pinned", false),
+                hasStatusUpdate = false,
+                isGroup = obj.optBoolean("is_group", false),
+                isOnline = false,
+                lastSeenText = "offline",
+                disappearingDuration = obj.optString("disappearing_duration", "OFF"),
+                isMuted = obj.optBoolean("is_muted", false),
+                isBlocked = obj.optBoolean("is_blocked", false),
+                isArchived = existing?.isArchived ?: false
+            )
+            repository.insertConversation(conv)
+        }
+    }
+
+    /** Parses an ISO-8601 timestamp ("2026-09-07T16:21:39Z") to epoch millis;
+     *  returns 0L when unparsable so rows sort deterministically until the
+     *  next real message refreshes the value. */
+    private fun parseIsoToMillis(iso: String): Long {
+        if (iso.isBlank()) return 0L
+        return try {
+            java.time.Instant.parse(iso).toEpochMilli()
+        } catch (e: Exception) {
+            try {
+                // Fallback: offset form ("2026-09-07T16:21:39+00:00")
+                java.time.OffsetDateTime.parse(iso).toInstant().toEpochMilli()
+            } catch (e2: Exception) {
+                0L
             }
         }
     }
@@ -101,28 +132,7 @@ class DashboardViewModel : ViewModel() {
                 }
                 val result = supabaseClient.invokeFunction("sync-conversations", payload)
                 if (result is com.example.service.supabase.SupabaseResult.Success) {
-                    val arr = result.data.optJSONArray("conversations") ?: return@launch
-                    for (i in 0 until arr.length()) {
-                        val obj = arr.getJSONObject(i)
-                        val conv = com.example.data.local.ConversationEntity(
-                            id = obj.getString("id"),
-                            name = obj.optString("peer_name", "Unknown"),
-                            avatarRes = null,
-                            initialColor = obj.optLong("peer_avatar_color", 0xFF00A884),
-                            lastMessage = obj.optString("last_message", ""),
-                            timestamp = obj.optString("last_message_at", ""),
-                            unreadCount = obj.optInt("unread_count", 0),
-                            isPinned = obj.optBoolean("is_pinned", false),
-                            hasStatusUpdate = false,
-                            isGroup = obj.optBoolean("is_group", false),
-                            isOnline = false,
-                            lastSeenText = "offline",
-                            disappearingDuration = obj.optString("disappearing_duration", "OFF"),
-                            isMuted = obj.optBoolean("is_muted", false),
-                            isBlocked = obj.optBoolean("is_blocked", false)
-                        )
-                        repository.insertConversation(conv)
-                    }
+                    result.data.optJSONArray("conversations")?.let { applyConversationPull(it) }
                 } else if (result is com.example.service.supabase.SupabaseResult.Error) {
                     _errorMessage.value = result.message.ifBlank { "Failed to sync conversations." }
                 }

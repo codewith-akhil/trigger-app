@@ -39,9 +39,12 @@ function isValidEmail(v: string): boolean {
 }
 
 function generateSixDigitCode(): string {
+  // Rejection sampling — (2^32 % 900000 != 0) so the modulo had a tiny bias.
   const buf = new Uint32Array(1);
-  crypto.getRandomValues(buf);
-  // 100000..999999 inclusive
+  const LIMIT = Math.floor(4294967296 / 900000) * 900000;
+  do {
+    crypto.getRandomValues(buf);
+  } while (buf[0] >= LIMIT);
   return String(100000 + (buf[0] % 900000));
 }
 

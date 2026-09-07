@@ -50,6 +50,14 @@ function buildChannelName(streamId: string): string {
   return `stream_${safe}`;
 }
 
+/** Length-safe, early-exit-free string compare. */
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 async function handler(req: Request): Promise<Response> {
   const preflight = handleOptions(req);
   if (preflight) return preflight;
@@ -60,7 +68,7 @@ async function handler(req: Request): Promise<Response> {
   // scheduler + Supabase admins know the secret.
   const cronSecret = Deno.env.get("CRON_SECRET");
   const providedSecret = req.headers.get("x-cron-secret") ?? "";
-  if (!cronSecret || providedSecret !== cronSecret) {
+  if (!cronSecret || !timingSafeEqualHex(providedSecret, cronSecret)) {
     return errorResponse("Unauthorized", 401);
   }
 

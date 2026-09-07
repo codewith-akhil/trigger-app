@@ -142,14 +142,17 @@ async function handler(req: Request): Promise<Response> {
       conv = existing[0];
       conversationId = conv.id;
     } else {
-      // Auto-create a new conversation
+      // Auto-create a new conversation. The FIRST message from one user to
+      // another IS a message request — it must start PENDING (it previously
+      // auto-created as "accepted", letting anyone message anyone while
+      // bypassing the whole request/3-message gate).
       const { data: newConv, error: createErr } = await supabase
         .from("conversations")
         .insert({
           owner_id: userId,
           peer_id: body.peer_id,
           peer_name: body.peer_name ?? "Unknown",
-          request_status: "accepted",
+          request_status: "pending",
           is_group: false,
         })
         .select("id, owner_id, peer_id, request_status")
@@ -160,6 +163,27 @@ async function handler(req: Request): Promise<Response> {
       }
       conv = newConv;
       conversationId = newConv.id;
+      // Mirror the request into message_requests (same as send-message-request
+      // does) so the receiver's Requests list shows it.
+      try {
+        const { data: senderProfile } = await supabase
+          .from("profiles")
+          .select("full_name, username, avatar_url")
+          .eq("id", userId)
+          .maybeSingle();
+        await supabase.from("message_requests").upsert({
+          sender_id: userId,
+          receiver_id: body.peer_id,
+          sender_name: senderProfile?.full_name ?? body.peer_name ?? "Unknown",
+          sender_username: senderProfile?.username ?? null,
+          sender_avatar_url: senderProfile?.avatar_url ?? null,
+          initial_message: (body.text ?? "").slice(0, 200),
+          status: "pending",
+          conversation_id: newConv.id,
+        }, { onConflict: "sender_id,receiver_id" });
+      } catch (reqErr) {
+        console.warn("send-message: message_requests mirror failed", reqErr);
+      }
     }
   }
 
@@ -176,24 +200,29 @@ async function handler(req: Request): Promise<Response> {
   // --- Message-request gating (Instagram model) ---------------------------
   // While the request is PENDING: the requester (conversation owner) may send
   // up to 3 messages; the receiver must ACCEPT before replying.
+  // FAST-PATH gate (friendly error before the atomic insert below): while
+  // the request is PENDING the requester may send up to 3 messages; the
+  // receiver must ACCEPT before replying. The authoritative, race-free
+  // enforcement is the try_send_pending_message RPC used for the insert when
+  // pending (count-then-insert here was a TOCTOU — concurrent sends both
+  // counted 2 and both inserted).
   if (conv.request_status === "pending") {
     const isRequester = conv.owner_id === userId;
-    if (isRequester) {
-      const { count: sentCount } = await supabase
-        .from("messages")
-        .select("id", { count: "exact", head: true })
-        .eq("conversation_id", conv.id)
-        .eq("sender_id", userId);
-      if ((sentCount ?? 0) >= 3) {
-        return json({
-          error: "You can send up to 3 messages while your request is pending",
-          code: "REQUEST_MESSAGE_LIMIT",
-        }, 403);
-      }
-    } else {
+    if (!isRequester) {
       return json({
         error: "Accept the message request to reply",
         code: "REQUEST_NOT_ACCEPTED",
+      }, 403);
+    }
+    const { count: sentCount } = await supabase
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", conv.id)
+      .eq("sender_id", userId);
+    if ((sentCount ?? 0) >= 3) {
+      return json({
+        error: "You can send up to 3 messages while your request is pending",
+        code: "REQUEST_MESSAGE_LIMIT",
       }, 403);
     }
   }
@@ -252,13 +281,60 @@ async function handler(req: Request): Promise<Response> {
     idempotency_key: body.idempotency_key ?? null,
   };
 
-  const { data: msg, error: insertError } = await supabase
-    .from("messages")
-    .insert(insertData)
-    .select()
-    .single();
+  let msg: Record<string, unknown> | null = null;
+  let insertError: Record<string, unknown> | null = null;
 
-  if (insertError) {
+  if (conv.request_status === "pending") {
+    // ATOMIC path — the RPC locks the conversation row, re-checks the budget
+    // and inserts in one transaction (cannot be raced past 3).
+    const { data: rpcMsg, error: rpcErr } = await supabase.rpc(
+      "try_send_pending_message",
+      {
+        p_conversation_id: conv.id,
+        p_sender_id: userId,
+        p_text: (body.text ?? "").toString(),
+        p_timestamp_millis: body.timestamp_millis ?? null,
+      }
+    );
+    if (rpcErr) {
+      const rpcCode = String((rpcErr as Record<string, unknown>).message ?? "");
+      if (rpcCode.includes("REQUEST_MESSAGE_LIMIT")) {
+        return json({ error: "You can send up to 3 messages while your request is pending", code: "REQUEST_MESSAGE_LIMIT" }, 403);
+      }
+      if (rpcCode.includes("REQUEST_NOT_ACCEPTED")) {
+        return json({ error: "Accept the message request to reply", code: "REQUEST_NOT_ACCEPTED" }, 403);
+      }
+      if (rpcCode.includes("CONVERSATION_BLOCKED")) {
+        return json({ error: "This conversation is blocked", code: ErrorCode.FORBIDDEN }, 403);
+      }
+      console.error("send-message: try_send_pending_message failed", rpcErr);
+      return json({ error: "Failed to send message", code: ErrorCode.INTERNAL_ERROR }, 500);
+    }
+    msg = rpcMsg as Record<string, unknown>;
+  } else {
+    const ins = await supabase
+      .from("messages")
+      .insert(insertData)
+      .select()
+      .single();
+    msg = ins.data as Record<string, unknown> | null;
+    insertError = ins.error as Record<string, unknown> | null;
+    // Unique idempotency_key race: the pre-check above can miss a concurrent
+    // duplicate — previously returned a confusing 500; return the winner.
+    if (insertError && (insertError as Record<string, unknown>).code === "23505" && body.idempotency_key) {
+      const { data: dup } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("idempotency_key", body.idempotency_key)
+        .eq("sender_id", userId)
+        .limit(1);
+      if (dup && dup.length > 0) {
+        return json({ sent: true, message: dup[0], idempotent: true });
+      }
+    }
+  }
+
+  if (insertError || !msg) {
     console.error("send-message insert failed", insertError);
     return json({ error: "Failed to send message", code: ErrorCode.INTERNAL_ERROR }, 500);
   }

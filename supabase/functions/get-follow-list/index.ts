@@ -33,8 +33,12 @@ async function handler(req: Request): Promise<Response> {
   if (type !== "followers" && type !== "following") {
     return json({ error: "type must be 'followers' or 'following'" }, 422);
   }
-  const limit = Math.min(Math.max(body.limit ?? 50, 1), 100);
-  const offset = Math.max(body.offset ?? 0, 0);
+  // typeof guards — a string "limit" made Math.min return NaN → PostgREST 400
+  // surfaced as a generic 500.
+  const rawLimit = typeof body.limit === "number" ? body.limit : 50;
+  const rawOffset = typeof body.offset === "number" ? body.offset : 0;
+  const limit = Math.min(Math.max(rawLimit, 1), 100);
+  const offset = Math.max(rawOffset, 0);
 
   const supabase = createAdminClient();
 

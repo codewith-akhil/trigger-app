@@ -40,8 +40,12 @@ function isValidPin(v: string): boolean {
 }
 
 function generateSixDigitCode(): string {
+  // Rejection sampling — no modulo bias.
   const buf = new Uint32Array(1);
-  crypto.getRandomValues(buf);
+  const LIMIT = Math.floor(4294967296 / 900000) * 900000;
+  do {
+    crypto.getRandomValues(buf);
+  } while (buf[0] >= LIMIT);
   return String(100000 + (buf[0] % 900000));
 }
 
@@ -69,11 +73,11 @@ async function verifyOtpCombo(supabase: any, email: string, code: string): Promi
   const [salt, storedHash] = otp.code_hash.split(":");
   const candidate = await sha256Hex(`${code}:${salt}`);
   if (candidate !== storedHash) {
-    await supabase.from("otp_codes").update({ attempts: (otp.attempts ?? 0) + 1 }).eq("id", otp.id);
+    await supabase.rpc("bump_otp_attempts", { p_otp_id: otp.id });
     return { ok: false, error: "Incorrect code. Please try again." };
   }
   // Mark consumed.
-  await supabase.from("otp_codes").update({ consumed_at: new Date().toISOString(), attempts: (otp.attempts ?? 0) + 1 }).eq("id", otp.id);
+  await supabase.from("otp_codes").update({ consumed_at: new Date().toISOString() }).eq("id", otp.id);
   return { ok: true };
 }
 

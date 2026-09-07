@@ -33,6 +33,16 @@ interface Body {
   currency?: string;
 }
 
+/** Length-safe, early-exit-free string compare (signature verification). */
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 async function hmacSha256Hex(key: string, message: string): Promise<string> {
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
@@ -75,7 +85,7 @@ async function handler(req: Request): Promise<Response> {
     keySecret,
     `${body.razorpayOrderId}|${body.razorpayPaymentId}`,
   );
-  if (expected !== body.razorpaySignature.toLowerCase()) {
+  if (!timingSafeEqualHex(expected, body.razorpaySignature.toLowerCase())) {
     return json({ verified: false, error: "Payment signature verification failed" }, 400);
   }
 
@@ -145,15 +155,29 @@ async function handler(req: Request): Promise<Response> {
       });
     }
   } else if (purpose === "wallet_topup") {
-    await supabase.from("wallet_transactions").insert({
-      user_id: userId,
-      type: "credit",
-      amount: amount,
-      currency: currency === "INR" ? "INR (₹)" : currency,
-      description: "Wallet top-up",
-      reference_id: referenceId,
-      status: "completed",
-    });
+    // Credit the PAYER (notes.user_id), not the caller — anyone could
+    // otherwise submit someone's signature and have the money land in THEIR
+    // wallet. Only the payer themself may verify a top-up.
+    if (userId !== payerUserId) {
+      return errorResponse("Only the payer can verify this payment", 403, ErrorCode.FORBIDDEN);
+    }
+    // Upsert on the UNIQUE reference_id + surface failures — a replayed or
+    // failed insert previously still returned { verified: true }.
+    const { error: creditError } = await supabase
+      .from("wallet_transactions")
+      .upsert({
+        user_id: payerUserId,
+        type: "credit",
+        amount: amount,
+        currency: currency === "INR" ? "INR (₹)" : currency,
+        description: "Wallet top-up",
+        reference_id: referenceId,
+        status: "completed",
+      }, { onConflict: "reference_id" });
+    if (creditError) {
+      console.error("wallet credit failed", creditError);
+      return errorResponse("Payment verified but crediting failed — contact support", 500, ErrorCode.INTERNAL_ERROR);
+    }
   }
 
   return json({ verified: true, referenceId });

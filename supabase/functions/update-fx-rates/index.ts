@@ -12,6 +12,14 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { handleOptions, json, errorResponse } from "../_shared/cors.ts";
 import { createAdminClient } from "../_shared/supabase.ts";
 
+/** Length-safe, early-exit-free string compare. */
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 async function handler(req: Request): Promise<Response> {
   const preflight = handleOptions(req);
   if (preflight) return preflight;
@@ -20,7 +28,7 @@ async function handler(req: Request): Promise<Response> {
   // Auth: CRON_SECRET
   const cronSecret = Deno.env.get("CRON_SECRET");
   const providedSecret = req.headers.get("x-cron-secret") ?? "";
-  if (!cronSecret || providedSecret !== cronSecret) {
+  if (!cronSecret || !timingSafeEqualHex(providedSecret, cronSecret)) {
     return errorResponse("Unauthorized", 401);
   }
 

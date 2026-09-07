@@ -233,7 +233,12 @@ class SupabaseClient(
 
     // ---- Realtime WebSocket ----
     private var realtimeSocket: WebSocket? = null
-    private val _realtimeEvents = MutableSharedFlow<RealtimeEvent>(extraBufferCapacity = 64)
+        // SUSPEND (not DROP) on overflow — bursts of >64 pending realtime events
+    // were silently discarded mid-burst until the next reconnect resync.
+    private val _realtimeEvents = MutableSharedFlow<RealtimeEvent>(
+        extraBufferCapacity = 256,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.SUSPEND
+    )
     val realtimeEvents: SharedFlow<RealtimeEvent> = _realtimeEvents.asSharedFlow()
 
     // Emitted whenever the Realtime WebSocket (re)connects after a disconnect.
@@ -246,6 +251,7 @@ class SupabaseClient(
     private var lastRealtimeTables: List<String> = emptyList()
     private var lastRealtimeFilter: String? = null
     private var hasConnectedBefore = false
+    private val realtimeFailureCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     /**
      * Connects to the Supabase Realtime WebSocket and subscribes to the given
@@ -286,6 +292,7 @@ class SupabaseClient(
         realtimeSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.i(TAG, "Realtime WebSocket connected")
+                realtimeFailureCount.set(0)
                 // If this is a reconnect (not the first connection), emit a signal
                 // so listeners can sync any messages they missed during the gap.
                 if (hasConnectedBefore) {
@@ -361,14 +368,19 @@ class SupabaseClient(
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e(TAG, "Realtime WebSocket failure: ${t.message}")
-                // Auto-reconnect after 3 seconds
-                Thread {
-                    Thread.sleep(3000)
-                    if (currentSession != null) {
-                        Log.i(TAG, "Auto-reconnecting Realtime WebSocket...")
+                // Exponential backoff (2s → 32s cap) on the client scope —
+                // the previous bare fixed-3s Thread spun forever while offline
+                // and raced fresh connectRealtime calls from a new login.
+                if (currentSession == null) return
+                val attempt = (realtimeFailureCount.incrementAndGet()).coerceAtMost(5)
+                val backoffMs = (1000L * (1L shl attempt)).coerceAtMost(32_000L)
+                clientScope.launch {
+                    kotlinx.coroutines.delay(backoffMs)
+                    if (currentSession != null && realtimeSocket == null) {
+                        Log.i(TAG, "Auto-reconnecting Realtime WebSocket (backoff ${backoffMs}ms)...")
                         connectRealtime(lastRealtimeTables, lastRealtimeFilter)
                     }
-                }.start()
+                }
             }
         })
     }
@@ -538,12 +550,13 @@ class SupabaseClient(
                     .post(bodyJson.toString().toRequestBody(jsonMediaType))
                     .build()
 
-                val response = httpClient.newCall(request).execute()
-                if (response.isSuccessful) {
-                    SupabaseResult.Success(true)
-                } else {
-                    val responseBody = response.body?.string() ?: ""
-                    SupabaseResult.Error(parseErrorMessage(responseBody, "Password reset request failed"))
+                httpClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        SupabaseResult.Success(true)
+                    } else {
+                        val responseBody = response.body?.string() ?: ""
+                        SupabaseResult.Error(parseErrorMessage(responseBody, "Password reset request failed"))
+                    }
                 }
             } catch (e: Exception) {
                 SupabaseResult.Error(e.message ?: "Network error during password recovery")
@@ -572,12 +585,13 @@ class SupabaseClient(
                     .put(bodyJson.toString().toRequestBody(jsonMediaType))
                     .build()
 
-                val response = httpClient.newCall(request).execute()
-                if (response.isSuccessful) {
-                    SupabaseResult.Success(true)
-                } else {
-                    val responseBody = response.body?.string() ?: ""
-                    SupabaseResult.Error(parseErrorMessage(responseBody, "Failed to update password"))
+                httpClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        SupabaseResult.Success(true)
+                    } else {
+                        val responseBody = response.body?.string() ?: ""
+                        SupabaseResult.Error(parseErrorMessage(responseBody, "Failed to update password"))
+                    }
                 }
             } catch (e: Exception) {
                 SupabaseResult.Error(e.message ?: "Network error updating password")
@@ -595,11 +609,59 @@ class SupabaseClient(
                         .addHeader("Authorization", "Bearer $token")
                         .post("{}".toRequestBody(jsonMediaType))
                         .build()
-                    httpClient.newCall(request).execute()
+                    httpClient.newCall(request).execute().use { it.body?.string() }
                 }
             } catch (_: Exception) {}
+            // Tear realtime down with the session — otherwise the socket kept
+            // the old account's subscription alive, and hasConnectedBefore
+            // made the NEXT account's first connect emit a bogus reconnect
+            // signal (spurious full resync).
+            try {
+                realtimeSocket?.close(1000, "Signed out")
+            } catch (_: Exception) {}
+            realtimeSocket = null
+            hasConnectedBefore = false
             applySession(null)
             SupabaseResult.Success(true)
+        }
+
+    /**
+     * Calls a Postgres function through PostgREST: POST /rest/v1/rpc/{name}
+     * with the USER's JWT (never the service key) — RLS applies.
+     */
+    suspend fun callRpc(functionName: String, args: JSONObject): SupabaseResult<JSONObject> =
+        withContext(Dispatchers.IO) {
+            if (!BackendConfig.isSupabaseConfigured) {
+                return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: "Supabase is not configured")
+            }
+            try {
+                val token = ensureFreshAccessToken() ?: anonKey
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/v1/rpc/$functionName")
+                    .addHeader("apikey", anonKey)
+                    .addHeader("Authorization", "Bearer $token")
+                    .addHeader("Content-Type", "application/json")
+                    .post(args.toString().toRequestBody(jsonMediaType))
+                    .build()
+                httpClient.newCall(request).execute().use { response ->
+                    val responseBody = response.body?.string() ?: ""
+                    if (response.isSuccessful) {
+                        val parsed = try {
+                            when {
+                                responseBody.isBlank() -> JSONObject()
+                                responseBody.trim().startsWith("[") ->
+                                    org.json.JSONArray(responseBody).optJSONObject(0) ?: JSONObject()
+                                else -> JSONObject(responseBody)
+                            }
+                        } catch (e: Exception) { JSONObject() }
+                        SupabaseResult.Success(parsed)
+                    } else {
+                        SupabaseResult.Error(parseErrorMessage(responseBody, "RPC $functionName failed (HTTP ${response.code})"))
+                    }
+                }
+            } catch (e: Exception) {
+                SupabaseResult.Error(e.message ?: "RPC $functionName failed")
+            }
         }
 
     // ==========================================
@@ -801,7 +863,10 @@ class SupabaseClient(
     }
 
     private fun parseUser(userJson: JSONObject, fallbackEmail: String = "", fallbackName: String? = null): SupabaseUser {
-        val id = userJson.optString("id", System.currentTimeMillis().toString())
+        // A missing id previously became a FAKE timestamp id — it then keyed
+        // presence rows, calls and RLS-scoped writes as a bogus identity.
+        require(userJson.optString("id").isNotBlank()) { "auth response missing user id" }
+        val id = userJson.optString("id")
         val email = userJson.optString("email", fallbackEmail)
         val userMetadata = userJson.optJSONObject("user_metadata")
         val fullName = userMetadata?.optString("full_name") ?: fallbackName ?: email.substringBefore("@")

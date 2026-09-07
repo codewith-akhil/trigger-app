@@ -78,12 +78,19 @@ object MediaUrlResolver {
         val effectiveBucket = bucket?.takeIf { it.isNotBlank() } ?: CHAT_MEDIA_BUCKET
 
         // Signed/authenticated URL: rebuild a permanent public URL whenever we
-        // have (or can recover) the object path.
+        // have (or can recover) the object path — PUBLIC buckets only. The
+        // previous code rebuilt a public URL for ANY bucket; private buckets
+        // (voice_notes, documents) 403 on /object/public/ forever.
         if (isExpiringUrl(storedUrl) || storedUrl.isNullOrBlank()) {
             val objectPath = path?.takeIf { it.isNotBlank() }
                 ?: storedUrl?.let { extractObjectPath(it, effectiveBucket) }
             if (objectPath != null) {
-                return publicUrl(effectiveBucket, objectPath)
+                if (effectiveBucket == CHAT_MEDIA_BUCKET) {
+                    return publicUrl(effectiveBucket, objectPath)
+                }
+                // Private bucket — keep the stored signed URL here; the
+                // suspend [resolveWithRefresh] path re-signs it on demand.
+                return storedUrl
             }
             // No path recoverable — fall through and return the stored URL
             // (it may still be within its validity window).
@@ -92,6 +99,37 @@ object MediaUrlResolver {
 
         // Plain URL already stored — use it as-is.
         return storedUrl
+    }
+
+    /** In-memory re-sign cache: "bucket/path" → (url, expiresAtEpochMs). */
+    private val resignCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+
+    /**
+     * Suspend resolver for media actually being rendered: private-bucket
+     * expiring URLs are re-signed (cached until 5 min before expiry) instead
+     * of silently dying. Public-bucket URLs go through the sync [resolve].
+     */
+    suspend fun resolveWithRefresh(storedUrl: String?, bucket: String?, path: String?): String? {
+        val effectiveBucket = bucket?.takeIf { it.isNotBlank() } ?: CHAT_MEDIA_BUCKET
+        if (storedUrl != null && isExpiringUrl(storedUrl) && effectiveBucket != CHAT_MEDIA_BUCKET) {
+            val objectPath = path?.takeIf { it.isNotBlank() }
+                ?: extractObjectPath(storedUrl, effectiveBucket)
+            if (objectPath != null) {
+                val key = "$effectiveBucket/$objectPath"
+                val cached = resignCache[key]
+                val now = System.currentTimeMillis()
+                if (cached != null && cached.second > now + 5 * 60_000L) {
+                    return cached.first
+                }
+                val fresh = refreshSignedUrl(effectiveBucket, objectPath)
+                if (fresh != null) {
+                    // Cache for slightly less than the URL validity we requested.
+                    resignCache[key] = fresh to (now + (604_800L - 3_600L) * 1000L)
+                    return fresh
+                }
+            }
+        }
+        return resolve(storedUrl, bucket, path)
     }
 
     /** Permanent public URL for a public bucket. */
@@ -110,7 +148,7 @@ object MediaUrlResolver {
             try {
                 val supabaseClient = AppServiceContainer.supabaseClient
                 val baseUrl = com.example.config.BackendConfig.SUPABASE_URL
-                val token = supabaseClient.currentSession?.accessToken
+                val token = supabaseClient.ensureFreshAccessToken()
                     ?: com.example.config.BackendConfig.SUPABASE_ANON_KEY
                 val anonKey = com.example.config.BackendConfig.SUPABASE_ANON_KEY
 

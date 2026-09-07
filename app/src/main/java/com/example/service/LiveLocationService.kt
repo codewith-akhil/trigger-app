@@ -141,6 +141,9 @@ class LiveLocationService : Service() {
 
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         requestFixes()
+        // A second start while a share is live must REPLACE the old expiry —
+        // both runnables otherwise fire and the longer share dies early.
+        mainHandler.removeCallbacks(expiryRunnable)
         mainHandler.postDelayed(expiryRunnable, durationMin * 60_000L)
 
         // Seed the sharer-side UI state from the anchor message coordinates.

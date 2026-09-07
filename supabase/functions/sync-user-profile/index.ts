@@ -75,9 +75,10 @@ async function handler(req: Request): Promise<Response> {
   if (typeof body.avatarUrl === "string") patch.avatar_url = body.avatarUrl;
   if (typeof body.avatarBucket === "string") patch.avatar_bucket = body.avatarBucket;
   if (typeof body.phone === "string") patch.phone = body.phone.trim();
-  if (typeof body.phoneVerified === "boolean") patch.phone_verified = body.phoneVerified;
   if (typeof body.countryIso === "string") patch.country_iso = body.countryIso.toUpperCase().substring(0, 2);
   if (typeof body.country_code === "string") patch.country_code = body.country_code.toUpperCase().substring(0, 3);
+  // phone_verified is earned via OTP flows — a client cannot self-certify it.
+  // (body.phoneVerified was copied straight into the patch.)
   if (typeof body.languageCode === "string") patch.language_code = body.languageCode;
   if (Array.isArray(body.links)) {
     // Validate links: max 3, each with label (1-25 chars) + valid URL
@@ -158,13 +159,16 @@ async function handler(req: Request): Promise<Response> {
   }
 
   // --- country_code: must exist in countries table ---
+  // The countries PK columns are currency_code + iso2 — validating a COUNTRY
+  // code against currency_code matched "USD"-style values, so real country
+  // codes were rejected and currency codes accepted.
   if (patch.country_code !== undefined && patch.country_code !== null) {
     const { data: countryRow } = await supabase
       .from("countries")
       .select("currency_code")
-      .eq("currency_code", patch.country_code)
-      .maybeSingle();
-    if (!countryRow) {
+      .or(`currency_code.eq.${patch.country_code},iso2.eq.${patch.country_code}`)
+      .limit(1);
+    if (!countryRow || countryRow.length === 0) {
       return errorResponse("Please select a valid country from the list", 422);
     }
   }

@@ -275,14 +275,14 @@ class WalletService(private val context: Context? = null) {
             // Supabase returns e.g. 2026-09-15T10:30:00.123456+00:00
             val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX", Locale.US)
             sdf.timeZone = TimeZone.getTimeZone("UTC")
-            sdf.parse(iso)?.time ?: System.currentTimeMillis()
+            sdf.parse(iso)?.time ?: 0L
         } catch (_: Exception) {
             try {
                 val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
                 sdf.timeZone = TimeZone.getTimeZone("UTC")
-                sdf.parse(iso)?.time ?: System.currentTimeMillis()
+                sdf.parse(iso)?.time ?: 0L
             } catch (_: Exception) {
-                System.currentTimeMillis()
+                0L
             }
         }
     }

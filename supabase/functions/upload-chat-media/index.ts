@@ -14,6 +14,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { handleOptions, json, errorResponse, ErrorCode } from "../_shared/cors.ts";
+import { checkRateLimit } from "../_shared/rate_limit.ts";
 import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
 
 const MAX_SIZES: Record<string, number> = {
@@ -23,6 +24,8 @@ const MAX_SIZES: Record<string, number> = {
   VOICE_NOTE: 55 * 1024 * 1024,
   DOCUMENT: 55 * 1024 * 1024,
 };
+
+const UPLOAD_LIMIT = { maxRequests: 30, windowSeconds: 3600, name: "upload_chat_media" };
 
 const BUCKETS: Record<string, string> = {
   IMAGE: "chat_media",
@@ -40,14 +43,40 @@ async function handler(req: Request): Promise<Response> {
   const userId = await resolveUserId(req.headers.get("Authorization"));
   if (!userId) return errorResponse("Unauthorized", 401, ErrorCode.UNAUTHORIZED);
 
+  // Per-user rate limit — 250 MB/req endpoints without one are a DoS magnet.
+  const rl = checkRateLimit(req, userId, UPLOAD_LIMIT);
+  if (!rl.allowed) {
+    return json({ error: rl.message, code: ErrorCode.RATE_LIMITED, retryAfter: rl.retryAfter }, 429);
+  }
+
   // Read metadata from headers
   const fileType = (req.headers.get("x-file-type") ?? "").toUpperCase();
-  const fileName = req.headers.get("x-file-name") ?? `file_${Date.now()}`;
+  // The Android client percent-encodes this header (OkHttp headers are
+  // Latin-1; non-ASCII filenames previously crashed the client).
+  let fileName = req.headers.get("x-file-name") ?? `file_${Date.now()}`;
+  try {
+    const decoded = decodeURIComponent(fileName);
+    fileName = decoded;
+  } catch (_) { /* keep raw */ }
   const mimeType = req.headers.get("x-mime-type") ?? "application/octet-stream";
   const declaredSize = parseInt(req.headers.get("x-file-size") ?? "0", 10);
 
   if (!fileType || !MAX_SIZES[fileType]) {
     return json({ error: "Invalid or missing X-File-Type header. Must be IMAGE, VIDEO, AUDIO, VOICE_NOTE, or DOCUMENT.", code: ErrorCode.VALIDATION_FAILED }, 422);
+  }
+
+  // MIME whitelist per type — the mime came straight from the client header
+  // and was stored as the object's content type.
+  const MIME_WHITELIST: Record<string, string[]> = {
+    IMAGE: ["image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"],
+    VIDEO: ["video/mp4", "video/webm", "video/3gpp", "video/quicktime"],
+    AUDIO: ["audio/aac", "audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav"],
+    VOICE_NOTE: ["audio/aac", "audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav"],
+    DOCUMENT: ["application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.ms-excel", "application/vnd.ms-powerpoint", "text/plain", "text/csv", "application/zip"],
+  };
+  const allowedMimes = MIME_WHITELIST[fileType] ?? [];
+  if (!allowedMimes.includes(mimeType.toLowerCase())) {
+    return json({ error: `Unsupported ${fileType} mime type: ${mimeType}`, code: ErrorCode.VALIDATION_FAILED }, 422);
   }
 
   // --- Server-side file size validation (authoritative) ---
@@ -65,8 +94,11 @@ async function handler(req: Request): Promise<Response> {
   }
 
   const bucket = BUCKETS[fileType];
-  // Generate a unique path: userId/timestamp_random.filename
-  const ext = fileName.includes(".") ? fileName.split(".").pop() : "bin";
+  // Generate a unique path: userId/timestamp_random.ext — the extension is
+  // whitelisted to safe chars (an unsanitized filename gave paths like
+  // "…/x./../../evil" fragments).
+  const rawExt = fileName.includes(".") ? fileName.split(".").pop()! : "bin";
+  const ext = /^[A-Za-z0-9]{1,8}$/.test(rawExt) ? rawExt.toLowerCase() : "bin";
   const storagePath = `${userId}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
   const supabase = createAdminClient();

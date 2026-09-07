@@ -47,7 +47,21 @@ async function handler(req: Request): Promise<Response> {
 
   const supabase = createAdminClient();
 
-  // Query auth.users via admin API
+  // profiles.email is the denormalized, UNIQUE index — listUsers({page:1,
+  // perPage:1000}) silently missed every user beyond the first 1000 (signup
+  // then failed with "Email not confirmed" / duplicate-account errors).
+  const { data: profileHit } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("email", email)
+    .limit(1);
+  const existsViaProfile = !!(profileHit && profileHit.length > 0);
+  if (existsViaProfile) {
+    return json({ exists: true, source: "profiles" });
+  }
+
+  // Fallback to auth.admin for brand-new signups before the trigger synced
+  // the email into profiles.
   const { data: users, error } = await supabase.auth.admin.listUsers({
     page: 1,
     perPage: 1000,

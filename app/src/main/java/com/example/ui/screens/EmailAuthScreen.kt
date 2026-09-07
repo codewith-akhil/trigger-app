@@ -66,6 +66,10 @@ fun EmailAuthScreen(
     }
 
     fun handleLogin() {
+        // Re-entrancy guard: the IME "Done" action bypasses the
+        // enabled=!isLoading button state, letting double-taps fire two
+        // auth calls / navigate twice.
+        if (isLoading) return
         errorMessage = null
         val trimmedEmail = email.trim().lowercase()
         if (trimmedEmail.isEmpty()) {

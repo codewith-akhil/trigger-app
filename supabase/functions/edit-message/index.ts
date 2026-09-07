@@ -17,7 +17,7 @@ async function handler(req: Request): Promise<Response> {
   if (!newText) return json({ error: "new_text required" }, 422);
   if (newText.length > 10000) return json({ error: "Text too long (max 10000)" }, 422);
   const supabase = createAdminClient();
-  const { data: msg } = await supabase.from("messages").select("sender_id, conversation_id, timestamp_millis").eq("id", messageId).maybeSingle();
+  const { data: msg } = await supabase.from("messages").select("sender_id, conversation_id, timestamp_millis, created_at").eq("id", messageId).maybeSingle();
   if (!msg) return json({ error: "Message not found" }, 404);
   if (msg.sender_id !== userId) return json({ error: "Only sender can edit" }, 403);
 

@@ -293,6 +293,50 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-07 (deep full-stack audit — 68 verified findings fixed):**
+  Four-parallel-agent audit (UI / data / edge functions / DB+RLS) with every
+  finding hand-verified before fixing. **BLOCKERS:** media uploads ran
+  synchronous OkHttp on the MAIN dispatcher (NetworkOnMainThreadException —
+  media sending was dead 100% of the time) → streaming IO body + fresh-token
+  + non-ASCII filename fix; duplicate LazyColumn key crashed the emoji picker;
+  `process_withdrawal` (live-only drift, no caller check) hard-definer-hardened
+  + locked to service_role; `wallet_balance`/`stream_history`/
+  `streams_due_to_start` views now `security_invoker` (anon could read wallet
+  balances); Room schema identity crash for migrated devices (messages.seq
+  index declared in entity). **SECURITY:** message-request gate + 3-message
+  budget now enforced in RLS `msg_participant_insert` AND atomically via
+  `try_send_pending_message` RPC (TOCTOU race closed); send-message auto-create
+  no longer opens `accepted` threads (starts `pending` + mirrors
+  message_requests); sync-conversations/sync-messages pushes are ownership/
+  sender-scoped (conversation hijack + peer-message rewrite closed);
+  profiles PII (email/phone/dob/gender/two_step_pin_hash) revoked from direct
+  REST reads (column-level grants); Razorpay verify credits the PAYER (was the
+  caller) with error-surfacing upsert; refund now inserts the compensating
+  debit; timing-safe signature compares everywhere; `listUsers({perPage:1000})`
+  lookups replaced with profiles.email; FCM tokens/read-receipt/cron RPCs
+  revoked from users; email senders locked to the caller's own address with
+  rate limits; incoming-call heads-up notification wired (backgrounded users
+  missed calls); cron `trigger-auto-start-streams` fixed (was 401 on every run
+  — NULL app.cron_secret; now 200). **DATA/CORRECTNESS:** Room v8
+  (`conversations.lastActivityMillis`) — chat list finally sorts by recency;
+  realtime re-filters per open chat (returning to an older chat lost live
+  messages); per-conversation sync watermarks (chat B's history was never
+  fetched); reactions now propagate (DB trigger denormalizes
+  message_reactions → messages.reactions + client parses); false "edited" from
+  receipt updates fixed; logout via dashboard performs full cleanup; real
+  date separators + open-at-newest; media viewer quick reactions/reply bar
+  wired to the VM; report dialog has structured categories; Profile Links
+  editor reachable; auth double-tap guards; launchSingleTop on chat nav;
+  atomic OTP attempt counters; upload MIME whitelist + extension sanitizing +
+  per-user rate limit; get-my-profile now hydrates `settings` (4 settings
+  screens rendered dead defaults); REAL biometric app lock
+  (androidx.biometric, foreground gate); Agora uid collisions (hashCode%1e6)
+  replaced with uuid-tail uids; conversation watermark/editedAt/typo-level
+  micros (28 total) fixed. Compile verified (compileReleaseKotlin green);
+  30 edge functions redeployed; live-DB changes executed + verified (grants,
+  policies, views, cron 200s). Known-dead-code cleanup (orphaned HOME/
+  SELECT_CONTACT routes, fake CallServiceImpl) documented for a follow-up
+  refactor PR — unreachable, harmless.
 - **2026-09-07 (UI/UX overhaul & User Profile release):** Complete WhatsApp-style
   chat bubble overhaul with asymmetric shapes, inline single-line timestamps,
   translucent corner pill badges for media, pinch-to-zoom full-screen media

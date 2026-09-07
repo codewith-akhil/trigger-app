@@ -273,11 +273,24 @@ fun SettingsScreen(
                         HorizontalDivider(color = SettingsDivider, modifier = Modifier.padding(start = 68.dp))
 
                         // 10. Invite a friend
+                        val inviteContext = androidx.compose.ui.platform.LocalContext.current
                         SettingsRowItem(
                             icon = Icons.Outlined.People,
                             title = "Invite a friend",
                             subtitle = null,
-                            onClick = { showInviteSnackbar = true },
+                            onClick = {
+                                // Actually copy the invite link first — the
+                                // snackbar previously claimed a copy that never
+                                // happened.
+                                val cm = inviteContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                cm.setPrimaryClip(
+                                    android.content.ClipData.newPlainText(
+                                        "Trigger App invite",
+                                        "https://play.google.com/store/apps/details?id=${inviteContext.packageName}"
+                                    )
+                                )
+                                showInviteSnackbar = true
+                            },
                             testTag = "settings_invite_item"
                         )
                     }
