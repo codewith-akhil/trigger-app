@@ -443,11 +443,15 @@ fun ChatScreen(
     }
 
     // ---- Scroll-to-message: jump to a specific message id (used by search & reply) ----
+    val hasSystemHeader = conversationInfo?.disappearingDuration != DisappearingDuration.OFF
+    val latestItemIndex = if (messages.isEmpty()) 0 else if (hasSystemHeader) messages.size else messages.size - 1
+
     fun scrollToMessageId(messageId: String) {
         val idx = messages.indexOfFirst { it.id == messageId }
         if (idx >= 0) {
             coroutineScope.launch {
-                listState.animateScrollToItem(idx)
+                val target = if (hasSystemHeader) idx + 1 else idx
+                listState.animateScrollToItem(target)
             }
         }
     }
@@ -466,35 +470,38 @@ fun ChatScreen(
     LaunchedEffect(currentMatchIndex, matchingIndices) {
         if (currentMatchIndex in matchingIndices.indices) {
             coroutineScope.launch {
-                listState.animateScrollToItem(matchingIndices[currentMatchIndex])
+                val target = if (hasSystemHeader) matchingIndices[currentMatchIndex] + 1 else matchingIndices[currentMatchIndex]
+                listState.animateScrollToItem(target)
             }
         }
     }
 
-    // Auto-scroll on new messages ONLY when the user is already near the
-    // bottom — previously a history page-load (prepend) yanked them to the
-    // end of the list mid-read.
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            val nearBottom = lastVisible >= messages.size - 2
-            if (nearBottom) {
-                listState.animateScrollToItem(messages.size - 1)
+    // Auto-scroll on new messages:
+    // Moves the viewport to the latest messages upon receiving a new message in the chat.
+    val lastMessageId = messages.lastOrNull()?.id
+    var previousLastMessageId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(lastMessageId) {
+        if (lastMessageId != null && messages.isNotEmpty()) {
+            if (previousLastMessageId != null && previousLastMessageId != lastMessageId) {
+                // A new message arrived in the chat (sent or received) — auto-scroll to the latest message!
+                listState.animateScrollToItem(latestItemIndex)
             }
+            previousLastMessageId = lastMessageId
         }
     }
 
-    // Open the chat at the NEWEST message. The first emission's
-    // visibleItemsInfo is empty (no layout pass yet) so the near-bottom gate
-    // above never fired and every chat opened at its OLDEST message.
-    var didInitialScroll by rememberSaveable { mutableStateOf(false) }
+    // Open the chat at the NEWEST message on initial launch / conversation switch
+    var didInitialScroll by rememberSaveable(readyConvId) { mutableStateOf(false) }
     LaunchedEffect(readyConvId) {
         didInitialScroll = false
+        previousLastMessageId = null
     }
-    LaunchedEffect(messages.size) {
+    LaunchedEffect(messages.size, readyConvId) {
         if (!didInitialScroll && messages.isNotEmpty()) {
-            listState.scrollToItem(messages.size - 1)
+            listState.scrollToItem(latestItemIndex)
             didInitialScroll = true
+            previousLastMessageId = messages.lastOrNull()?.id
         }
     }
 
@@ -507,40 +514,30 @@ fun ChatScreen(
     val view = LocalView.current
     val imm = remember { context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager }
 
-    var maxHeightWithoutIme by remember { mutableStateOf(0.dp) }
-
     // Intercept back button when custom emoji or GIF picker is open to dismiss it first
     BackHandler(enabled = isEmojiPickerOpen || isGifPickerOpen) {
         isEmojiPickerOpen = false
         isGifPickerOpen = false
     }
 
-    // When software keyboard opens, close custom emoji and GIF pickers & scroll to bottom
-    LaunchedEffect(imeBottom) {
-        if (imeBottom > 0) {
+    // When software keyboard opens, close custom emoji and GIF pickers & scroll viewport to latest message
+    LaunchedEffect(isImeOpen) {
+        if (isImeOpen) {
             if (isEmojiPickerOpen) isEmojiPickerOpen = false
             if (isGifPickerOpen) isGifPickerOpen = false
             if (messages.isNotEmpty()) {
-                listState.animateScrollToItem(messages.size - 1)
+                kotlinx.coroutines.delay(100)
+                listState.animateScrollToItem(latestItemIndex)
             }
         }
     }
 
-    BoxWithConstraints(
+    Scaffold(
         modifier = Modifier
             .fillMaxSize()
-            .testTag("chat_screen")
-    ) {
-        val currentHeight = maxHeight
-        if (!isImeOpen && currentHeight > maxHeightWithoutIme) {
-            maxHeightWithoutIme = currentHeight
-        }
-        val windowPhysicallyResized = isImeOpen && (maxHeightWithoutIme - currentHeight > 100.dp)
-
-        Scaffold(
-            modifier = Modifier.fillMaxSize(),
-            containerColor = WhatsAppChatBg,
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            .testTag("chat_screen"),
+        containerColor = WhatsAppChatBg,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             when {
                 selectedIds.isNotEmpty() -> {
@@ -678,18 +675,8 @@ fun ChatScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(
-                        if (isImeOpen && windowPhysicallyResized) {
-                            // The system window was already resized by Android WindowManager (adjustResize).
-                            // No additional IME padding is needed — composer sits directly on top of keyboard with 0 gap!
-                            Modifier
-                        } else if (isImeOpen) {
-                            // The system window was not resized — apply IME padding so composer floats above keyboard
-                            Modifier.imePadding()
-                        } else {
-                            // Keyboard is closed — apply navigation bar padding so composer sits above the Android bottom nav
-                            Modifier.navigationBarsPadding()
-                        }
+                    .windowInsetsPadding(
+                        WindowInsets.navigationBars.union(WindowInsets.ime)
                     )
             ) {
                 // Message-request banner — RECEIVER must accept/decline before
@@ -782,6 +769,10 @@ fun ChatScreen(
                                 isEmojiPickerOpen = false
                                 isGifPickerOpen = false
                                 viewModel.sendTextMessage()
+                                coroutineScope.launch {
+                                    kotlinx.coroutines.delay(50)
+                                    listState.animateScrollToItem(latestItemIndex)
+                                }
                             },
                             onAttachClick = {
                                 isEmojiPickerOpen = false
@@ -998,7 +989,6 @@ fun ChatScreen(
             }
         }
     }
-}
 
     // Attachment bottom sheet
     if (showAttachmentSheet) {
