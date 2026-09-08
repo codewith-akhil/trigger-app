@@ -293,6 +293,33 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-08 (versionCode 3 rebuild — AI Studio chat fixes):** Re-cloned at
+  `da392c3` ("fix typebox position above keyboard and add auto-scroll to
+  latest messages", `ChatScreen.kt`): composer now pinned above the keyboard
+  via `windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))`
+  (replaces the `BoxWithConstraints` window-resize heuristic), auto-scroll to
+  the newest message whenever the last message id changes (sent or received),
+  scroll-to-bottom after send, search/reply scroll targets offset for the
+  disappearing-messages system header, per-conversation initial-open-at-newest
+  preserved. Pre-build compile sanity checked (wildcard
+  `androidx.compose.foundation.layout.*` import covers the new APIs; braces
+  balanced; no dangling references to removed `maxHeightWithoutIme`/
+  `windowPhysicallyResized`). `versionCode` 2 → 3 (`253f28a`). Sandbox reset
+  wiped the toolchain again (5th) → reinstalled JDK 21.0.12 / Gradle 9.3.1 /
+  build-tools 36.0.0 + platforms;android-36.1, `.env` + `local.properties`
+  restored from durable backups. Signed rebuild (upload key SHA-1
+  `5b7f4bcd…`): APK 151,078,593 B `sha256 3f9c96db…`, AAB 75,521,044 B
+  `sha256 3fafbce0…`. Artifacts installed to the durable local dir, local
+  part-manifest regenerated (10 APK + 5 AAB parts, sourceCommit `253f28a`),
+  GitHub release `v1.0-test` assets replaced and re-verified through the
+  authenticated API (byte-identical digests). **Discovery:** the repo is
+  PRIVATE, so public `github.com/…/releases/download/…` URLs 404 for
+  unauthenticated visitors — the old "Direct mirror" links were dead;
+  the download page now shows a "(private repo — sign-in required)" note
+  instead of a link, and `/api/download` streams the local file directly
+  (no GitHub redirect). Both artifacts re-verified end-to-end: every part
+  sha256-exact, full-file endpoint byte-identical, browser downloads of APK
+  and AAB completed "Saved & checksum-verified" with zero console errors.
 - **2026-09-07 (release hosting reverted to local-only; Supabase Storage
   releases bucket deleted):** Per product decision, the APK/AAB are **no
   longer stored in Supabase Storage** — the `releases` bucket (5 sha256-verified
