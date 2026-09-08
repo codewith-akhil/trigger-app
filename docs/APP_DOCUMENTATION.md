@@ -293,6 +293,63 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-08 (versionCode 4 — WhatsApp-parity pass: receipts, auto delete v2,
+  privacy presence, dialogs, profile viewer, calls):** User-reported fixes,
+  all verified against source (3 recon agents + hand-verification; compile
+  green; released as versionCode 4, commit `44ffdc3`).
+  **Avatars/profile:** other users' photos rendered blank because Android
+  `optString` returns the literal `"null"` for explicit JSON nulls → new
+  `util/JsonUtils.optStringOrNull` applied at all 6 call-sites; chat top bar
+  now loads the peer's real avatar from `profiles`; tapping the peer name or
+  avatar opens the FULL UserProfileScreen (followers/about/username) via a new
+  `onOpenProfile` route param (was: contact-info sheet only); new
+  `ProfilePhotoViewer` — black background, pinch-zoom, back button only for
+  other users; own profile viewer adds **pen (change photo)** and **delete
+  photo** (new `SupabaseClient.removeFile` + `sync-user-profile` clearing).
+  **Messaging:** composer text + reply mark now clear INSTANTLY on send with a
+  single-flight `isSending` guard on every entry point (double-send fixed;
+  perceived latency now WhatsApp-like thanks to the optimistic Room insert);
+  **sent ✓ / delivered ✓✓ / read ✓✓ (blue)** — new `messages.delivered_at`,
+  RPC `mark_messages_delivered`, edge fns `mark-messages-delivered`
+  (debounced 600 ms per conversation) + read RPC now sets `status='READ'`,
+  sync-pull heals missed tick states. **Long-press:** Forward/Star/Pin
+  removed; reply banner + quoted bubbles are tappable and scroll to the
+  original message; the reply mark clears the moment a reply/edit is sent;
+  reaction "+" opens a real 140-emoji bottom-sheet picker (was a 🔥 hack;
+  DB already guarantees one reaction per user — unique(message,user) +
+  switch semantics). **Dialogs:** compact delete dialog ("DELETE MESSAGE" /
+  "Are you sure you want to delete these messages?" / checkbox "Also delete
+  for \<name\>" / red Delete + green Cancel) — checkbox drives
+  delete-for-everyone vs delete-for-me; block/unblock compacted everywhere;
+  report redesigned to the WhatsApp card (2-line text + "Block \<name\>"
+  checkbox + Cancel/Report, no icon) in both profile and chat-info surfaces.
+  **Three-dot menu:** "View contact"→"View profile"; Search and Mute
+  notifications removed. **Auto delete (was Disappearing messages):** compact
+  dialog (heading "Auto delete messages", privacy explainer, 24 hours / 7 days
+  / 30 days / **Off** — default Off, 90-day option replaced), Update+Cancel
+  bottom-right; setting is now SHARED (single conversations row, either
+  participant can change) via new `set-auto-delete` fn;
+  `disappearing_updated_at` stamps activation — a new pg_cron sweep
+  (`cleanup-disappearing-messages`, every 15 min) deletes only messages
+  created AFTER activation; in-chat system notice (WhatsApp-style, our
+  colors) shows the state inline with a green **Change** button reopening the
+  dialog; no fake SYSTEM chat message is inserted anymore (legacy ones render
+  as centered pills). **Online/last seen:** new `get-peer-presence` fn
+  enforces the peer's `user_settings.last_seen` (nobody → blank, contacts →
+  contact check) + accepted-chat gate; header shows "online" or
+  "Last seen 03:02" (24 h, device zone) or blank; initial fetch on chat open,
+  realtime events gated when hidden. **Calls:** engine/token errors during
+  join now surface as a visible FAILED state (were silently logged → 45 s
+  hang), `call_sessions` no longer inserts a placeholder-uuid caller (FK
+  violation dropped the ring), and `generate-agora-token` serves an explicit
+  app-id-only contract instead of 500 when the certificate secret is absent
+  (certificate IS provisioned server-side; tokens issue normally).
+  **Backend deployed:** migration `20260909_auto_delete_and_receipts.sql`
+  executed live (columns/RPCs/grants verified + cron job); 5 functions
+  deployed (3 new). **Bubble sizing** compacted toward WhatsApp metrics
+  (10/4.5 dp padding, 19.5sp line height, 290 dp max width). Note: the
+  Supabase access token `sbp_fce2…` was found revoked; the older `sbp_be52…`
+  token remains valid and was used.
 - **2026-09-08 (versionCode 3 rebuild — AI Studio chat fixes):** Re-cloned at
   `da392c3` ("fix typebox position above keyboard and add auto-scroll to
   latest messages", `ChatScreen.kt`): composer now pinned above the keyboard
