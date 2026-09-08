@@ -104,6 +104,7 @@ import com.example.di.AppServiceContainer
 import com.example.model.UserRepository
 import com.example.service.ProfileService
 import com.example.service.supabase.SupabaseResult
+import com.example.ui.components.ProfilePhotoViewer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -291,6 +292,8 @@ fun ProfileScreen(
     var showEditLinksDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showPhotoSheet by remember { mutableStateOf(false) }
+    var showPhotoViewer by remember { mutableStateOf(false) }
+    var showDeletePhotoConfirm by remember { mutableStateOf(false) }
     var showEditGenderDialog by remember { mutableStateOf(false) }
     var showEditCountryDialog by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -464,6 +467,62 @@ fun ProfileScreen(
         }
     }
 
+    // ------------------------------------------------------------------------
+    // Avatar removal — deletes the Storage object behind the current
+    // avatar_url, then clears profiles.avatar_url via sync-user-profile.
+    // Mirrors saveAvatar's state/toast patterns (busy overlay + Toasts,
+    // never throws). Storage cleanup is best-effort: even if the object
+    // delete fails, the profile row is still cleared so the UI falls back.
+    // ------------------------------------------------------------------------
+    fun removeAvatar() {
+        if (isAvatarSaving) return
+        val currentUrl = profile.avatarUri
+        if (currentUrl.isNullOrBlank()) return
+        isAvatarSaving = true
+        coroutineScope.launch {
+            try {
+                // 1) Parse the Storage object path from the stored public URL:
+                //    {base}/storage/v1/object/public/avatars/{userId}/{ts}.{ext}
+                val marker = "/object/public/avatars/"
+                val objectPath = currentUrl.substringAfter(marker, "")
+                if (objectPath.isBlank()) {
+                    isAvatarSaving = false
+                    Toast.makeText(
+                        context,
+                        "Couldn't remove photo: unexpected avatar path",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@launch
+                }
+
+                // 2) Best-effort delete of the object from the avatars bucket
+                //    (avatars_owner_delete policy allows it).
+                val removed = AppServiceContainer.supabaseClient.removeFile("avatars", objectPath)
+                if (!removed) {
+                    android.util.Log.w("ProfileScreen", "removeAvatar: storage delete failed for $objectPath")
+                }
+
+                // 3) Clear profiles.avatar_url on the server
+                val payload = JSONObject().put("avatarUrl", "")
+                val syncResult = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
+                isAvatarSaving = false
+                if (syncResult is SupabaseResult.Success) {
+                    UserRepository.updateAvatarUri(null)
+                    Toast.makeText(context, "Profile photo removed", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Failed to remove photo", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                isAvatarSaving = false
+                Toast.makeText(
+                    context,
+                    "Failed to remove photo: ${e.message ?: "unknown error"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
@@ -559,11 +618,13 @@ fun ProfileScreen(
                 contentAlignment = Alignment.Center
             ) {
                 // Main avatar circle (display-cropped via CircleShape + ContentScale.Crop)
+                // Tap anywhere on the photo to open the fullscreen viewer.
                 Box(
                     modifier = Modifier
                         .size(140.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFFE2E8F0)),
+                        .background(Color(0xFFE2E8F0))
+                        .clickable(enabled = !isAvatarSaving) { showPhotoViewer = true },
                     contentAlignment = Alignment.Center
                 ) {
                     if (profile.avatarUri != null) {
@@ -856,6 +917,70 @@ fun ProfileScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
+    }
+
+    // ------------------------------------------------------------------------
+    // Fullscreen profile photo viewer (own profile: pen opens the change-photo
+    // sheet, trash asks for confirmation before removing the photo)
+    // ------------------------------------------------------------------------
+    if (showPhotoViewer) {
+        ProfilePhotoViewer(
+            imageUrl = profile.avatarUri,
+            initialLetter = profile.name.trim().take(1).uppercase().ifBlank { "?" },
+            onClose = { showPhotoViewer = false },
+            isOwnProfile = true,
+            onEditClick = {
+                showPhotoViewer = false
+                showPhotoSheet = true
+            },
+            onDeleteClick = {
+                showPhotoViewer = false
+                showDeletePhotoConfirm = true
+            }
+        )
+    }
+
+    // Delete profile photo confirmation (compact)
+    if (showDeletePhotoConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeletePhotoConfirm = false },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
+            title = {
+                Text(
+                    text = "Delete profile photo?",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TriggerTextPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "Your photo will be removed from your profile.",
+                    fontSize = 14.sp,
+                    color = TriggerTextSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeletePhotoConfirm = false
+                        removeAvatar()
+                    },
+                    enabled = !isAvatarSaving
+                ) {
+                    Text("Delete", color = Color(0xFFEA4335), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDeletePhotoConfirm = false },
+                    enabled = !isAvatarSaving
+                ) {
+                    Text("Cancel", color = TriggerGreenAccent)
+                }
+            }
+        )
     }
 
     // ------------------------------------------------------------------------

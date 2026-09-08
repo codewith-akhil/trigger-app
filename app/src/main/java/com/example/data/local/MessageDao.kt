@@ -62,8 +62,10 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND type = 'DOCUMENT' ORDER BY timestampMillis DESC")
     fun getDocumentMessages(conversationId: String): Flow<List<MessageEntity>>
 
-    @Query("DELETE FROM messages WHERE conversationId = :conversationId AND timestampMillis < :expireBeforeMillis")
-    suspend fun deleteExpiredDisappearingMessages(conversationId: String, expireBeforeMillis: Long)
+    // Auto delete sweep: only messages created AFTER the setting was activated
+    // are eligible (user requirement: enabling never deletes older history).
+    @Query("DELETE FROM messages WHERE conversationId = :conversationId AND timestampMillis < :expireBeforeMillis AND timestampMillis >= :activatedAfterMillis")
+    suspend fun deleteExpiredDisappearingMessages(conversationId: String, expireBeforeMillis: Long, activatedAfterMillis: Long)
 
     @Query("UPDATE messages SET isStarred = :isStarred WHERE id = :messageId")
     suspend fun updateMessageStarred(messageId: String, isStarred: Boolean)

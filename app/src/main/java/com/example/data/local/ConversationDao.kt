@@ -38,8 +38,8 @@ interface ConversationDao {
     @Query("UPDATE conversations SET isOnline = :isOnline, lastSeenText = :lastSeenText WHERE id = :id")
     suspend fun updatePresence(id: String, isOnline: Boolean, lastSeenText: String)
 
-    @Query("UPDATE conversations SET disappearingDuration = :duration WHERE id = :id")
-    suspend fun updateDisappearing(id: String, duration: String)
+    @Query("UPDATE conversations SET disappearingDuration = :duration, disappearingUpdatedAtMillis = :updatedAtMillis WHERE id = :id")
+    suspend fun updateDisappearing(id: String, duration: String, updatedAtMillis: Long)
 
     @Query("UPDATE conversations SET isMuted = :isMuted WHERE id = :id")
     suspend fun setMuted(id: String, isMuted: Boolean)

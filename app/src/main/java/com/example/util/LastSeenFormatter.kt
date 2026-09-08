@@ -6,20 +6,22 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * WhatsApp-style "last seen" formatting for the chat header subtitle.
+ * "Last seen" formatting for the chat header subtitle (user spec: 24-hour
+ * clock, compact WhatsApp-style).
  *
- *  - seen today                  → "last seen today at 3:45 PM"
- *  - seen yesterday              → "last seen yesterday at 9:12 AM"
- *  - seen within the last 6 days → "last seen Wednesday at 8:00 AM"
- *  - older                       → "last seen 12 Sep at 8:00 AM"
+ *  - seen today                  → "Last seen 03:02"
+ *  - seen yesterday              → "Last seen yesterday 20:15"
+ *  - seen within the last 6 days → "Last seen Wednesday 08:00"
+ *  - older                       → "Last seen 12 Sep"
  *  - missing/unparseable         → "offline"
  *
- * All times are rendered in the device's current timezone (WhatsApp behavior).
- * "online" (when is_online) is handled by the caller.
+ * All times are rendered in the device's current timezone (WhatsApp behavior)
+ * on a 24-hour clock. "online" (when is_online) is handled by the caller; a
+ * hidden (privacy-restricted) peer is blanked by the caller, not here.
  */
 object LastSeenFormatter {
 
-    private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())
+    private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
     private val dayFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())
     private val weekdayFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("EEEE", Locale.getDefault())
 
@@ -37,10 +39,10 @@ object LastSeenFormatter {
 
         val timeText = seenDateTime.format(timeFormatter)
         return when {
-            clampedDate == nowDate -> "last seen today at $timeText"
-            clampedDate == nowDate.minusDays(1) -> "last seen yesterday at $timeText"
-            clampedDate.isAfter(nowDate.minusDays(7)) -> "last seen ${clampedDate.format(weekdayFormatter)} at $timeText"
-            else -> "last seen ${clampedDate.format(dayFormatter)} at $timeText"
+            clampedDate == nowDate -> "Last seen $timeText"
+            clampedDate == nowDate.minusDays(1) -> "Last seen yesterday $timeText"
+            clampedDate.isAfter(nowDate.minusDays(7)) -> "Last seen ${clampedDate.format(weekdayFormatter)} $timeText"
+            else -> "Last seen ${clampedDate.format(dayFormatter)}"
         }
     }
 

@@ -24,6 +24,9 @@ data class ConversationEntity(
     val isOnline: Boolean = false,
     val lastSeenText: String = "online",
     val disappearingDuration: String = "OFF",
+    /** Epoch millis when auto delete was last activated/changed (server
+     *  conversations.disappearing_updated_at). Null = never set. (v9) */
+    val disappearingUpdatedAtMillis: Long? = null,
     val isMuted: Boolean = false,
     val isBlocked: Boolean = false,
     val isArchived: Boolean = false,
@@ -51,6 +54,7 @@ data class ConversationEntity(
             } catch (e: Exception) {
                 DisappearingDuration.OFF
             },
+            disappearingUpdatedAtMillis = disappearingUpdatedAtMillis,
             isMuted = isMuted,
             isBlocked = isBlocked,
             isArchived = isArchived

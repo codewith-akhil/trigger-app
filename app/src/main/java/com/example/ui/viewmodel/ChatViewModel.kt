@@ -12,6 +12,7 @@ import com.example.service.LiveLocationShareState
 import com.example.service.MessageServiceImpl
 import com.example.service.supabase.RealtimeEvent
 import com.example.service.supabase.SupabaseResult
+import com.example.util.optStringOrNull
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.text.SimpleDateFormat
@@ -70,7 +71,7 @@ class ChatViewModel(
 
     val contactPresence: StateFlow<Pair<PresenceStatus, String>> = presenceService
         .observeContactPresence(peerId)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PresenceStatus.ONLINE to "online")
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PresenceStatus.OFFLINE to "")
 
     val connectionState: StateFlow<PresenceStatus> = presenceService.connectionState
     val activeCall: StateFlow<CallSession?> = callService.currentCall
@@ -218,6 +219,15 @@ class ChatViewModel(
     var replyingTo = MutableStateFlow<DomainMessage?>(null)
     var selectedMessageIds = MutableStateFlow<Set<String>>(emptySet())
 
+    /** Single-flight guard: true from the moment a send starts until the
+     *  network settles. UI disables send entry points; sendTextMessage also
+     *  re-checks it so a double-tap can never duplicate a message. */
+    private val _isSending = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val isSending: kotlinx.coroutines.flow.StateFlow<Boolean> = _isSending.asStateFlow()
+
+    /** Peer's avatar URL for the chat top bar (fetched from profiles). */
+    val peerAvatarUrl = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+
     // Search inside chat — server-side filter chips (All | Media | Documents | Links | Date)
     var isSearchMode = MutableStateFlow(false)
     var inChatSearchQuery = MutableStateFlow("")
@@ -280,6 +290,54 @@ class ChatViewModel(
     init {
         // Message-request meta: pending/accepted/declined + my message budget
         refreshConversationMeta()
+        // Header presence: privacy-aware fetch (get-peer-presence honors the
+        // peer's last_seen setting + the accepted-conversation gate). Without
+        // this the subtitle sat at its default until a realtime event.
+        viewModelScope.launch {
+            try {
+                (presenceService as? com.example.service.PresenceServiceImpl)?.refreshPeerPresence(peerId)
+            } catch (_: Exception) {}
+        }
+        // Catch up the DELIVERED receipt for everything already in Room
+        // (history read while the sender was offline still flips to ✓✓).
+        viewModelScope.launch {
+            try {
+                (messageService as? com.example.service.MessageServiceImpl)?.markConversationDelivered(conversationId)
+            } catch (_: Exception) {}
+        }
+        // Top-bar avatar — live from the profiles row (search results may not
+        // have carried it; chat entries never did).
+        viewModelScope.launch {
+            try {
+                if (peerId.isNotBlank() && com.example.service.MediaUrlResolver.isUuid(peerId)) {
+                    when (val res = AppServiceContainer.supabaseClient.getTable(
+                        "profiles",
+                        "id=eq.$peerId&select=avatar_url&limit=1"
+                    )) {
+                        is SupabaseResult.Success -> {
+                            val row = res.data.optJSONObject(0)
+                            val url = row?.optStringOrNull("avatar_url")
+                            if (!url.isNullOrBlank()) peerAvatarUrl.value = url
+                        }
+                        is SupabaseResult.Error -> {}
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        // Auto delete local sweep — delete messages that expired while the
+        // chat was closed (the server cron covers the server copy; Room needs
+        // its own pass on open). No-op when the setting was never activated.
+        viewModelScope.launch {
+            try {
+                repository.getConversationByIdOnce(conversationId)?.let { conv ->
+                    val duration = conv.disappearingDuration
+                    val stamp = conv.disappearingUpdatedAtMillis
+                    if (duration != DisappearingDuration.OFF && stamp != null && stamp > 0L) {
+                        repository.setDisappearingDuration(conversationId, duration, stamp)
+                    }
+                }
+            } catch (_: Exception) {}
+        }
         // Mark conversation as read on open (calls edge function)
         viewModelScope.launch {
             try {
@@ -354,6 +412,9 @@ class ChatViewModel(
     }
 
     fun sendTextMessage() {
+        // Double-send guard: a second tap while a send is in flight is dropped
+        // here AND the UI disables the entry points (WhatsApp-style).
+        if (_isSending.value) return
         val text = inputText.value.trim()
         if (text.isEmpty()) return
 
@@ -385,18 +446,28 @@ class ChatViewModel(
             idempotencyKey = idempotencyKey
         )
 
+        // WhatsApp-feel: the typed text and the reply mark leave the composer
+        // IMMEDIATELY (optimistic Room insert makes the bubble appear at the
+        // same instant). Previously both waited for the full edge-function
+        // round-trip, so the text sat in the box and a second tap re-sent it.
+        inputText.value = ""
+        replyingTo.value = null
+        _isSending.value = true
+
         viewModelScope.launch {
-            messageService.sendMessage(message, peerId = peerId, peerName = contactName)
-            inputText.value = ""
-            replyingTo.value = null
-            // Keep the 3-message request budget accurate while pending.
-            if (isMessageRequestPending) {
-                _conversationMeta.value = _conversationMeta.value?.copy(
-                    myRequestMessageCount = _conversationMeta.value?.myRequestMessageCount?.plus(1) ?: 1
-                )
+            try {
+                messageService.sendMessage(message, peerId = peerId, peerName = contactName)
+                // Keep the 3-message request budget accurate while pending.
+                if (isMessageRequestPending) {
+                    _conversationMeta.value = _conversationMeta.value?.copy(
+                        myRequestMessageCount = _conversationMeta.value?.myRequestMessageCount?.plus(1) ?: 1
+                    )
+                }
+                // NO fake/simulated bot reply — real chat uses Supabase Realtime.
+                // The receiver will see the message via realtime + can reply for real.
+            } finally {
+                _isSending.value = false
             }
-            // NO fake/simulated bot reply — real chat uses Supabase Realtime.
-            // The receiver will see the message via realtime + can reply for real.
         }
     }
 
@@ -934,24 +1005,33 @@ class ChatViewModel(
 
     fun setDisappearingMessages(duration: DisappearingDuration) {
         viewModelScope.launch {
-            repository.setDisappearingDuration(conversationId, duration)
-            val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
-            val systemMsg = DomainMessage(
-                id = java.util.UUID.randomUUID().toString(),
-                conversationId = conversationId,
-                senderId = "system",
-                senderName = "System",
-                type = MessageType.SYSTEM,
-                text = if (duration == DisappearingDuration.OFF) {
-                    "Disappearing messages were turned off."
-                } else {
-                    "Disappearing messages were set to ${duration.displayName}."
-                },
-                timestamp = time,
-                timestampMillis = System.currentTimeMillis(),
-                isOutgoing = false
-            )
-            messageService.sendMessage(systemMsg, peerId = peerId, peerName = contactName)
+            // 1. Persist on the SHARED server row first (either participant may
+            //    change it). disappearing_updated_at is stamped server-side —
+            //    the cron only purges messages created after that instant, so
+            //    enabling auto delete never deletes older history.
+            var activatedAt = System.currentTimeMillis()
+            when (val res = supabaseClient.invokeFunction(
+                "set-auto-delete",
+                org.json.JSONObject()
+                    .put("conversationId", conversationId)
+                    .put("duration", duration.name)
+            )) {
+                is SupabaseResult.Success -> {
+                    val iso = res.data.optString("activatedAt", "")
+                    if (iso.isNotBlank() && iso != "null") {
+                        try {
+                            activatedAt = java.time.Instant.parse(iso).toEpochMilli()
+                        } catch (_: Exception) {}
+                    }
+                }
+                is SupabaseResult.Error -> {
+                    requestNotice.value = "Could not update auto delete. Try again."
+                    return@launch
+                }
+            }
+            // 2. Local Room: stamp + one-shot sweep (no chat "message" is
+            //    inserted — the in-list system notice renders from state).
+            repository.setDisappearingDuration(conversationId, duration, activatedAt)
         }
     }
 
@@ -963,6 +1043,10 @@ class ChatViewModel(
 
     // ---------- Edit message ----------
     fun startEditing(message: DomainMessage) {
+        // Doing anything else with a message (edit included) cancels the
+        // reply-mark on the spot (user requirement).
+        replyingTo.value = null
+        selectedMessageIds.value = emptySet()
         editingMessage.value = message
         editingText.value = message.text
     }

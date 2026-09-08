@@ -183,6 +183,7 @@ fun ChatTicksOverlayIcon(
 @Composable
 fun MessageReactionBar(
     onReactionSelected: (String) -> Unit,
+    onPickMore: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val emojis = listOf("❤️", "😂", "👍", "😮", "😢", "🙏")
@@ -215,7 +216,7 @@ fun MessageReactionBar(
                 tint = Color(0xFF8696A0),
                 modifier = Modifier
                     .size(28.dp)
-                    .clickable { onReactionSelected("🔥") }
+                    .clickable(onClick = onPickMore)
             )
         }
     }
@@ -491,8 +492,18 @@ fun DomainChatBubble(
     onOpenViewOnce: () -> Unit,
     onCancelUpload: () -> Unit,
     onRetryUpload: () -> Unit,
-    onReactionClick: (String) -> Unit
+    onReactionClick: (String) -> Unit,
+    // Invoked with the reply-source message id when an in-bubble quoted
+    // preview is tapped (no-op if the caller can't scroll to it).
+    onQuoteClick: (String) -> Unit = {}
 ) {
+    // SYSTEM chat messages render as a centered small pill (like the in-list
+    // auto-delete notice), never as a left/right chat bubble — covers legacy
+    // SYSTEM rows inserted before auto-delete state moved server-side.
+    if (message.type == MessageType.SYSTEM) {
+        SystemMessageBubble(text = message.text.ifBlank { "System message" })
+        return
+    }
     val isOutgoing = message.isOutgoing
     val isPureMedia = (message.type == MessageType.IMAGE || message.type == MessageType.VIDEO) &&
         !message.isViewOnce && !message.isDeletedForEveryone && message.text.isBlank()
@@ -543,7 +554,7 @@ fun DomainChatBubble(
                 color = if (isOutgoing) TriggerBubbleOutgoing else TriggerBubbleIncoming,
                 shadowElevation = 0.8.dp,
                 modifier = Modifier
-                    .widthIn(min = if (isPureMedia) 200.dp else 70.dp, max = if (isPureMedia) 270.dp else 305.dp)
+                    .widthIn(min = if (isPureMedia) 200.dp else 70.dp, max = if (isPureMedia) 270.dp else 290.dp)
                     .combinedClickable(
                         onClick = {
                             if (message.status == MessageStatus.FAILED) {
@@ -640,8 +651,8 @@ fun DomainChatBubble(
                         Box(
                             modifier = Modifier
                                 .padding(3.dp)
-                                .widthIn(min = 220.dp, max = 265.dp)
-                                .heightIn(min = 190.dp, max = 340.dp)
+                                .widthIn(min = 200.dp, max = 255.dp)
+                                .heightIn(min = 170.dp, max = 320.dp)
                                 .clip(mediaInnerShape)
                                 .clickable(onClick = onOpenMediaViewer)
                         ) {
@@ -858,7 +869,8 @@ fun DomainChatBubble(
                             if (message.replyToText != null) {
                                 QuotedReplyPreview(
                                     replySender = message.replyToSender ?: "Sender",
-                                    replyText = message.replyToText
+                                    replyText = message.replyToText,
+                                    onClick = { message.replyToId?.let(onQuoteClick) }
                                 )
                             }
                             VoiceMessageBubbleContent(
@@ -882,7 +894,8 @@ fun DomainChatBubble(
                             if (message.replyToText != null) {
                                 QuotedReplyPreview(
                                     replySender = message.replyToSender ?: "Sender",
-                                    replyText = message.replyToText
+                                    replyText = message.replyToText,
+                                    onClick = { message.replyToId?.let(onQuoteClick) }
                                 )
                             }
                             Row(
@@ -1083,16 +1096,17 @@ fun DomainChatBubble(
                         val isShortSingle = message.text.length < 22 && !message.text.contains("\n") && message.replyToText == null
                         Column(
                             modifier = Modifier.padding(
-                                start = 9.dp,
-                                end = 9.dp,
-                                top = 5.dp,
-                                bottom = 5.dp
+                                start = 10.dp,
+                                end = 10.dp,
+                                top = 4.5.dp,
+                                bottom = 4.5.dp
                             )
                         ) {
                             if (message.replyToText != null) {
                                 QuotedReplyPreview(
                                     replySender = message.replyToSender ?: "Sender",
-                                    replyText = message.replyToText
+                                    replyText = message.replyToText,
+                                    onClick = { message.replyToId?.let(onQuoteClick) }
                                 )
                             }
 
@@ -1105,7 +1119,7 @@ fun DomainChatBubble(
                                         text = message.text,
                                         color = Color(0xFF111B21),
                                         fontSize = 15.sp,
-                                        lineHeight = 20.sp
+                                        lineHeight = 19.5.sp
                                     )
                                     MessageTimestampAndTicksRow(
                                         message = message,
@@ -1118,7 +1132,7 @@ fun DomainChatBubble(
                                     text = message.text,
                                     color = Color(0xFF111B21),
                                     fontSize = 15.sp,
-                                    lineHeight = 20.sp,
+                                    lineHeight = 19.5.sp,
                                     modifier = Modifier.padding(bottom = 1.dp)
                                 )
                                 MessageTimestampAndTicksRow(

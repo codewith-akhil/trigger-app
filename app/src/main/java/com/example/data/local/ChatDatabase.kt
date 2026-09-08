@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [MessageEntity::class, ConversationEntity::class],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -34,12 +34,22 @@ abstract class ChatDatabase : RoomDatabase() {
                         ADD_LOCATION_LIVE_FIELDS,
                         UNIFY_CONVERSATION_IDS_AND_MEDIA_PATHS,
                         ADD_CALL_LOG_FIELDS,
-                        ADD_CONVERSATION_LAST_ACTIVITY
+                        ADD_CONVERSATION_LAST_ACTIVITY,
+                        ADD_CONVERSATION_DISAPPEARING_TIMESTAMP
                     )
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        // Migration 8 → 9: conversations.disappearingUpdatedAtMillis — auto
+        // delete activation time. The in-chat notice and the local purge both
+        // key off it; messages created before activation are never deleted.
+        private val ADD_CONVERSATION_DISAPPEARING_TIMESTAMP = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE conversations ADD COLUMN disappearingUpdatedAtMillis INTEGER")
             }
         }
 

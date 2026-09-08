@@ -826,6 +826,42 @@ class SupabaseClient(
         }
     }
 
+    /**
+     * Deletes an object from a Storage bucket via DELETE /storage/v1/object/{bucket}/{path}.
+     * The avatars_owner_delete storage policy already allows owner deletes —
+     * only the client method was missing. Returns true on 200/204, false
+     * otherwise (failure reason is logged, never thrown).
+     */
+    suspend fun removeFile(bucketName: String, fileName: String): Boolean = withContext(Dispatchers.IO) {
+        if (!BackendConfig.isSupabaseConfigured) {
+            Log.w(TAG, "removeFile: Supabase is not configured")
+            return@withContext false
+        }
+
+        try {
+            val token = ensureFreshAccessToken() ?: anonKey
+            val request = Request.Builder()
+                .url("$baseUrl/storage/v1/object/$bucketName/$fileName")
+                .addHeader("apikey", anonKey)
+                .addHeader("Authorization", "Bearer $token")
+                .delete()
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            val responseBody = response.body?.string() ?: ""
+
+            if (response.isSuccessful) {
+                true
+            } else {
+                Log.w(TAG, "removeFile failed: ${response.code} ${parseErrorMessage(responseBody, "Storage delete failed: ${response.code}")}")
+                false
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "removeFile error: ${e.message}")
+            false
+        }
+    }
+
     // ==========================================
     // FUNCTIONS (/functions/v1)
     // ==========================================

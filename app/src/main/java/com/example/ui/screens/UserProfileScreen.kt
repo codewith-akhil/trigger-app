@@ -32,8 +32,10 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.di.AppServiceContainer
 import com.example.service.supabase.SupabaseResult
+import com.example.ui.components.ProfilePhotoViewer
 import com.example.ui.components.TriggerBottomNavInset
 import com.example.ui.components.TriggerTopHeader
+import com.example.util.optStringOrNull
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -87,6 +89,7 @@ fun UserProfileScreen(
     var showUnblockDialog by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
     var showMessageRequestDialog by remember { mutableStateOf(false) }
+    var showPhotoViewer by remember { mutableStateOf(false) }
 
     // Fetch live profile information (about bio, freshest avatar, follow & block status)
     LaunchedEffect(user.id) {
@@ -99,13 +102,16 @@ fun UserProfileScreen(
             if (profileRes is SupabaseResult.Success && profileRes.data.length() > 0) {
                 val p = profileRes.data.getJSONObject(0)
                 val bio = p.optString("about", "")
-                if (bio.isNotBlank()) aboutText = bio
-                val av = p.optString("avatar_url", "")
-                if (av.isNotBlank()) currentAvatarUrl = av
-                val un = p.optString("username", "")
-                if (un.isNotBlank()) currentUsername = un
-                val fn = p.optString("full_name", "")
-                if (fn.isNotBlank()) currentName = fn
+                if (bio.isNotBlank() && bio != "null") aboutText = bio
+                // optStringOrNull: PostgREST emits explicit JSON null for NULL
+                // columns — raw optString would return the literal "null"
+                // string and pass every isNotBlank() guard below.
+                val av = p.optStringOrNull("avatar_url")
+                if (!av.isNullOrBlank()) currentAvatarUrl = av
+                val un = p.optStringOrNull("username")
+                if (!un.isNullOrBlank()) currentUsername = un
+                val fn = p.optStringOrNull("full_name")
+                if (!fn.isNullOrBlank()) currentName = fn
             }
 
             // 2. Fetch follow info (isFollowing, followersCount, followingCount)
@@ -245,10 +251,11 @@ fun UserProfileScreen(
                 ) {
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // 1. Profile Image on the Top
+                    // 1. Profile Image on the Top (tap to open the fullscreen viewer)
                     Surface(
                         modifier = Modifier
                             .size(116.dp)
+                            .clickable { showPhotoViewer = true }
                             .testTag("user_profile_avatar"),
                         shape = CircleShape,
                         color = Color(0xFFE2E8F0),
@@ -635,18 +642,23 @@ fun UserProfileScreen(
         )
     }
 
-    // Dialog: Block Confirmation
+    // Dialog: Block Confirmation (compact)
     if (showBlockDialog) {
         AlertDialog(
             onDismissRequest = { showBlockDialog = false },
             containerColor = Color.White,
             shape = RoundedCornerShape(16.dp),
             title = {
-                Text("Block $currentName?", fontWeight = FontWeight.Bold, color = TriggerTextPrimary)
+                Text(
+                    "Block $currentName?",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = TriggerTextPrimary
+                )
             },
             text = {
                 Text(
-                    "Blocked users will no longer be able to call you or send you messages.",
+                    "They won't be able to message or call you anymore.",
                     color = TriggerTextSecondary,
                     fontSize = 14.sp
                 )
@@ -665,24 +677,29 @@ fun UserProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showBlockDialog = false }) {
-                    Text("Cancel", color = TriggerTextSecondary)
+                    Text("Cancel", color = TriggerGreenAccent)
                 }
             }
         )
     }
 
-    // Dialog: Unblock Confirmation
+    // Dialog: Unblock Confirmation (compact)
     if (showUnblockDialog) {
         AlertDialog(
             onDismissRequest = { showUnblockDialog = false },
             containerColor = Color.White,
             shape = RoundedCornerShape(16.dp),
             title = {
-                Text("Unblock $currentName?", fontWeight = FontWeight.Bold, color = TriggerTextPrimary)
+                Text(
+                    "Unblock $currentName?",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = TriggerTextPrimary
+                )
             },
             text = {
                 Text(
-                    "They will be able to send you messages and calls again.",
+                    "They will be able to message and call you again.",
                     color = TriggerTextSecondary,
                     fontSize = 14.sp
                 )
@@ -701,108 +718,87 @@ fun UserProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showUnblockDialog = false }) {
-                    Text("Cancel", color = TriggerTextSecondary)
+                    Text("Cancel", color = TriggerGreenAccent)
                 }
             }
         )
     }
 
-    // Dialog: Report User
+    // Dialog: Report User (compact WhatsApp-style card — no category radios)
     if (showReportDialog) {
-        var reportReason by remember { mutableStateOf("") }
-        var reportOtherDetail by remember { mutableStateOf("") }
-        var isReporting by remember { mutableStateOf(false) }
+        var reportAndBlock by remember { mutableStateOf(false) }
 
         AlertDialog(
-            onDismissRequest = { if (!isReporting) showReportDialog = false },
+            onDismissRequest = { showReportDialog = false },
             containerColor = Color.White,
             shape = RoundedCornerShape(16.dp),
             title = {
-                Text("Report $currentName", fontWeight = FontWeight.Bold, color = TriggerTextPrimary)
+                Text(
+                    "Report $currentName",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TriggerTextPrimary
+                )
             },
             text = {
                 Column {
-                    // Structured categories (Spam/Harassment/… per the UI doc)
-                    // followed by optional detail — the free-text-only dialog
-                    // made triage impossible.
-                    val categories = listOf("Spam", "Harassment", "Inappropriate Content", "Fake Account", "Other")
-                    categories.forEach { category ->
-                        val selected = reportReason.startsWith(category)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (selected) TriggerGreenAccent.copy(alpha = 0.10f) else Color.Transparent)
-                                .clickable { reportReason = category }
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = selected,
-                                onClick = { reportReason = category },
-                                enabled = !isReporting
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(category, fontSize = 14.sp, color = TriggerTextPrimary)
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    if (reportReason == "Other") {
-                        OutlinedTextField(
-                            value = reportOtherDetail,
-                            onValueChange = { reportOtherDetail = it },
-                            placeholder = { Text("Describe the issue…") },
-                            minLines = 2,
-                            maxLines = 4,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = TriggerGreenAccent,
-                                unfocusedBorderColor = TriggerDivider,
-                                cursorColor = TriggerGreenAccent
-                            ),
-                            enabled = !isReporting,
-                            modifier = Modifier.fillMaxWidth()
+                    Text(
+                        "The last 5 messages in this chat will be sent to Trigger. " +
+                            "$currentName won't know you reported them.",
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp,
+                        color = TriggerTextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { reportAndBlock = !reportAndBlock },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = reportAndBlock,
+                            onCheckedChange = { reportAndBlock = it }
                         )
-                    } else if (reportReason == "Spam" || reportReason == "Harassment") {
                         Text(
-                            "Our moderation team will review this report to keep Trigger safe.",
-                            fontSize = 12.sp,
-                            color = TriggerTextSecondary
+                            "Block $currentName",
+                            fontSize = 15.sp,
+                            color = TriggerTextPrimary
                         )
                     }
+                    Text(
+                        "They won't be able to message or call you.",
+                        fontSize = 12.5.sp,
+                        lineHeight = 16.sp,
+                        color = TriggerTextSecondary,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        if (reportReason.isBlank()) return@Button
-                        isReporting = true
-                        // "Other" carries the free-text detail; categories go
-                        // through as their label.
-                        val finalReason = if (reportReason == "Other") {
-                            val detail = reportOtherDetail.trim()
-                            if (detail.isBlank()) return@Button
-                            "Other: $detail"
-                        } else reportReason
-                        reportUser(finalReason)
-                        isReporting = false
-                        showReportDialog = false
-                    },
-                    enabled = !isReporting,
-                    colors = ButtonDefaults.buttonColors(containerColor = TriggerDanger),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text("Report", color = Color.White, fontWeight = FontWeight.Bold)
+                TextButton(onClick = {
+                    showReportDialog = false
+                    reportUser("Inappropriate profile or behavior")
+                    if (reportAndBlock && !isBlocked) blockUser()
+                }) {
+                    Text("Report", color = TriggerGreenAccent, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { showReportDialog = false },
-                    enabled = !isReporting
-                ) {
-                    Text("Cancel", color = TriggerTextSecondary)
+                TextButton(onClick = { showReportDialog = false }) {
+                    Text("Cancel", color = TriggerGreenAccent)
                 }
             }
+        )
+    }
+
+    // Fullscreen profile photo viewer
+    if (showPhotoViewer) {
+        ProfilePhotoViewer(
+            imageUrl = currentAvatarUrl,
+            initialLetter = currentName.take(1).uppercase(),
+            onClose = { showPhotoViewer = false },
+            isOwnProfile = false
         )
     }
 }

@@ -36,6 +36,7 @@ import com.example.R
 import com.example.model.ChatItem
 import com.example.model.ChatRepository
 import com.example.ui.theme.*
+import com.example.util.optStringOrNull
 
 enum class DashboardTab {
     CHATS, UPDATES, STREAM, CALLS, PROFILE
@@ -1314,7 +1315,7 @@ fun CallsTabContent(
                             p.optString("id") to Triple(
                                 p.optString("full_name", "Unknown"),
                                 p.optString("username", null),
-                                p.optString("avatar_url", null)
+                                p.optStringOrNull("avatar_url")
                             )
                         }
                     } else {

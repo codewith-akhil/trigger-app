@@ -31,6 +31,7 @@ import com.example.di.AppServiceContainer
 import com.example.service.supabase.SupabaseResult
 import com.example.ui.components.TriggerTopHeader
 import com.example.ui.theme.*
+import com.example.util.optStringOrNull
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -116,7 +117,7 @@ fun NewMessageScreen(
                         id = obj.getString("id"),
                         name = obj.getString("full_name"),
                         username = obj.optString("username", null),
-                        avatarUrl = obj.optString("avatar_url", null),
+                        avatarUrl = obj.optStringOrNull("avatar_url"),
                         isOnline = obj.optBoolean("is_online", false)
                     ))
                 }
@@ -135,7 +136,7 @@ fun NewMessageScreen(
                         senderId = obj.getString("sender_id"),
                         senderName = obj.getString("sender_name"),
                         senderUsername = obj.optString("sender_username", null),
-                        senderAvatarUrl = obj.optString("sender_avatar_url", null),
+                        senderAvatarUrl = obj.optStringOrNull("sender_avatar_url"),
                         initialMessage = obj.getString("initial_message"),
                         conversationId = obj.optString("conversation_id", null),
                         messageCount = obj.optInt("message_count", 0),
@@ -157,7 +158,7 @@ fun NewMessageScreen(
                         id = obj.getString("id"),
                         name = obj.getString("full_name"),
                         username = obj.optString("username", null),
-                        avatarUrl = obj.optString("avatar_url", null)
+                        avatarUrl = obj.optStringOrNull("avatar_url")
                     ))
                 }
                 followingUsers = list
@@ -187,7 +188,7 @@ fun NewMessageScreen(
                     id = obj.getString("id"),
                     name = obj.getString("full_name"),
                     username = obj.optString("username", null),
-                    avatarUrl = obj.optString("avatar_url", null)
+                    avatarUrl = obj.optStringOrNull("avatar_url")
                 ))
             }
             searchResults = list

@@ -34,6 +34,13 @@ class PresenceServiceImpl(
 
     private val contactPresenceMap = ConcurrentHashMap<String, MutableStateFlow<Pair<PresenceStatus, String>>>()
 
+    /** Peers whose last-seen/online must NOT be displayed (their own
+     *  last_seen privacy = nobody, or no accepted chat yet). Realtime events
+     *  for these peers are blanked by MessageServiceImpl via [isHidden]. */
+    private val hiddenPeers = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+
+    fun isHidden(peerId: String): Boolean = hiddenPeers.contains(peerId)
+
     private var heartbeatJob: kotlinx.coroutines.Job? = null
 
     /**
@@ -49,29 +56,36 @@ class PresenceServiceImpl(
 
     override fun observeContactPresence(contactId: String): Flow<Pair<PresenceStatus, String>> {
         val flow = contactPresenceMap.getOrPut(contactId) {
-            MutableStateFlow(PresenceStatus.OFFLINE to "offline")
+            // Blank text = "nothing resolved yet / hidden" — the header renders
+            // an empty subtitle instead of flashing a wrong "online".
+            MutableStateFlow(PresenceStatus.OFFLINE to "")
         }
         return flow.asStateFlow()
     }
 
     /**
-     * Fetches the peer's presence row directly via REST. Used right after a
-     * message request is ACCEPTED so the header shows real online/last-seen
-     * immediately instead of waiting for the next realtime event (RLS now
-     * gates user_presences reads to accepted conversations, so before
-     * acceptance this returns nothing and the UI shows the request state).
+     * Privacy-aware presence refresh. Asks the get-peer-presence edge function
+     * (which enforces the peer's last_seen setting AND the accepted-conversation
+     * gate) instead of reading user_presences directly — the REST read could
+     * not know the peer's privacy choice.
      */
     suspend fun refreshPeerPresence(peerId: String) {
         if (!com.example.service.MediaUrlResolver.isUuid(peerId)) return
         val supabaseClient = AppServiceContainer.supabaseClient
-        when (val res = supabaseClient.getTable(
-            "user_presences",
-            "user_id=eq.$peerId&select=is_online,last_seen_at&limit=1"
+        when (val res = supabaseClient.invokeFunction(
+            "get-peer-presence",
+            JSONObject().put("peerId", peerId)
         )) {
             is SupabaseResult.Success -> {
-                val row = res.data.optJSONObject(0) ?: return
-                val isOnline = row.optBoolean("is_online", false)
-                val lastSeen = row.optString("last_seen_at", "")
+                val visible = res.data.optBoolean("visible", false)
+                if (!visible) {
+                    hiddenPeers.add(peerId)
+                    setContactPresence(peerId, PresenceStatus.OFFLINE, "")
+                    return
+                }
+                hiddenPeers.remove(peerId)
+                val isOnline = res.data.optBoolean("online", false)
+                val lastSeen = res.data.optString("lastSeenAt", "")
                 val status = if (isOnline) PresenceStatus.ONLINE else PresenceStatus.OFFLINE
                 val text = if (isOnline) "online"
                     else com.example.util.LastSeenFormatter.format(lastSeen)

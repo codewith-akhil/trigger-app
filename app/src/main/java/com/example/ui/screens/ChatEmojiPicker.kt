@@ -27,6 +27,61 @@ data class EmojiCategory(
     val isStickerCategory: Boolean = false
 )
 
+/**
+ * Emoji categories for the REACTION picker (bottom sheet opened from the "+"
+ * in the quick MessageReactionBar). Kept separate from the composer picker's
+ * inline categories above so the composer panel is untouched. 5 categories,
+ * ~140 common emojis (includes all 6 quick-bar reactions:
+ * ❤️ 😂 👍 😮 😢 🙏).
+ */
+internal val REACTION_EMOJI_CATEGORIES: List<EmojiCategory> = listOf(
+    EmojiCategory(
+        title = "Smileys",
+        icon = "😀",
+        emojis = listOf(
+            "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇",
+            "🙂", "🙃", "😉", "😍", "🥰", "😘", "😋", "😜", "🤪", "🤨",
+            "🤓", "😎", "🥳", "😏", "😒", "😞", "😔", "😢", "😭", "😮",
+            "😤", "😠", "😡", "🤯", "😳", "🥵", "😱", "🤗", "🤔", "😴"
+        )
+    ),
+    EmojiCategory(
+        title = "Hands",
+        icon = "👋",
+        emojis = listOf(
+            "👋", "🖐️", "✋", "🖖", "👌", "🤌", "🤏", "✌️", "🤞", "🤟",
+            "🤘", "🤙", "👈", "👉", "👆", "👇", "☝️", "👍", "👎", "✊",
+            "👊", "👏", "🙌", "🫶", "👐", "🤲", "🤝", "🙏", "💪", "🤳"
+        )
+    ),
+    EmojiCategory(
+        title = "Hearts",
+        icon = "❤️",
+        emojis = listOf(
+            "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔",
+            "❣️", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "💟", "💌"
+        )
+    ),
+    EmojiCategory(
+        title = "Symbols",
+        icon = "💯",
+        emojis = listOf(
+            "💯", "✨", "🔥", "💥", "💫", "⭐️", "🌟", "⚡️", "🎉", "🎊",
+            "🎈", "🎁", "🏆", "🥇", "🎯", "✅", "❌", "❗️", "❓", "💤",
+            "🎵", "🎶", "🔔", "👑", "🚀"
+        )
+    ),
+    EmojiCategory(
+        title = "Nature & Food",
+        icon = "🐶",
+        emojis = listOf(
+            "🐶", "🐱", "🐭", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁",
+            "🐸", "🐵", "🦄", "🦋", "🐢", "🐬", "🌸", "🌻", "🌹", "🍎",
+            "🍌", "🍉", "🍇", "🍓", "🍕"
+        )
+    )
+)
+
 @Composable
 fun ChatEmojiPicker(
     onEmojiSelected: (String) -> Unit,

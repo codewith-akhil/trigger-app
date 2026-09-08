@@ -209,11 +209,17 @@ class ChatRepositoryImpl(
         }
     }
 
-    suspend fun setDisappearingDuration(conversationId: String, duration: DisappearingDuration) {
-        conversationDao.updateDisappearing(conversationId, duration.name)
+    suspend fun setDisappearingDuration(
+        conversationId: String,
+        duration: DisappearingDuration,
+        activatedAtMillis: Long = System.currentTimeMillis(),
+    ) {
+        conversationDao.updateDisappearing(conversationId, duration.name, activatedAtMillis)
         if (duration != DisappearingDuration.OFF) {
+            // From-activation-time semantics: only messages created after the
+            // setting was activated are eligible, never older history.
             val expireThreshold = System.currentTimeMillis() - duration.millis
-            messageDao.deleteExpiredDisappearingMessages(conversationId, expireThreshold)
+            messageDao.deleteExpiredDisappearingMessages(conversationId, expireThreshold, activatedAtMillis)
         }
     }
 

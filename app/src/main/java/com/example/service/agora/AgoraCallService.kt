@@ -113,16 +113,22 @@ class AgoraCallService(
         // 1. Record call initiation in Supabase
         scope.launch(Dispatchers.IO) {
             try {
-                if (BackendConfig.isSupabaseConfigured) {
+                val callerId = supabaseClient.currentUser?.id
+                if (BackendConfig.isSupabaseConfigured && callerId != null) {
                     val record = JSONObject().apply {
                         put("id", callId)
-                        put("caller_id", supabaseClient.currentUser?.id ?: "00000000-0000-0000-0000-000000000000")
+                        // Real auth UUID only — the placeholder uuid previously
+                        // violated the caller_id FK and the row was silently
+                        // dropped, so the callee's poll never saw the ring.
+                        put("caller_id", callerId)
                         put("receiver_id", contactId)
                         put("call_type", if (isVideo) "video" else "audio")
                         put("channel_name", channelName)
                         put("status", "calling")
                     }
                     supabaseClient.insertRecord("call_sessions", record)
+                } else {
+                    Log.w(TAG, "Call not logged: ${if (callerId == null) "no signed-in user" else "supabase not configured"}")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Error logging call to Supabase", e)
@@ -270,9 +276,20 @@ class AgoraCallService(
                     _currentCall.update { it?.copy(isPoorConnection = status.isPoorConnection) }
                 }
 
-                // Error handling
+                // Error handling — surface pre-join failures instead of only
+                // logging them. A token/engine error while CALLING/RINGING left
+                // the call hanging until the 45 s timeout looked like "no
+                // answer"; now it becomes a visible, honest FAILED state.
                 if (status.lastError != null && current.state != CallState.ENDED && current.state != CallState.DECLINED) {
                     Log.w(TAG, "Call error observed: ${status.lastError}")
+                    val preJoin = current.state == CallState.CALLING ||
+                        current.state == CallState.RINGING || current.state == CallState.CONNECTING
+                    if (preJoin) {
+                        _currentCall.update {
+                            it?.copy(state = CallState.FAILED, errorMessage = status.lastError)
+                        }
+                        endCallInternal(saveRecord = true, isMissed = true)
+                    }
                 }
             }
         }

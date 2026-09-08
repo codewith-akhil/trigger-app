@@ -31,6 +31,7 @@ import coil.compose.AsyncImage
 import com.example.di.AppServiceContainer
 import com.example.model.UserRepository
 import com.example.service.supabase.SupabaseResult
+import com.example.util.optStringOrNull
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -101,7 +102,7 @@ fun SelectContactScreen(
                             id = obj.getString("id"),
                             name = obj.getString("full_name"),
                             subtitle = obj.optString("username", null)?.let { "@$it" },
-                            avatarUrl = obj.optString("avatar_url", null),
+                            avatarUrl = obj.optStringOrNull("avatar_url"),
                             initialColor = 0xFF1B5E20
                         )
                     )

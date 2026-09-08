@@ -506,6 +506,19 @@ fun TriggerAppNavHost(
                 contactAvatarRes = activeChatAvatarRes,
                 onBack = {
                     navController.popBackStack()
+                },
+                // Chat header (name/avatar) → the target user's full profile.
+                // UserProfileScreen self-hydrates about/username/avatar from the
+                // profiles table, so a minimal UserSearchResult keyed on the
+                // peer uuid is enough (same contract as NewMessageScreen).
+                onOpenProfile = {
+                    activeUserProfileUser = UserSearchResult(
+                        id = activeChatPeerId,
+                        name = activeChatContactName,
+                        username = null,
+                        avatarUrl = null
+                    )
+                    navController.navigate(TriggerDestinations.USER_PROFILE)
                 }
             )
         }

@@ -3,6 +3,7 @@ package com.example.service
 import com.example.model.UserRepository
 import com.example.service.supabase.SupabaseClient
 import com.example.service.supabase.SupabaseResult
+import com.example.util.optStringOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -50,7 +51,7 @@ object ProfileService {
                     email = p.optString("email", ""),
                     username = p.optString("username", ""),
                     about = p.optString("about", ""),
-                    avatarUri = p.optString("avatar_url", "").ifEmpty { null },
+                    avatarUri = p.optStringOrNull("avatar_url"),
                     gender = p.optString("gender", "").ifEmpty { null },
                     dob = p.optString("dob", "").ifEmpty { null },
                     countryCode = p.optString("country_code", "").ifEmpty { null },

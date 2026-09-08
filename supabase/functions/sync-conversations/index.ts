@@ -63,7 +63,7 @@ function isUuid(v: unknown): v is string {
   return typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
 
-const DISAPPEARING = ["OFF", "24H", "7D", "90D"];
+const DISAPPEARING = ["OFF", "24H", "7D", "30D"];
 
 async function handler(req: Request): Promise<Response> {
   const preflight = handleOptions(req);

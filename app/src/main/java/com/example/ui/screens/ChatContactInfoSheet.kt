@@ -667,78 +667,86 @@ fun ChatContactInfoSheet(
         )
     }
 
-    // Block Contact alert dialog
+    // Block Contact alert dialog — compact WhatsApp-style card
     if (showBlockDialog) {
         AlertDialog(
             onDismissRequest = { showBlockDialog = false },
             containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
             title = {
                 Text(
                     text = "Block $contactName?",
                     color = Color(0xFF111B21),
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
                 )
             },
             text = {
                 Text(
-                    text = "Blocked contacts will no longer be able to call you or send you messages.",
+                    text = "They won't be able to message or call you anymore.",
                     color = Color(0xFF667781),
                     fontSize = 14.sp
                 )
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        showBlockDialog = false
-                        onBlockContact()
-                        onClose()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEA4335))
-                ) {
-                    Text("Block", color = Color.White)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showBlockDialog = false }) {
-                    Text("Cancel", color = Color(0xFF667781))
+                Row {
+                    TextButton(onClick = { showBlockDialog = false }) {
+                        Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Button(
+                        onClick = {
+                            showBlockDialog = false
+                            onBlockContact()
+                            onClose()
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEA4335))
+                    ) {
+                        Text("Block", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         )
     }
 
-    // Unblock Contact alert dialog
+    // Unblock Contact alert dialog — compact WhatsApp-style card
     if (showUnblockDialog) {
         AlertDialog(
             onDismissRequest = { showUnblockDialog = false },
             containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
             title = {
                 Text(
                     text = "Unblock $contactName?",
                     color = Color(0xFF111B21),
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
                 )
             },
             text = {
                 Text(
-                    text = "You will be able to send and receive messages and calls with $contactName.",
+                    text = "They will be able to message and call you again.",
                     color = Color(0xFF667781),
                     fontSize = 14.sp
                 )
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        showUnblockDialog = false
-                        onUnblockContact()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = WhatsAppFabGreen)
-                ) {
-                    Text("Unblock", color = Color.White)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showUnblockDialog = false }) {
-                    Text("Cancel", color = Color(0xFF667781))
+                Row {
+                    TextButton(onClick = { showUnblockDialog = false }) {
+                        Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Button(
+                        onClick = {
+                            showUnblockDialog = false
+                            onUnblockContact()
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = WhatsAppFabGreen)
+                    ) {
+                        Text("Unblock", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         )
@@ -802,67 +810,65 @@ fun ChatContactInfoSheet(
         )
     }
 
-    // Report user dialog — opens a reason text field, calls report-user on submit
+    // Report user dialog — compact WhatsApp-style card (2-line text + block
+    // checkbox + Cancel/Report text buttons). No icon, no free-text field.
     if (showReportDialog) {
-        var reportReason by remember { mutableStateOf("") }
+        var reportAndBlock by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { showReportDialog = false },
             containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
             title = {
                 Text(
-                    text = "Report $contactName?",
+                    text = "Report $contactName",
                     color = Color(0xFF111B21),
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
                 )
             },
             text = {
                 Column {
                     Text(
-                        text = "Please describe the issue. The reported user will be reviewed by our moderation team.",
+                        text = "The last 5 messages in this chat will be sent to Trigger. $contactName won't know you reported them.",
                         fontSize = 14.sp,
-                        color = Color(0xFF667781)
+                        color = Color(0xFF667781),
+                        lineHeight = 19.sp
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    BasicTextField(
-                        value = reportReason,
-                        onValueChange = { reportReason = it },
-                        textStyle = TextStyle(color = Color(0xFF111B21), fontSize = 15.sp),
-                        cursorBrush = SolidColor(WhatsAppFabGreen),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(8.dp),
-                        decorationBox = { innerTextField ->
-                            if (reportReason.isEmpty()) {
-                                Text(
-                                    text = "Reason for reporting...",
-                                    color = Color(0xFF8696A0),
-                                    fontSize = 15.sp
-                                )
-                            }
-                            innerTextField()
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = reportAndBlock,
+                            onCheckedChange = { reportAndBlock = it }
+                        )
+                        Column {
+                            Text(
+                                text = "Block $contactName",
+                                fontSize = 15.sp,
+                                color = Color(0xFF111B21)
+                            )
+                            Text(
+                                text = "They won't be able to message or call you.",
+                                fontSize = 12.5.sp,
+                                color = Color(0xFF667781)
+                            )
                         }
-                    )
+                    }
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        val reason = reportReason.trim().ifEmpty { "Inappropriate behavior" }
-                        onReportUser(reason)
-                        showReportDialog = false
-                        reportReason = ""
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEA4335))
-                ) {
-                    Text("Report", color = Color.White)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    showReportDialog = false
-                    reportReason = ""
-                }) {
-                    Text("Cancel", color = Color(0xFF667781))
+                Row {
+                    TextButton(onClick = { showReportDialog = false }) {
+                        Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
+                    }
+                    TextButton(
+                        onClick = {
+                            if (reportAndBlock) onBlockContact()
+                            onReportUser("Reported from chat info")
+                            showReportDialog = false
+                        }
+                    ) {
+                        Text("Report", color = Color(0xFF008069), fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         )

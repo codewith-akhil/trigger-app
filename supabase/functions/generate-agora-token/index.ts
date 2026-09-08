@@ -130,7 +130,22 @@ async function handler(req: Request): Promise<Response> {
     return errorResponse("AGORA_APP_ID is not configured on the server", 500);
   }
   if (!appCertificate) {
-    return errorResponse("AGORA_PRIMARY_CERTIFICATE is not configured on the server", 500);
+    // APP-ID-ONLY MODE: the Agora project was created without a primary
+    // certificate (or it was never provisioned as a secret). Previously this
+    // returned 500 → the client silently fell back to an empty token and the
+    // call hung with no diagnosable error. Now we explicitly return the
+    // app-id-only contract so the client joins with an empty token, which is
+    // exactly what a certificate-disabled ("test mode") Agora project expects.
+    console.warn("AGORA_PRIMARY_CERTIFICATE not set — serving app-id-only mode");
+    return json({
+      token: "",
+      appId,
+      channelName,
+      uid,
+      role: body.role ?? "publisher",
+      expiresAt: Math.floor(Date.now() / 1000) + expirationSeconds,
+      mode: "appid_only",
+    });
   }
 
   // --- Build the real AccessToken2 -----------------------------------------

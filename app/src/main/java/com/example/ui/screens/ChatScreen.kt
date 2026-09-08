@@ -22,10 +22,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.EmojiEmotions
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.*
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -73,6 +76,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import coil.compose.AsyncImage
 import com.example.R
 import com.example.di.AppServiceContainer
 import com.example.model.*
@@ -103,7 +107,10 @@ fun ChatScreen(
     peerId: String = "",
     contactName: String = "",
     contactAvatarRes: Int? = null,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    // Opens the peer's full profile screen (wired from the avatar + name taps
+    // in ChatMainTopBar). The ⋮ "View profile" item keeps opening the info sheet.
+    onOpenProfile: () -> Unit = {}
 ) {
     // H4: the chat MUST run on the real conversation uuid. Entry points that
     // only know the peer's user uuid resolve (or create) the conversation
@@ -162,6 +169,10 @@ fun ChatScreen(
     )
 
     val messages by viewModel.messages.collectAsState()
+    // Single-flight text-send guard: send buttons disable while a send is running.
+    val isSending by viewModel.isSending.collectAsState()
+    // Peer avatar URL (profiles fetch) for the top bar; null/blank → drawable fallback.
+    val peerAvatarUrl by viewModel.peerAvatarUrl.collectAsState()
     val presence by viewModel.contactPresence.collectAsState()
     val conversationMeta by viewModel.conversationMeta.collectAsState()
     val requestNotice by viewModel.requestNotice.collectAsState()
@@ -217,24 +228,26 @@ fun ChatScreen(
     var showSendLocationScreen by remember { mutableStateOf(false) }
     var showOptionsMenu by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
-    var showForwardDialog by remember { mutableStateOf(false) }
     var showBlockDialog by remember { mutableStateOf(false) }
     var showUnblockDialog by remember { mutableStateOf(false) }
     var showClearChatDialog by remember { mutableStateOf(false) }
-    var showMuteDialog by remember { mutableStateOf(false) }
+    // Auto-delete (disappearing messages) dialog — opened from the ⋮ menu and
+    // from the in-list notice's "Change" link.
+    var showAutoDeleteDialog by remember { mutableStateOf(false) }
     var showReactionPickerForId by remember { mutableStateOf<String?>(null) }
+    // Message id whose FULL emoji reaction sheet is open ("+" in the quick bar).
+    var showReactionEmojiPickerForId by remember { mutableStateOf<String?>(null) }
     var isEmojiPickerOpen by remember { mutableStateOf(false) }
     var isGifPickerOpen by remember { mutableStateOf(false) }
     var showArchiveConfirmDialog by remember { mutableStateOf(false) }
 
-    // Track the long-pressed message so we can show Edit/Pin/Star/Forward/Delete
+    // Track the long-pressed message so we can show Edit/Reply/Delete/Copy
     // actions in the selection action bar.
     val activeMessageIds by viewModel.selectedMessageIds.collectAsState()
     val editingMessage by viewModel.editingMessage.collectAsState()
     val editingText by viewModel.editingText.collectAsState()
     val searchFilter by viewModel.searchFilter.collectAsState()
     val searchResultsEx by viewModel.searchResultsEx.collectAsState()
-    val allConversations by viewModel.allConversations.collectAsState()
     val starredMessages by viewModel.starredMessages.collectAsState()
     val sharedLinks by viewModel.sharedLinks.collectAsState()
     val conversationArchived = conversationInfo?.isArchived ?: false
@@ -443,7 +456,10 @@ fun ChatScreen(
     }
 
     // ---- Scroll-to-message: jump to a specific message id (used by search & reply) ----
-    val hasSystemHeader = conversationInfo?.disappearingDuration != DisappearingDuration.OFF
+    // The auto-delete notice is ALWAYS list item 0 whenever an auto-delete
+    // choice was ever made (duration != OFF, or OFF after a previous choice).
+    // All message indices are therefore shifted by +1 in scroll math below.
+    val hasSystemHeader = conversationInfo?.disappearingUpdatedAtMillis != null
     val latestItemIndex = if (messages.isEmpty()) 0 else if (hasSystemHeader) messages.size else messages.size - 1
 
     fun scrollToMessageId(messageId: String) {
@@ -541,7 +557,7 @@ fun ChatScreen(
         topBar = {
             when {
                 selectedIds.isNotEmpty() -> {
-                    // Selection Mode Action Bar — with Edit, Pin, Star, Forward, Delete, Copy
+                    // Selection Mode Action Bar — with Edit, Reply, Delete, Copy
                     val firstSelected = messages.find { it.id == selectedIds.first() }
                     val canEdit = selectedIds.size == 1 && firstSelected != null &&
                         firstSelected.isOutgoing &&
@@ -555,7 +571,6 @@ fun ChatScreen(
                             if (msg != null) viewModel.replyToSelected(msg)
                         },
                         onDelete = { showDeleteDialog = true },
-                        onForward = { showForwardDialog = true },
                         onCopy = {
                             val selectedTexts = messages
                                 .filter { selectedIds.contains(it.id) }
@@ -565,18 +580,6 @@ fun ChatScreen(
                         },
                         onEdit = if (canEdit && firstSelected != null) {
                             { viewModel.startEditing(firstSelected) }
-                        } else null,
-                        onPin = if (selectedIds.size == 1 && firstSelected != null) {
-                            {
-                                viewModel.togglePinMessage(firstSelected)
-                                viewModel.clearSelection()
-                            }
-                        } else null,
-                        onStar = if (selectedIds.size == 1 && firstSelected != null) {
-                            {
-                                viewModel.toggleStarMessage(firstSelected)
-                                viewModel.clearSelection()
-                            }
                         } else null
                     )
                 }
@@ -628,8 +631,9 @@ fun ChatScreen(
                             else -> presence.second
                         },
                         avatarRes = contactAvatarRes,
+                        avatarUrl = peerAvatarUrl,
                         onBack = onBack,
-                        onHeaderClick = { showContactInfoSheet = true },
+                        onOpenProfile = onOpenProfile,
                         onVideoCall = {
                             if (isBlocked) showUnblockDialog = true
                             else viewModel.startVideoCall()
@@ -638,7 +642,6 @@ fun ChatScreen(
                             if (isBlocked) showUnblockDialog = true
                             else viewModel.startAudioCall()
                         },
-                        onSearchClick = { viewModel.isSearchMode.value = true },
                         onMenuClick = { showOptionsMenu = true },
                         showMenu = showOptionsMenu,
                         onDismissMenu = { showOptionsMenu = false },
@@ -651,11 +654,8 @@ fun ChatScreen(
                             showOptionsMenu = false
                             showClearChatDialog = true
                         },
-                        onMuteClick = {
-                            showMuteDialog = true
-                        },
                         onDisappearingClick = {
-                            showContactInfoSheet = true
+                            showAutoDeleteDialog = true
                         },
                         onBlockToggleClick = {
                             if (isBlocked) showUnblockDialog = true
@@ -715,6 +715,7 @@ fun ChatScreen(
                         ReplyComposerBanner(
                             senderName = replyingTo?.senderName ?: "Sender",
                             text = replyingTo?.text ?: "",
+                            onBannerClick = { replyingTo?.let { scrollToMessageId(it.id) } },
                             onDismiss = { viewModel.replyingTo.value = null }
                         )
                     }
@@ -760,6 +761,7 @@ fun ChatScreen(
                     } else if (!isRequestReceiver) {
                         ChatComposerBar(
                             text = inputText,
+                            isSending = isSending,
                             onTextChanged = {
                                 isEmojiPickerOpen = false
                                 isGifPickerOpen = false
@@ -839,9 +841,12 @@ fun ChatScreen(
                                     }
                                 },
                                 onStickerSelected = { sticker ->
-                                    // Sticker taps send the emoji immediately as a TEXT message
-                                    viewModel.onInputTextChanged(sticker)
-                                    viewModel.sendTextMessage()
+                                    // Sticker taps send the emoji immediately as a TEXT message.
+                                    // Blocked while a send is already in flight.
+                                    if (!isSending) {
+                                        viewModel.onInputTextChanged(sticker)
+                                        viewModel.sendTextMessage()
+                                    }
                                 }
                             )
                         }
@@ -850,9 +855,12 @@ fun ChatScreen(
                         if (isGifPickerOpen) {
                             ChatGifPicker(
                                 onGifSelected = { gif ->
-                                    // GIF/sticker taps send the emoji immediately as a TEXT message
-                                    viewModel.onInputTextChanged(gif)
-                                    viewModel.sendTextMessage()
+                                    // GIF/sticker taps send the emoji immediately as a TEXT message.
+                                    // Blocked while a send is already in flight.
+                                    if (!isSending) {
+                                        viewModel.onInputTextChanged(gif)
+                                        viewModel.sendTextMessage()
+                                    }
                                 }
                             )
                         }
@@ -921,9 +929,14 @@ fun ChatScreen(
                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
                 ) {
 
-                    if (conversationInfo?.disappearingDuration != DisappearingDuration.OFF) {
-                        item {
-                            SystemMessageBubble(text = "Messages in this chat are set to disappear after ${conversationInfo?.disappearingDuration?.displayName ?: "24 hours"}.")
+                    if (hasSystemHeader) {
+                        // Auto-delete notice — always list item 0 (the +1 scroll
+                        // offsets above depend on this placement).
+                        item(key = "auto_delete_notice") {
+                            ChatAutoDeleteNotice(
+                                duration = conversationInfo?.disappearingDuration ?: DisappearingDuration.OFF,
+                                onChangeClick = { showAutoDeleteDialog = true }
+                            )
                         }
                     }
 
@@ -968,6 +981,11 @@ fun ChatScreen(
                                 },
                                 onReactionClick = { emoji ->
                                     viewModel.addReaction(message.id, emoji)
+                                },
+                                onQuoteClick = { replySourceId ->
+                                    // Graceful no-op when the original message
+                                    // is no longer in the list.
+                                    scrollToMessageId(replySourceId)
                                 }
                             )
 
@@ -977,6 +995,10 @@ fun ChatScreen(
                                     onReactionSelected = { emoji ->
                                         viewModel.addReaction(message.id, emoji)
                                         showReactionPickerForId = null
+                                    },
+                                    onPickMore = {
+                                        showReactionPickerForId = null
+                                        showReactionEmojiPickerForId = message.id
                                     },
                                     modifier = Modifier
                                         .align(if (message.isOutgoing) Alignment.TopEnd else Alignment.TopStart)
@@ -1023,6 +1045,20 @@ fun ChatScreen(
                 }
             )
         }
+    }
+
+    // Full emoji reaction picker sheet ("+" in the quick reaction bar).
+    // Rendered at root level (not inside the lazy item) so an open sheet is
+    // never disposed by lazy-list recycling while the user scrolls.
+    val reactionPickerMessageId = showReactionEmojiPickerForId
+    if (reactionPickerMessageId != null) {
+        ReactionEmojiPickerSheet(
+            onEmojiSelected = { emoji ->
+                viewModel.addReaction(reactionPickerMessageId, emoji)
+                showReactionEmojiPickerForId = null
+            },
+            onDismiss = { showReactionEmojiPickerForId = null }
+        )
     }
 
     // Real Send Location screen
@@ -1168,23 +1204,26 @@ fun ChatScreen(
         )
     }
 
-    // Block Contact alert dialog
+    // Block Contact alert dialog (compact style)
     if (showBlockDialog) {
         AlertDialog(
             onDismissRequest = { showBlockDialog = false },
             containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
             title = {
                 Text(
                     text = "Block $contactName?",
                     color = Color(0xFF111B21),
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 Text(
-                    text = "Blocked contacts will no longer be able to call you or send you messages.",
+                    text = "They won't be able to message or call you anymore.",
                     color = Color(0xFF667781),
-                    fontSize = 14.sp
+                    fontSize = 14.sp,
+                    lineHeight = 19.sp
                 )
             },
             confirmButton = {
@@ -1200,29 +1239,32 @@ fun ChatScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showBlockDialog = false }) {
-                    Text("Cancel", color = Color(0xFF667781))
+                    Text("Cancel", color = Color(0xFF008069))
                 }
             }
         )
     }
 
-    // Unblock Contact alert dialog
+    // Unblock Contact alert dialog (compact style)
     if (showUnblockDialog) {
         AlertDialog(
             onDismissRequest = { showUnblockDialog = false },
             containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
             title = {
                 Text(
                     text = "Unblock $contactName?",
                     color = Color(0xFF111B21),
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 Text(
-                    text = "You will be able to send and receive messages and calls with $contactName.",
+                    text = "They will be able to message and call you again.",
                     color = Color(0xFF667781),
-                    fontSize = 14.sp
+                    fontSize = 14.sp,
+                    lineHeight = 19.sp
                 )
             },
             confirmButton = {
@@ -1231,14 +1273,14 @@ fun ChatScreen(
                         showUnblockDialog = false
                         viewModel.setBlocked(false)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = WhatsAppFabGreen)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00A884))
                 ) {
                     Text("Unblock", color = Color.White)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showUnblockDialog = false }) {
-                    Text("Cancel", color = Color(0xFF667781))
+                    Text("Cancel", color = Color(0xFF008069))
                 }
             }
         )
@@ -1282,38 +1324,49 @@ fun ChatScreen(
         )
     }
 
-    // Mute Notifications Dialog
-    if (showMuteDialog) {
-        var selectedMuteDuration by remember { mutableStateOf("8 hours") }
+    // Delete message dialog — compact: red Delete button + optional
+    // "Also delete for <contact>" checkbox (shown only when EVERY selected
+    // message is outgoing; delete-for-everyone is sender-only server-side).
+    if (showDeleteDialog) {
+        val selectedMessages = messages.filter { selectedIds.contains(it.id) }
+        val canDeleteForEveryone = selectedMessages.isNotEmpty() && selectedMessages.all { it.isOutgoing }
+        var alsoDeleteForEveryone by remember(showDeleteDialog) { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = { showMuteDialog = false },
+            onDismissRequest = { showDeleteDialog = false },
             containerColor = Color.White,
+            shape = RoundedCornerShape(16.dp),
             title = {
                 Text(
-                    text = "Mute notifications for...",
+                    text = "DELETE MESSAGE",
                     color = Color(0xFF111B21),
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 Column {
-                    listOf("8 hours", "1 week", "Always").forEach { durationText ->
+                    Text(
+                        text = "Are you sure you want to delete these messages?",
+                        color = Color(0xFF667781),
+                        fontSize = 14.sp,
+                        lineHeight = 19.sp
+                    )
+                    if (canDeleteForEveryone) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { selectedMuteDuration = durationText }
-                                .padding(vertical = 10.dp),
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { alsoDeleteForEveryone = !alsoDeleteForEveryone },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            RadioButton(
-                                selected = selectedMuteDuration == durationText,
-                                onClick = { selectedMuteDuration = durationText },
-                                colors = RadioButtonDefaults.colors(selectedColor = WhatsAppFabGreen)
+                            Checkbox(
+                                checked = alsoDeleteForEveryone,
+                                onCheckedChange = { alsoDeleteForEveryone = it },
+                                colors = CheckboxDefaults.colors(checkedColor = Color(0xFF008069))
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = durationText,
-                                fontSize = 15.sp,
+                                text = "Also delete for $contactName",
+                                fontSize = 14.sp,
                                 color = Color(0xFF111B21)
                             )
                         }
@@ -1323,150 +1376,21 @@ fun ChatScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        showMuteDialog = false
-                        viewModel.setMuted(true)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = WhatsAppFabGreen)
-                ) {
-                    Text("OK", color = Color.White)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showMuteDialog = false }) {
-                    Text("Cancel", color = Color(0xFF667781))
-                }
-            }
-        )
-    }
-
-    // Delete message dialog (Delete for me vs Delete for everyone)
-    if (showDeleteDialog) {
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
-            containerColor = Color.White,
-            title = { Text("Delete message?", color = Color(0xFF111B21), fontWeight = FontWeight.Bold) },
-            text = {
-                Text(
-                    text = "You can delete this message just for yourself or for everyone in the chat.",
-                    color = Color(0xFF667781)
-                )
-            },
-            confirmButton = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Button(
-                        onClick = {
-                            showDeleteDialog = false
+                        showDeleteDialog = false
+                        if (canDeleteForEveryone && alsoDeleteForEveryone) {
                             viewModel.deleteSelectedForEveryone()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = WhatsAppFabGreen),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Delete for everyone", color = Color.White)
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    OutlinedButton(
-                        onClick = {
-                            showDeleteDialog = false
+                        } else {
                             viewModel.deleteSelectedForMe()
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Delete for me", color = Color(0xFFEA4335))
-                    }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEA4335))
+                ) {
+                    Text("Delete", color = Color.White)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("Cancel", color = Color(0xFF667781))
-                }
-            }
-        )
-    }
-
-    // Forward dialog (Select contact to forward to) — uses Room conversations
-    if (showForwardDialog) {
-        val otherConversations = allConversations.filter { it.id != conversationId }
-        var selectedForwardIds by remember { mutableStateOf(setOf<String>()) }
-        AlertDialog(
-            onDismissRequest = {
-                showForwardDialog = false
-                selectedForwardIds = emptySet()
-            },
-            containerColor = Color.White,
-            title = { Text("Forward to...", color = Color(0xFF111B21), fontWeight = FontWeight.Bold) },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    if (otherConversations.isEmpty()) {
-                        Text(
-                            text = "No other conversations available",
-                            color = Color(0xFF667781),
-                            fontSize = 14.sp
-                        )
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 320.dp)
-                        ) {
-                            items(otherConversations, key = { conv -> conv.id }) { conv ->
-                                val isChecked = selectedForwardIds.contains(conv.id)
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            selectedForwardIds = if (isChecked) {
-                                                selectedForwardIds - conv.id
-                                            } else {
-                                                selectedForwardIds + conv.id
-                                            }
-                                        }
-                                        .padding(vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Checkbox(
-                                        checked = isChecked,
-                                        onCheckedChange = {
-                                            selectedForwardIds = if (isChecked) {
-                                                selectedForwardIds - conv.id
-                                            } else {
-                                                selectedForwardIds + conv.id
-                                            }
-                                        },
-                                        colors = CheckboxDefaults.colors(checkedColor = WhatsAppFabGreen)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = conv.name,
-                                        fontSize = 15.sp,
-                                        color = Color(0xFF111B21)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Row {
-                    TextButton(onClick = {
-                        showForwardDialog = false
-                        selectedForwardIds = emptySet()
-                    }) {
-                        Text("Cancel", color = Color(0xFF667781))
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    if (selectedForwardIds.isNotEmpty()) {
-                        Button(
-                            onClick = {
-                                viewModel.forwardSelectedTo(selectedForwardIds.toList())
-                                showForwardDialog = false
-                                selectedForwardIds = emptySet()
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = WhatsAppFabGreen)
-                        ) {
-                            Text("Forward (${selectedForwardIds.size})", color = Color.White)
-                        }
-                    }
+                    Text("Cancel", color = Color(0xFF008069))
                 }
             }
         )
@@ -1513,6 +1437,23 @@ fun ChatScreen(
             }
         )
     }
+
+    // Auto delete (disappearing messages) dialog — opened from the ⋮ menu and
+    // from the in-list notice's "Change" link.
+    if (showAutoDeleteDialog) {
+        val currentDuration = conversationInfo?.disappearingDuration ?: DisappearingDuration.OFF
+        var autoDeleteSelection by remember(showAutoDeleteDialog) { mutableStateOf(currentDuration) }
+        AutoDeleteDialog(
+            current = currentDuration,
+            selected = autoDeleteSelection,
+            onSelect = { autoDeleteSelection = it },
+            onConfirm = {
+                showAutoDeleteDialog = false
+                viewModel.setDisappearingMessages(autoDeleteSelection)
+            },
+            onDismiss = { showAutoDeleteDialog = false }
+        )
+    }
 }
 
 // Subcomponents: Top Bars & Composers
@@ -1521,17 +1462,18 @@ fun ChatMainTopBar(
     contactName: String,
     presenceText: String,
     avatarRes: Int?,
+    avatarUrl: String? = null,
     onBack: () -> Unit,
-    onHeaderClick: () -> Unit,
+    // Avatar + peer name open the peer's PROFILE screen (the ⋮ "View profile"
+    // item keeps opening the in-chat ContactInfoSheet).
+    onOpenProfile: () -> Unit = {},
     onVideoCall: () -> Unit,
     onVoiceCall: () -> Unit,
-    onSearchClick: () -> Unit,
     onMenuClick: () -> Unit,
     showMenu: Boolean,
     onDismissMenu: () -> Unit,
     onViewContact: () -> Unit,
     onClearChat: () -> Unit,
-    onMuteClick: () -> Unit = {},
     onDisappearingClick: () -> Unit = {},
     onBlockToggleClick: () -> Unit = {},
     onArchiveClick: () -> Unit = {},
@@ -1554,42 +1496,58 @@ fun ChatMainTopBar(
                     .padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(24.dp))
-                        .clickable(onClick = onBack)
-                        .padding(vertical = 4.dp, horizontal = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                IconButton(onClick = onBack) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back",
                         tint = Color.White,
                         modifier = Modifier.size(24.dp)
                     )
+                }
 
-                    Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(4.dp))
 
+                // Avatar is its own click target → opens the peer's profile
+                // (no longer nested inside the back row). 48dp touch target
+                // around the 40dp visual circle.
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onOpenProfile),
+                    contentAlignment = Alignment.Center
+                ) {
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(40.dp)
                             .clip(CircleShape)
                             .background(Color(0xFF25D366))
                     ) {
-                        if (avatarRes != null) {
-                            Image(
-                                painter = painterResource(id = avatarRes),
-                                contentDescription = contactName,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Filled.Person,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.fillMaxSize().padding(6.dp)
-                            )
+                        when {
+                            !avatarUrl.isNullOrBlank() -> {
+                                AsyncImage(
+                                    model = avatarUrl,
+                                    contentDescription = "Open profile photo",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                            avatarRes != null -> {
+                                Image(
+                                    painter = painterResource(id = avatarRes),
+                                    contentDescription = "Open profile photo",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                            else -> {
+                                Icon(
+                                    imageVector = Icons.Filled.Person,
+                                    contentDescription = "Open profile photo",
+                                    tint = Color.White,
+                                    modifier = Modifier.fillMaxSize().padding(8.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1599,7 +1557,7 @@ fun ChatMainTopBar(
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .clickable(onClick = onHeaderClick)
+                        .clickable(onClick = onOpenProfile)
                 ) {
                     Text(
                         text = contactName,
@@ -1608,12 +1566,15 @@ fun ChatMainTopBar(
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1
                     )
-                    Text(
-                        text = presenceText,
-                        color = if (presenceText.contains("typing") || presenceText.contains("recording")) Color(0xFF80CBC4) else Color(0xFFB2DFDB),
-                        fontSize = 12.5.sp,
-                        maxLines = 1
-                    )
+                    // Blank subtitle = presence hidden by privacy — render nothing.
+                    if (presenceText.isNotEmpty()) {
+                        Text(
+                            text = presenceText,
+                            color = if (presenceText.contains("typing") || presenceText.contains("recording")) Color(0xFF80CBC4) else Color(0xFFB2DFDB),
+                            fontSize = 12.5.sp,
+                            maxLines = 1
+                        )
+                    }
                 }
 
                 IconButton(onClick = onVideoCall) {
@@ -1650,25 +1611,11 @@ fun ChatMainTopBar(
                         modifier = Modifier.background(Color.White)
                     ) {
                         DropdownMenuItem(
-                            text = { Text("View contact", color = GeometricTextDark) },
+                            text = { Text("View profile", color = GeometricTextDark) },
                             onClick = onViewContact
                         )
                         DropdownMenuItem(
-                            text = { Text("Search", color = GeometricTextDark) },
-                            onClick = {
-                                onDismissMenu()
-                                onSearchClick()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Mute notifications", color = GeometricTextDark) },
-                            onClick = {
-                                onDismissMenu()
-                                onMuteClick()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Disappearing messages", color = GeometricTextDark) },
+                            text = { Text("Auto delete", color = GeometricTextDark) },
                             onClick = {
                                 onDismissMenu()
                                 onDisappearingClick()
@@ -1718,11 +1665,8 @@ fun ChatSelectionTopBar(
     onClearSelection: () -> Unit,
     onReply: () -> Unit,
     onDelete: () -> Unit,
-    onForward: () -> Unit,
     onCopy: () -> Unit,
-    onEdit: (() -> Unit)? = null,
-    onPin: (() -> Unit)? = null,
-    onStar: (() -> Unit)? = null
+    onEdit: (() -> Unit)? = null
 ) {
     Surface(
         color = WhatsAppChatDarkTeal,
@@ -1755,24 +1699,11 @@ fun ChatSelectionTopBar(
                         Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White)
                     }
                 }
-                if (onPin != null) {
-                    IconButton(onClick = onPin) {
-                        Icon(Icons.Filled.PushPin, contentDescription = "Pin", tint = Color.White)
-                    }
-                }
-                if (onStar != null) {
-                    IconButton(onClick = onStar) {
-                        Icon(Icons.Filled.Star, contentDescription = "Star", tint = Color.White)
-                    }
-                }
                 IconButton(onClick = onReply) {
                     Icon(Icons.Filled.Reply, contentDescription = "Reply", tint = Color.White)
                 }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = Color.White)
-                }
-                IconButton(onClick = onForward) {
-                    Icon(Icons.Filled.Forward, contentDescription = "Forward", tint = Color.White)
                 }
                 IconButton(onClick = onCopy) {
                     Icon(Icons.Filled.ContentCopy, contentDescription = "Copy", tint = Color.White)
@@ -1883,6 +1814,7 @@ fun ChatSearchTopBar(
 fun ReplyComposerBanner(
     senderName: String,
     text: String,
+    onBannerClick: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     Surface(
@@ -1892,6 +1824,7 @@ fun ReplyComposerBanner(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .clickable(onClick = onBannerClick)
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -2022,6 +1955,8 @@ fun ChatComposerBar(
     text: String,
     onTextChanged: (String) -> Unit,
     onSend: () -> Unit,
+    // Single-flight guard: block FAB + IME sends while a send is in flight.
+    isSending: Boolean = false,
     onAttachClick: () -> Unit,
     onCameraClick: () -> Unit,
     onStartVoiceRecording: () -> Unit,
@@ -2082,7 +2017,7 @@ fun ChatComposerBar(
                         textStyle = TextStyle(color = Color(0xFF111B21), fontSize = 16.sp),
                         cursorBrush = SolidColor(WhatsAppFabGreen),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = { onSend() }),
+                        keyboardActions = KeyboardActions(onSend = { if (!isSending) onSend() }),
                         maxLines = 5,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -2135,6 +2070,7 @@ fun ChatComposerBar(
 
         FloatingActionButton(
             onClick = {
+                if (isSending) return@FloatingActionButton
                 if (text.isNotBlank()) onSend()
                 else onStartVoiceRecording()
             },
@@ -2147,7 +2083,13 @@ fun ChatComposerBar(
                 .testTag("chat_send_button")
         ) {
             AnimatedContent(targetState = text.isNotBlank(), label = "send_mic") { hasText ->
-                if (hasText) {
+                if (isSending && hasText) {
+                    CircularProgressIndicator(
+                        color = Color.White,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(18.dp)
+                    )
+                } else if (hasText) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Send,
                         contentDescription = "Send",
@@ -2558,6 +2500,242 @@ private fun MessageRequestComposerLocked() {
                 fontSize = 13.sp,
                 color = Color(0xFF667781)
             )
+        }
+    }
+}
+
+// ============================================================================
+// Auto delete (disappearing messages): in-list notice + settings dialog
+// ============================================================================
+
+/** Colors for the auto-delete notice (our palette, not WhatsApp's yellow). */
+private val AutoDeleteNoticeBg = Color(0xFFE7F0EC)
+private val AutoDeleteNoticeText = Color(0xFF3D4A44)
+private val WhatsAppDeepGreen = Color(0xFF008069)
+
+/**
+ * In-list system notice for auto delete — rendered as list item 0 whenever an
+ * auto-delete choice was ever made (duration != OFF, or OFF after a previous
+ * choice). Shows the current behavior plus a "Change" shortcut.
+ */
+@Composable
+private fun ChatAutoDeleteNotice(
+    duration: DisappearingDuration,
+    onChangeClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = AutoDeleteNoticeBg,
+            modifier = Modifier.widthIn(max = 320.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Outlined.Schedule,
+                        contentDescription = null,
+                        tint = AutoDeleteNoticeText,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (duration != DisappearingDuration.OFF) {
+                            "You turned on auto delete. New messages will automatically " +
+                                "delete from both ends ${duration.displayName.lowercase()} after they're sent."
+                        } else {
+                            "Auto delete is off in this chat."
+                        },
+                        color = AutoDeleteNoticeText,
+                        fontSize = 12.5.sp,
+                        lineHeight = 16.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Change",
+                    color = WhatsAppDeepGreen,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onChangeClick)
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Compact auto-delete settings dialog (radio list of the supported durations).
+ * "Update" is enabled only when the selection differs from the current value;
+ * persistence happens via viewModel.setDisappearingMessages (server-side).
+ */
+@Composable
+private fun AutoDeleteDialog(
+    current: DisappearingDuration,
+    selected: DisappearingDuration,
+    onSelect: (DisappearingDuration) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val options = listOf(
+        DisappearingDuration.HOURS_24,
+        DisappearingDuration.DAYS_7,
+        DisappearingDuration.DAYS_30,
+        DisappearingDuration.OFF
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        shape = RoundedCornerShape(16.dp),
+        title = {
+            Text(
+                text = "Auto delete messages",
+                color = Color(0xFF111B21),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = "For more privacy, new messages will automatically delete " +
+                        "from both ends after the selected duration.",
+                    color = Color(0xFF667781),
+                    fontSize = 13.5.sp,
+                    lineHeight = 18.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                options.forEach { option ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onSelect(option) },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selected == option,
+                            onClick = { onSelect(option) },
+                            colors = RadioButtonDefaults.colors(selectedColor = WhatsAppDeepGreen)
+                        )
+                        Text(
+                            text = option.displayName,
+                            fontSize = 15.sp,
+                            color = Color(0xFF111B21)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = selected != current,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = WhatsAppDeepGreen,
+                    disabledContainerColor = WhatsAppDeepGreen.copy(alpha = 0.45f),
+                    contentColor = Color.White,
+                    disabledContentColor = Color.White
+                )
+            ) {
+                Text("Update", color = Color.White)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = WhatsAppDeepGreen)
+            }
+        }
+    )
+}
+
+/**
+ * Full emoji reaction picker (bottom sheet) opened from the "+" in the quick
+ * reaction bar. Reuses the reaction emoji categories from ChatEmojiPicker.kt.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReactionEmojiPickerSheet(
+    onEmojiSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White
+    ) {
+        var categoryIndex by remember { mutableStateOf(0) }
+        val categories = REACTION_EMOJI_CATEGORIES
+        val safeIndex = categoryIndex.coerceIn(0, categories.lastIndex)
+        val currentCategory = categories[safeIndex]
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp)
+        ) {
+            Text(
+                text = currentCategory.title,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF667781),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+            )
+
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 44.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(240.dp)
+                    .padding(horizontal = 8.dp),
+                contentPadding = PaddingValues(vertical = 4.dp)
+            ) {
+                items(currentCategory.emojis, key = { emoji -> emoji }) { emoji ->
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onEmojiSelected(emoji) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(text = emoji, fontSize = 26.sp)
+                    }
+                }
+            }
+
+            // Category bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.SpaceAround,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                categories.forEachIndexed { index, category ->
+                    val isSelected = index == safeIndex
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelected) Color(0xFFE7FCE3) else Color.Transparent)
+                            .clickable { categoryIndex = index },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = category.icon,
+                            fontSize = 18.sp
+                        )
+                    }
+                }
+            }
         }
     }
 }

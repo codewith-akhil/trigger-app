@@ -270,8 +270,11 @@ class MessageServiceImpl(
                 if (senderId != currentUserId) {
                     val domainMsg = mapSupabaseToDomain(record, isOutgoing = false)
                     repository.insertMessage(domainMsg)
-                    // Auto-mark as DELIVERED (we received it)
+                    // Auto-mark as DELIVERED (we received it) — locally first
+                    // (instant double-tick on our own copy), then persist it on
+                    // the server so the SENDER's device flips to ✓✓ too.
                     repository.updateMessageStatus(domainMsg.id, MessageStatus.DELIVERED)
+                    scheduleDeliveredReceipt(domainMsg.conversationId)
                 }
             }
             "UPDATE" -> {
@@ -338,6 +341,37 @@ class MessageServiceImpl(
      */
     private val presenceExpiryJobs = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
 
+    /** Delivered-receipt batching: one mark-messages-delivered call per
+     *  conversation per 600 ms window instead of one per message. */
+    private val deliveredReceiptJobs = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+
+    /** Persist DELIVERED server-side for the caller's incoming messages in a
+     *  conversation (debounced). The sender's realtime UPDATE then flips the
+     *  tick to ✓✓ — previously the receipt was local-only so the sender NEVER
+     *  saw a double tick. */
+    private fun scheduleDeliveredReceipt(conversationId: String) {
+        if (!com.example.service.MediaUrlResolver.isUuid(conversationId)) return
+        deliveredReceiptJobs[conversationId]?.cancel()
+        deliveredReceiptJobs[conversationId] = scope.launch {
+            kotlinx.coroutines.delay(600)
+            deliveredReceiptJobs.remove(conversationId)
+            try {
+                AppServiceContainer.supabaseClient.invokeFunction(
+                    "mark-messages-delivered",
+                    org.json.JSONObject().put("conversationId", conversationId)
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "mark-messages-delivered failed: ${e.message}")
+            }
+        }
+    }
+
+    /** Called by ChatViewModel on chat open / history pull — catches up the
+     *  DELIVERED receipt for everything already sitting in Room. */
+    suspend fun markConversationDelivered(conversationId: String) {
+        scheduleDeliveredReceipt(conversationId)
+    }
+
     private fun schedulePresenceExpiry(userId: String, untilMs: Long, state: PresenceStatus) {
         val key = "$userId:${state.name}"
         presenceExpiryJobs.remove(key)?.cancel()
@@ -379,9 +413,13 @@ class MessageServiceImpl(
                 }
             }
             val status = if (isOnline) PresenceStatus.ONLINE else PresenceStatus.OFFLINE
-            // WhatsApp-style formatting: "last seen today at 3:45 PM" /
-            // "last seen yesterday at 9:12 AM" / "last seen 12 Sep at 8:00 AM".
-            // The raw value was previously interpolated as an ISO string.
+            // Privacy: when the peer hides last seen (or no accepted chat), the
+            // subtitle stays blank — realtime events must not leak the state.
+            if ((presenceService as? PresenceServiceImpl)?.isHidden(userId) == true) {
+                presenceService.setContactPresence(userId, PresenceStatus.OFFLINE, "")
+                return
+            }
+            // WhatsApp-style formatting: "Last seen 03:02" (24 h, device zone).
             val text = if (isOnline) "online" else com.example.util.LastSeenFormatter.format(lastSeen)
             presenceService.setContactPresence(userId, status, text)
         }
@@ -1022,6 +1060,14 @@ class MessageServiceImpl(
                             }
                             if (!obj.isNull("is_starred")) {
                                 repository.setMessageStarred(id, obj.optBoolean("is_starred", false))
+                            }
+                            // Status heal: the pull is the only path that fixes
+                            // ticks missed while this device was offline.
+                            if (!obj.isNull("read_at")) {
+                                repository.updateMessageStatus(id, MessageStatus.READ)
+                            } else if (obj.optString("status", "") == "DELIVERED" &&
+                                existing.status != MessageStatus.READ) {
+                                repository.updateMessageStatus(id, MessageStatus.DELIVERED)
                             }
                         }
                     }

@@ -88,6 +88,8 @@ class DashboardViewModel : ViewModel() {
                 isOnline = false,
                 lastSeenText = "offline",
                 disappearingDuration = obj.optString("disappearing_duration", "OFF"),
+                disappearingUpdatedAtMillis =
+                    parseIsoToMillis(obj.optString("disappearing_updated_at", "")).takeIf { it > 0L },
                 isMuted = obj.optBoolean("is_muted", false),
                 isBlocked = obj.optBoolean("is_blocked", false),
                 isArchived = existing?.isArchived ?: false

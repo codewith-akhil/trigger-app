@@ -51,7 +51,7 @@ enum class DisappearingDuration(val displayName: String, val millis: Long) {
     OFF("Off", 0L),
     HOURS_24("24 hours", 24L * 60 * 60 * 1000),
     DAYS_7("7 days", 7L * 24 * 60 * 60 * 1000),
-    DAYS_90("90 days", 90L * 24 * 60 * 60 * 1000)
+    DAYS_30("30 days", 30L * 24 * 60 * 60 * 1000)
 }
 
 data class MessageReaction(
@@ -129,6 +129,9 @@ data class DomainConversation(
     val lastSeenText: String = "online",
     val presence: PresenceStatus = PresenceStatus.ONLINE,
     val disappearingDuration: DisappearingDuration = DisappearingDuration.OFF,
+    /** Epoch millis when auto delete was last activated/changed on the server.
+     *  Null = never set (no system notice, no purge floor). */
+    val disappearingUpdatedAtMillis: Long? = null,
     val isMuted: Boolean = false,
     val isBlocked: Boolean = false
 )

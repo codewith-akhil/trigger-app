@@ -491,7 +491,7 @@ private fun serverVisibilityToLabel(token: String): String = when (token.lowerca
 private fun labelToServerDisappearing(label: String): String = when (label) {
     "24 hours" -> "24H"
     "7 days" -> "7D"
-    "90 days" -> "90D"
+    "30 days" -> "30D"
     "Off" -> "OFF"
     else -> "OFF"
 }
@@ -499,7 +499,7 @@ private fun labelToServerDisappearing(label: String): String = when (label) {
 private fun serverDisappearingToLabel(token: String): String = when (token.uppercase()) {
     "24H" -> "24 hours"
     "7D" -> "7 days"
-    "90D" -> "90 days"
+    "30D", "90D" -> "30 days"
     "OFF" -> "Off"
     else -> "Off"
 }
