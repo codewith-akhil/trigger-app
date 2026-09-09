@@ -31,7 +31,14 @@ data class ConversationEntity(
     val isBlocked: Boolean = false,
     val isArchived: Boolean = false,
     /** The OTHER user's auth UUID (1:1 chats). Refreshed from sync-conversations. */
-    val peerId: String? = null
+    val peerId: String? = null,
+    /** Server conversations.request_status — "pending" | "accepted" | "declined" |
+     *  "blocked". Rows in a non-accepted state are never shown in the chat list
+     *  and are purged locally on every sync pull. (v10) */
+    val requestStatus: String = "accepted",
+    /** The OTHER user's public avatar URL (conversations.peer_avatar_url, or
+     *  resolved from the profiles table for mirrored rows). (v10) */
+    val peerAvatarUrl: String? = null
 ) {
     fun toDomain(): DomainConversation {
         return DomainConversation(

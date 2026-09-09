@@ -53,6 +53,16 @@ async function handler(req: Request): Promise<Response> {
   if (!target) return json({ error: "User not found" }, 404);
 
   if (action === "follow") {
+    // Detect a NEW follow first: the upsert below is idempotent
+    // (unique follower_id+following_id pair), but the notification + push must
+    // fire only when the edge did not exist before.
+    const { data: existing } = await supabase
+      .from("follows")
+      .select("id")
+      .eq("follower_id", userId)
+      .eq("following_id", targetUserId)
+      .maybeSingle();
+
     // Idempotent insert (unique follower_id+following_id pair protects us).
     const { error: insertErr } = await supabase
       .from("follows")
@@ -63,6 +73,56 @@ async function handler(req: Request): Promise<Response> {
     if (insertErr) {
       console.error("toggle-follow-user: insert failed", insertErr);
       return json({ error: "Failed to follow user" }, 500);
+    }
+
+    if (!existing) {
+      // NEW follow → in-app notification row for the target. Non-fatal:
+      // a notification failure must NEVER fail the follow itself.
+      try {
+        const { error: notifErr } = await supabase.from("user_notifications").insert({
+          user_id: targetUserId,
+          actor_id: userId,
+          type: "follow",
+        });
+        if (notifErr) {
+          console.warn("toggle-follow-user: notification insert failed", notifErr);
+        }
+      } catch (notifErr) {
+        console.warn("toggle-follow-user: notification insert threw", notifErr);
+      }
+
+      // Fire-and-forget push to the target's devices — same server-side FCM
+      // helper the send-push-notification edge fn uses internally (the HTTP
+      // fn itself only pushes to the CALLER, so server flows use sendFcmBatch
+      // directly, like cron-auto-start-streams). Non-fatal, failures logged.
+      try {
+        const { data: actorProfile } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", userId)
+          .maybeSingle();
+        const actorName = actorProfile?.full_name?.trim() || "Someone";
+        const { data: tokens } = await supabase
+          .from("push_tokens")
+          .select("fcm_token")
+          .eq("user_id", targetUserId)
+          .eq("is_active", true);
+        if (tokens && tokens.length > 0) {
+          const { sendFcmBatch } = await import("../_shared/firebase.ts");
+          await sendFcmBatch(
+            {
+              title: actorName,
+              body: "started following you",
+              data: { type: "follow", actor_id: userId },
+              androidChannelId: "trigger_default",
+              priority: "normal",
+            },
+            tokens.map((t) => t.fcm_token),
+          );
+        }
+      } catch (pushErr) {
+        console.warn("toggle-follow-user: push failed", pushErr);
+      }
     }
   } else {
     const { error: deleteErr } = await supabase

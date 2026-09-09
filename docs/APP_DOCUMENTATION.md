@@ -293,6 +293,117 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-09 (code-only wave 2 — media/voice/upload UX, location map,
+  dashboard + notifications, followers, privacy overhaul, vault hardening;
+  NO AAB/APK rebuild per user instruction — artifacts remain versionCode 4):**
+  3 recon agents + 4 implementation clusters, all hand-verified;
+  `compileReleaseKotlin` green; 3 live migrations + 11 edge functions deployed
+  (all 201 ACTIVE, verify_jwt 401-smoke passed).
+  **Media speed + upload UX:** uploads no longer relay through the
+  `upload-chat-media` edge function (which buffered whole files in Deno RAM —
+  every byte crossed the network twice); the client now PUTs directly to
+  Storage (`{uid}/{uuid}.ext`, folder-scoped RLS policies), streams via a
+  CountingSink with real per-bubble progress (percent + MB/s + ETA, 120 ms
+  throttle), 300 s write/read timeouts, images downscaled to 1600 px JPEG q82
+  (`util/MediaCompressor`, GIF/small-file bypass, HEIC→JPEG normalization),
+  videos get a real poster frame (max 720 px) uploaded alongside so BOTH
+  parties' bubbles render a frame (previously Coil failed decoding the video
+  URL → blank bubbles), cancel now flips the message to FAILED with a
+  tap-to-retry affordance (was stuck SENDING forever). WhatsApp-style
+  in-bubble overlays: X + green progress ring on images, "14% (17s left)"
+  strip on videos, linear row on audio/docs.
+  **Own video + voice end-to-end:** the media viewer accepted only `http(s)`
+  URLs — the sender's own fresh upload (`content://`) never played; now any
+  URI plays via ExoPlayer with inline error + retry. Voice notes were dead for
+  BOTH parties (`voice_notes` was a PRIVATE bucket while messages stored the
+  public URL → 403): bucket flipped public (migration `20260922_media_voice.sql`,
+  same model as chat_media) so stored URLs just work, sender can play their own
+  recording while it uploads, real MediaPlayer playback with error surfaces,
+  waveform tap-to-seek, `RECORD_AUDIO` runtime flow verified (already granted
+  in manifest + requested in-chat). No gallery auto-save anywhere (verified by
+  grep — the requirement already holds; media streams from app-private cache).
+  **Attach sheet:** third row "Vault" — compact PIN gate (6-digit keypad,
+  auto-verifies at 6 digits, wrong-PIN inline error) then a 3-column vault
+  media grid; PIN is verified against the SERVER every single time.
+  **Location screen:** tiles 404'd because the CARTO base URLs lacked the
+  `dark_all/` style path (curl-proven) → real street tiles now render;
+  marker reconciliation debounced 400 ms (was a repaint storm per GPS fix);
+  chat top bar is no longer composed underneath the overlay (the "blinking
+  broken header"). Zero new map dependencies, still osmdroid + free CARTO
+  tiles (attribution kept).
+  **Dashboard:** camera icon + its mock preview dialog removed; real
+  notification bell with unread badge (`user_notifications` count) in its
+  place; "Restart Onboarding Flow" menu item removed (incl. the dead
+  TriggerHomeScreen duplicate) while logout keeps the full cleanup chain;
+  chat-list timestamps now "13:23" / "Yesterday" / "dd/MM/yyyy" via new
+  `util/ChatTimeFormatter` (24-h, locale-pinned digits), rendered from the
+  epoch stamp with ISO fallback.
+  **Chat-list dedupe/completeness (Room v10):** `conversations.requestStatus`
+  + `peerAvatarUrl` columns; the sync pull now groups rows by peer pair
+  (mirror rows from accept-message-request created one row per user with
+  different UUIDs — same person twice), keeps the canonical oldest row,
+  merges max(unread)/max(activity), deletes losers + legacy non-UUID rows,
+  skips declined/blocked, and resolves the real peer name/avatar for mirrored
+  rows (server `peer_name` is owner-perspective there). Incoming realtime
+  INSERTs now also ensure the conversation row + refresh the preview so new
+  chats appear instantly instead of waiting for the next pull.
+  **Notifications (real, DB-backed):** new `user_notifications` table (type
+  `follow` | `message_request_accepted`, owner-only RLS select/update/delete,
+  no client INSERT, in the realtime publication); `toggle-follow-user` writes
+  a row + FCM push on NEW follows; `respond-message-request` writes one to the
+  requester on accept; new `NotificationsScreen` (Instagram-referenced rows:
+  avatar, "**user** started following you.", relative time, Follow back /
+  Message action buttons, mark-read on open clearing the badge) reachable
+  from the bell. `get-message-requests` counts bug verified already fixed.
+  **Followers:** NewMessage page now lists FOLLOWERS (paged `get-follow-list`,
+  cap 300) instead of contacts, with "Followers N · Following M" caption from
+  `get-follow-info` and green "Follow back" buttons; message-request gating
+  and search untouched.
+  **Privacy page:** "Last seen and online" → "Activity"; Activity, Profile
+  photo and About all offer Everyone / Followers only / Following / Nobody
+  (CHECK constraints widened live; legacy `contacts` hydrates as
+  "Followers only"); Read receipts, Default message timer and
+  Fingerprint/App-lock rows REMOVED (incl. the dead MainActivity lock gate);
+  dialogs compacted (no Done button, 340 dp cap); "Blocked Users" opens a full
+  page (search box, avatar+name rows, Unblock with confirmation dialog) backed
+  by `manage-blocked-contacts` with enriched display names.
+  **Presence/photo/about enforcement (server-side):** `get-peer-presence`
+  honors `followers`/`following` levels (viewer↔peer `follows` lookups;
+  `contacts` ≡ `followers`; `nobody` blank as before); `search-users`,
+  `get-contacts`, `get-follow-list`, `get-message-requests` blank out
+  `avatar_url`/`about` when the target's visibility level forbids the viewer
+  (batched user_settings + follows lookups; absent settings = everyone).
+  **Secret Vault (server-authoritative):** PIN state now lives on the server
+  (`hasServerPin` probe drives create-vs-unlock, fixing the reinstall loop
+  where a fresh install tried to "create" over an existing PIN); `verifyPin`
+  is server-verified with the local-hash fallback removed (offline → explicit
+  "can't verify", never a bypass); lockout is 3 WRONG PINs PER 24 h (new
+  `vault_pins.first_fail_at`, migration `20260922_vault_lockout.sql` +
+  atomic bump RPC hardening) with attempts-left shown inline and a locked
+  view offering **email OTP unlock** (6-digit code to the registered email via
+  the existing Resend integration + new PIN set, `reset-vault-pin` now also
+  zeroes `first_fail_at`); vault media is CLOUD-backed — upload to the private
+  owner-only `vault_media` bucket + row insert with a WhatsApp-style
+  "Uploading…" overlay, signed-URL display for cloud-only items (local cache
+  kept for offline), long-press/preview delete with confirm removes
+  file+row+cache; owner-only enforced by RLS (`vm_owner_all` verified live).
+  **Profile:** the Links feature (row + editor + validator) removed; avatar
+  sheet gained a red "Remove profile picture" row (routes into the existing
+  delete-photo confirm → storage delete + server sync).
+  **External services (all already in use, nothing new to buy):** CARTO
+  basemap tiles (free, attribution kept), Agora (calls; APP_ID+CERT confirmed
+  present server-side), Firebase FCM (free; follow/request pushes),
+  Resend (vault OTP + transactional email; RESEND_API_KEY confirmed present),
+  Supabase Storage/Postgres/Edge Functions (current free plan). Costliest-free
+  option achieved for media: direct-to-Storage upload + client compression —
+  no CDN/transform service required.
+  **Security verification:** live checks — voice_notes/chat_media public-read
+  + owner-folder write policies; user_settings CHECKs widened; user_notifications
+  RLS (no INSERT grant to clients; service-role only); realtime publication
+  includes user_notifications; vault_pins.first_fail_at added;
+  all 11 redeployed functions 401 without JWT; vault_media `vm_owner_all`
+  owner-only policy intact; SMTP creds untouched.
+
 - **2026-09-08 (versionCode 4 — WhatsApp-parity pass: receipts, auto delete v2,
   privacy presence, dialogs, profile viewer, calls):** User-reported fixes,
   all verified against source (3 recon agents + hand-verification; compile

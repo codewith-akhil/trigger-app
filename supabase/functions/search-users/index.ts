@@ -20,6 +20,62 @@ interface Body { query?: string; }
 // enough to slow username enumeration attacks.
 const SEARCH_LIMIT = { maxRequests: 20, windowSeconds: 300, name: "search_users" };
 
+// ----------------------------------------------------------------------------
+// Avatar/about visibility — resolves which of `ownerIds` allow `viewerId` to
+// see their profile_photo/about, per each owner's user_settings row
+// (default 'everyone' when no settings row; legacy 'contacts' ≡ 'followers').
+//   'followers' → the viewer must follow the owner
+//   'following' → the owner must follow the viewer
+// ----------------------------------------------------------------------------
+async function resolveVisibleProfileOwners(
+  supabase: ReturnType<typeof createAdminClient>,
+  viewerId: string,
+  ownerIds: string[],
+): Promise<Set<string>> {
+  const visible = new Set<string>();
+  const unique = Array.from(new Set(ownerIds));
+  if (unique.length === 0) return visible;
+
+  const { data: settings } = await supabase
+    .from("user_settings")
+    .select("user_id,profile_photo_visibility,about_visibility")
+    .in("user_id", unique);
+
+  const levelOf = new Map<string, string>();
+  for (const id of unique) levelOf.set(id, "everyone");
+  for (const s of settings ?? []) {
+    levelOf.set(s.user_id, s.profile_photo_visibility ?? "everyone");
+  }
+
+  const followersLevel = unique.filter((id) => {
+    const l = levelOf.get(id);
+    return l === "followers" || l === "contacts";
+  });
+  const followingLevel = unique.filter((id) => levelOf.get(id) === "following");
+
+  if (followersLevel.length > 0) {
+    const { data: edges } = await supabase
+      .from("follows")
+      .select("following_id")
+      .eq("follower_id", viewerId)
+      .in("following_id", followersLevel);
+    for (const e of edges ?? []) visible.add(e.following_id);
+  }
+  if (followingLevel.length > 0) {
+    const { data: edges } = await supabase
+      .from("follows")
+      .select("follower_id")
+      .eq("following_id", viewerId)
+      .in("follower_id", followingLevel);
+    for (const e of edges ?? []) visible.add(e.follower_id);
+  }
+
+  for (const id of unique) {
+    if (levelOf.get(id) === "everyone") visible.add(id);
+  }
+  return visible;
+}
+
 async function handler(req: Request): Promise<Response> {
   const preflight = handleOptions(req);
   if (preflight) return preflight;
@@ -72,6 +128,18 @@ async function handler(req: Request): Promise<Response> {
     console.error("search-users failed", error);
     return json({ error: "Search failed" }, 500);
   }
-  return json({ users: data ?? [] });
+
+  // Redact avatar_url for owners whose profile_photo_visibility the caller
+  // may not see ("" — NOT null — so the client keeps its letter fallback).
+  const rows = data ?? [];
+  const visibleOwners = await resolveVisibleProfileOwners(
+    supabase,
+    userId,
+    rows.map((r) => r.id),
+  );
+  const users = rows.map((r) =>
+    visibleOwners.has(r.id) ? r : { ...r, avatar_url: "" },
+  );
+  return json({ users });
 }
 serve(handler, { port: 9032 });

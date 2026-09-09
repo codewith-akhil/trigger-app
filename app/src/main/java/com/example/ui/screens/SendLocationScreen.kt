@@ -200,11 +200,15 @@ fun SendLocationScreen(
                 XYTileSource(
                     "CARTO_DARK",
                     1, 20, 256, ".png",
+                    // The style path segment ("dark_all") is REQUIRED: osmdroid
+                    // appends /{z}/{x}/{y}.png directly to the base URL, and the
+                    // bare basemaps host 404s every tile (blank beige canvas +
+                    // repaint flicker). curl-verified: /dark_all/{z}/{x}/{y}.png = 200.
                     arrayOf(
-                        "https://a.basemaps.cartocdn.com/",
-                        "https://b.basemaps.cartocdn.com/",
-                        "https://c.basemaps.cartocdn.com/",
-                        "https://d.basemaps.cartocdn.com/"
+                        "https://a.basemaps.cartocdn.com/dark_all/",
+                        "https://b.basemaps.cartocdn.com/dark_all/",
+                        "https://c.basemaps.cartocdn.com/dark_all/",
+                        "https://d.basemaps.cartocdn.com/dark_all/"
                     ),
                     "© OpenStreetMap contributors © CARTO"
                 )
@@ -601,7 +605,14 @@ fun SendLocationScreen(
                 )
 
                 // Marker reconciliation — runs whenever the data changes.
+                // ~400ms debounce: GPS fix cycles and reverse-geocode results
+                // mutate [displayedPlaces] several times per second; without
+                // the threshold each change rebuilt markers AND invalidated
+                // the whole MapView (repaint storm). Rapid key changes cancel
+                // this coroutine BEFORE any overlay mutation, so only the
+                // final settled state is painted.
                 LaunchedEffect(displayedPlaces, selectedPin) {
+                    delay(400)
                     val map = mapViewRef.value ?: return@LaunchedEffect
                     map.overlays.removeAll(placeMarkers)
                     placeMarkers.clear()

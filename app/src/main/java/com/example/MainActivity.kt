@@ -19,11 +19,6 @@ import com.example.ui.theme.TriggerHeaderGreen
 
 class MainActivity : androidx.fragment.app.FragmentActivity() {
 
-    companion object {
-        /** True while the app-lock gate is up (biometric setting enabled). */
-        @Volatile
-        var isAppLocked: Boolean = false
-    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.example.di.AppServiceContainer.initialize(this)
@@ -64,11 +59,6 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 override fun onStart(owner: LifecycleOwner) {
                     // App came to foreground
                     (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppForeground()
-                    // App lock (Privacy → "Unlock with biometric"): re-lock on
-                    // every foreground. The flag is a local cache of the
-                    // server setting, written by PrivacySettingsScreen.
-                    val lockPrefs = getSharedPreferences("app_lock_prefs", MODE_PRIVATE)
-                    isAppLocked = lockPrefs.getBoolean("fingerprintLock", false)
                 }
 
                 override fun onStop(owner: LifecycleOwner) {
@@ -84,12 +74,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = TriggerDarkBackground
                 ) {
-                    // App-lock gate: block the whole UI until authenticated.
-                    if (isAppLocked) {
-                        com.example.ui.components.AppLockScreen(onUnlocked = { isAppLocked = false })
-                    } else {
-                        TriggerAppNavHost()
-                    }
+                    TriggerAppNavHost()
                 }
             }
         }

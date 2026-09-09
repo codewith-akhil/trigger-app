@@ -109,7 +109,37 @@ async function handler(req: Request): Promise<Response> {
       console.error("list blocked failed", error);
       return errorResponse("Failed to list blocked contacts", 500, ErrorCode.INTERNAL_ERROR);
     }
-    return json({ blocked: data ?? [] });
+
+    // Enrich rows that map to a real user with profile display data (one
+    // batched lookup). Rows without a resolvable profile keep only
+    // blocked_identifier (null-safe — phone/legacy rows stay untouched).
+    const rows = data ?? [];
+    const profileIds = rows
+      .map(r => r.blocked_user_id)
+      .filter((id): id is string => typeof id === "string" && isUuid(id));
+    const byId = new Map<string, { full_name: string | null; username: string | null; avatar_url: string | null }>();
+    if (profileIds.length > 0) {
+      const { data: profiles, error: pError } = await adminClient
+        .from("profiles")
+        .select("id, full_name, username, avatar_url")
+        .in("id", profileIds);
+      if (pError) {
+        console.warn("list blocked: profile enrichment failed", pError);
+      }
+      for (const p of profiles ?? []) byId.set(p.id, p);
+    }
+
+    return json({
+      blocked: rows.map(r => {
+        const p = r.blocked_user_id ? byId.get(r.blocked_user_id) : undefined;
+        if (!p) return r;
+        return {
+          ...r,
+          display_name: p.full_name || p.username || null,
+          avatar_url: p.avatar_url ?? null,
+        };
+      }),
+    });
   }
 
   if (action === "check") {

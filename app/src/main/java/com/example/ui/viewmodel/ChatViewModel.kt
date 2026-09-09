@@ -276,6 +276,9 @@ class ChatViewModel(
     var currentlyPlayingAudioId = MutableStateFlow<String?>(null)
     var audioPlaybackProgress = MutableStateFlow(0f)
     var audioPlaybackError = MutableStateFlow<String?>(null)
+    /** Message whose LAST playback attempt failed — the bubble renders the
+     *  error inline (previously swallowed, failures were totally silent). */
+    var audioPlaybackFailedId = MutableStateFlow<String?>(null)
     private var audioPlaybackJob: Job? = null
     private var mediaPlayer: android.media.MediaPlayer? = null
 
@@ -586,6 +589,11 @@ class ChatViewModel(
             senderId = "me",
             senderName = "You",
             type = MessageType.AUDIO,
+            // Instant self-playback: the local recording is playable while the
+            // upload runs; completeMediaUpload swaps in the public server URL
+            // when it finishes (previously mediaUrl stayed null and the sender
+            // hit the "Audio unavailable" gate on their OWN voice note).
+            mediaUrl = voiceFile?.absolutePath,
             mediaDurationSec = duration.toInt(),
             status = MessageStatus.SENDING,
             timestamp = time,
@@ -663,29 +671,53 @@ class ChatViewModel(
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
         val msgId = java.util.UUID.randomUUID().toString()
 
-        val message = DomainMessage(
-            id = msgId,
-            conversationId = conversationId,
-            senderId = "me",
-            senderName = "You",
-            type = pending.type,
-            text = pending.caption,
-            fileName = pending.fileName,
-            fileSize = pending.fileSize,
-            // Local preview only for the sender's own bubble — the SERVER row
-            // is created after upload via completeMediaUpload() with the real
-            // signed URL (recipients can never load a content:// URI).
-            mediaUrl = pending.previewUrl,
-            mediaDurationSec = pending.durationSec,
-            isViewOnce = pending.isViewOnce,
-            status = MessageStatus.SENDING,
-            timestamp = time,
-            timestampMillis = System.currentTimeMillis(),
-            isOutgoing = true,
-            idempotencyKey = java.util.UUID.randomUUID().toString()
-        )
-
         viewModelScope.launch {
+            // VIDEO: generate the poster frame + real duration BEFORE staging
+            // so the sender's bubble (and, once the frame is uploaded, the
+            // receiver's) shows a real frame instead of Coil trying — and
+            // failing — to decode the video URL as an image.
+            var thumbnailPath: String? = null
+            var durationSec = pending.durationSec
+            val srcPath = pending.filePath
+            if (pending.type == MessageType.VIDEO && !srcPath.isNullOrBlank()) {
+                try {
+                    withContext(Dispatchers.IO) {
+                        thumbnailPath = com.example.util.MediaCompressor
+                            .extractVideoThumbnailBlocking(AppServiceContainer.context, srcPath)
+                            ?.absolutePath
+                        if (durationSec <= 0) {
+                            durationSec = com.example.util.MediaCompressor
+                                .extractMediaDurationSecBlocking(AppServiceContainer.context, srcPath)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("ChatViewModel", "video thumbnail/duration failed: ${e.message}")
+                }
+            }
+
+            val message = DomainMessage(
+                id = msgId,
+                conversationId = conversationId,
+                senderId = "me",
+                senderName = "You",
+                type = pending.type,
+                text = pending.caption,
+                fileName = pending.fileName,
+                fileSize = pending.fileSize,
+                // Local preview only for the sender's own bubble — the SERVER row
+                // is created after upload via completeMediaUpload() with the real
+                // URL (recipients can never load a content:// URI).
+                mediaUrl = pending.previewUrl,
+                mediaThumbnail = thumbnailPath,
+                mediaDurationSec = durationSec.coerceAtLeast(0),
+                isViewOnce = pending.isViewOnce,
+                status = MessageStatus.SENDING,
+                timestamp = time,
+                timestampMillis = System.currentTimeMillis(),
+                isOutgoing = true,
+                idempotencyKey = java.util.UUID.randomUUID().toString()
+            )
+
             // Stage locally only — send-message is deferred until upload
             // completes so the server row carries the accessible URL.
             messageService.stageOutgoingMessage(message)
@@ -698,6 +730,7 @@ class ChatViewModel(
                 totalBytes = pending.fileSize,
                 filePath = pending.filePath,
                 mimeType = pending.mimeType,
+                thumbnailPath = thumbnailPath,
                 peerId = peerId,
                 peerName = contactName
             )
@@ -1167,9 +1200,11 @@ class ChatViewModel(
     }
 
     // ---------- REAL audio playback ----------
-    // Previously this "played" by animating a progress bar with delay() —
-    // no MediaPlayer existed anywhere in the app. Now streams the message's
-    // mediaUrl (signed URL) and reports real position-based progress.
+    // Streams the message's mediaUrl and reports real position-based progress.
+    // Accepted sources: https(s) (signed/public server URLs), content:// (the
+    // sender's fresh recording) and plain absolute file paths (voice notes
+    // before their upload completes). Previously anything not starting with
+    // "http" was rejected — the sender could never play their OWN voice note.
     fun togglePlayVoice(message: DomainMessage) {
         if (currentlyPlayingAudioId.value == message.id) {
             stopVoicePlayback(resetProgress = true)
@@ -1177,8 +1212,9 @@ class ChatViewModel(
         }
 
         val url = message.mediaUrl
-        if (url.isNullOrBlank() || !url.startsWith("http")) {
+        if (url.isNullOrBlank()) {
             audioPlaybackError.value = "Audio unavailable"
+            audioPlaybackFailedId.value = message.id
             return
         }
 
@@ -1186,6 +1222,7 @@ class ChatViewModel(
         currentlyPlayingAudioId.value = message.id
         audioPlaybackProgress.value = 0f
         audioPlaybackError.value = null
+        audioPlaybackFailedId.value = null
 
         audioPlaybackJob = viewModelScope.launch(Dispatchers.IO) {
             var player: android.media.MediaPlayer? = null
@@ -1198,12 +1235,27 @@ class ChatViewModel(
                         .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
                         .build()
                 )
-                player.setDataSource(url)
+                if (url.startsWith("content://")) {
+                    player.setDataSource(AppServiceContainer.context, android.net.Uri.parse(url))
+                } else {
+                    // MediaPlayer.setDataSource handles BOTH https(s) URLs and
+                    // absolute local file paths.
+                    player.setDataSource(url)
+                }
                 player.setOnCompletionListener {
                     audioPlaybackProgress.value = 1f
                     stopVoicePlayback(resetProgress = false)
                     currentlyPlayingAudioId.value = null
                     audioPlaybackProgress.value = 0f
+                }
+                player.setOnErrorListener { _, what, extra ->
+                    Log.w("ChatViewModel", "Audio player error: what=$what extra=$extra")
+                    if (isActive) {
+                        audioPlaybackError.value = "Playback failed"
+                        audioPlaybackFailedId.value = message.id
+                        stopVoicePlayback(resetProgress = false)
+                    }
+                    true
                 }
                 player.prepare()  // blocking — we're on Dispatchers.IO
                 player.start()
@@ -1218,9 +1270,26 @@ class ChatViewModel(
                 if (isActive) {
                     Log.w("ChatViewModel", "Audio playback failed: ${e.message}")
                     audioPlaybackError.value = "Playback failed"
-                    stopVoicePlayback(resetProgress = true)
+                    audioPlaybackFailedId.value = message.id
+                    stopVoicePlayback(resetProgress = false)
                 }
             }
+        }
+    }
+
+    /** Seeks the CURRENTLY PLAYING message's audio to [fraction] (0..1) —
+     *  wired to taps on the bubble's waveform. Ignored for other messages. */
+    fun seekAudioTo(messageId: String, fraction: Float) {
+        if (currentlyPlayingAudioId.value != messageId) return
+        val player = mediaPlayer ?: return
+        try {
+            val duration = player.duration
+            if (duration > 0) {
+                player.seekTo((duration * fraction.coerceIn(0f, 1f)).toInt())
+                audioPlaybackProgress.value = fraction.coerceIn(0f, 1f)
+            }
+        } catch (_: Exception) {
+            // Player already released mid-tap — harmless.
         }
     }
 

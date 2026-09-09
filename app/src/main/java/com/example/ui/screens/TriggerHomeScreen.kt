@@ -86,13 +86,8 @@ fun TriggerHomeScreen(
                         onDismissRequest = { showMenu = false },
                         modifier = Modifier.background(Color.White)
                     ) {
-                        DropdownMenuItem(
-                            text = { Text("Restart Onboarding", color = GeometricTextPrimary) },
-                            onClick = {
-                                showMenu = false
-                                onRestartFlow()
-                            }
-                        )
+                        // (The dead "Restart Onboarding" item was removed — this
+                        // HOME route is unreachable from the live flow anyway.)
                         DropdownMenuItem(
                             text = { Text("Help", color = GeometricTextPrimary) },
                             onClick = {

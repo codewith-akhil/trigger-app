@@ -15,6 +15,8 @@ import com.example.model.LanguageRepository
 import com.example.di.AppServiceContainer
 import com.example.ui.components.NotificationPermissionDialog
 import com.example.ui.screens.*
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ui.viewmodel.DashboardViewModel
 
 object TriggerDestinations {
     const val LANDING = "landing"
@@ -39,6 +41,8 @@ object TriggerDestinations {
     const val SETTINGS_NOTIFICATIONS = "settings_notifications"
     const val SETTINGS_STORAGE = "settings_storage"
     const val SETTINGS_HELP = "settings_help"
+    const val SETTINGS_BLOCKED = "settings_blocked"
+    const val NOTIFICATIONS = "notifications"
     const val HELP = "help"
     const val SCHEDULE_STREAM = "schedule_stream"
     const val STREAM_HISTORY = "stream_history"
@@ -299,17 +303,63 @@ fun TriggerAppNavHost(
                 onOpenSettings = {
                     navController.navigate(TriggerDestinations.SETTINGS)
                 },
+                onOpenNotifications = {
+                    navController.navigate(TriggerDestinations.NOTIFICATIONS)
+                },
                 onNavigateToScheduleStream = {
                     navController.navigate(TriggerDestinations.SCHEDULE_STREAM)
                 },
                 onNavigateToStreamHistory = {
                     navController.navigate(TriggerDestinations.STREAM_HISTORY)
                 },
-                onRestartFlow = {
-                    navController.navigate(TriggerDestinations.LANDING) {
-                        popUpTo(0) { inclusive = true }
+                onLogout = {
+                    // The dashboard "Restart Onboarding Flow" menu item was
+                    // removed; logout keeps the full-cleanup chain (same as the
+                    // PROFILE route): presence offline -> realtime disconnect
+                    // -> server signOut -> Room/vault/wallet wipe, THEN navigate.
+                    com.example.service.AccountStateManager.performLogout {
+                        navController.navigate(TriggerDestinations.LANDING) {
+                            popUpTo(0) { inclusive = true }
+                        }
                     }
                 }
+            )
+        }
+
+        composable(TriggerDestinations.NOTIFICATIONS) {
+            // Same DashboardViewModel instance the dashboard renders from
+            // (scoped to the DASHBOARD back-stack entry) so the bell badge
+            // clears the moment rows are marked read. Falls back silently
+            // when the dashboard is not on the back stack — the badge
+            // re-derives on the next dashboard composition anyway.
+            val dashboardEntry = remember(navController) {
+                runCatching { navController.getBackStackEntry(TriggerDestinations.DASHBOARD) }.getOrNull()
+            }
+            val dashboardViewModel = dashboardEntry?.let { entry ->
+                viewModel<DashboardViewModel>(viewModelStoreOwner = entry)
+            }
+            NotificationsScreen(
+                onBack = { navController.popBackStack() },
+                onNotificationsRead = { dashboardViewModel?.clearNotificationsBadge() },
+                onMessageActor = { conversationId, actorId, actorName ->
+                    // ChatScreen resolves (or creates) the conversation from
+                    // the peer uuid when conversationId is empty (H4).
+                    activeChatConversationId = conversationId
+                    activeChatPeerId = actorId
+                    activeChatContactName = actorName
+                    activeChatAvatarRes = null
+                    navController.navigate(TriggerDestinations.CHAT) { launchSingleTop = true }
+                },
+                onOpenUserProfile = { user ->
+                    activeUserProfileUser = user
+                    navController.navigate(TriggerDestinations.USER_PROFILE)
+                }
+            )
+        }
+
+        composable(TriggerDestinations.SETTINGS_BLOCKED) {
+            BlockedUsersScreen(
+                onBack = { navController.popBackStack() }
             )
         }
 
@@ -406,7 +456,10 @@ fun TriggerAppNavHost(
 
         composable(TriggerDestinations.SETTINGS_PRIVACY) {
             PrivacySettingsScreen(
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onNavigateBlockedUsers = {
+                    navController.navigate(TriggerDestinations.SETTINGS_BLOCKED)
+                }
             )
         }
 

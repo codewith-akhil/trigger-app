@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [MessageEntity::class, ConversationEntity::class],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -35,12 +35,28 @@ abstract class ChatDatabase : RoomDatabase() {
                         UNIFY_CONVERSATION_IDS_AND_MEDIA_PATHS,
                         ADD_CALL_LOG_FIELDS,
                         ADD_CONVERSATION_LAST_ACTIVITY,
-                        ADD_CONVERSATION_DISAPPEARING_TIMESTAMP
+                        ADD_CONVERSATION_DISAPPEARING_TIMESTAMP,
+                        ADD_CONVERSATION_REQUEST_STATUS_AND_AVATAR
                     )
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        // Migration 9 → 10: chat-list dedupe + completeness columns.
+        //  - conversations.requestStatus — mirrors conversations.request_status
+        //    ("pending"/"accepted"/"declined"/"blocked"); declined/blocked
+        //    mirrors are dropped from the local list on every pull.
+        //  - conversations.peerAvatarUrl — the OTHER user's public avatar URL
+        //    (conversations.peer_avatar_url, profile-resolved on mirrored rows).
+        // Column defaults match the ConversationEntity Kotlin defaults; existing
+        // rows are the accepted, avatar-less legacy state.
+        private val ADD_CONVERSATION_REQUEST_STATUS_AND_AVATAR = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE conversations ADD COLUMN requestStatus TEXT NOT NULL DEFAULT 'accepted'")
+                db.execSQL("ALTER TABLE conversations ADD COLUMN peerAvatarUrl TEXT")
             }
         }
 

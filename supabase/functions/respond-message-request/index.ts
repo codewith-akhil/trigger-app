@@ -152,6 +152,21 @@ async function handler(req: Request): Promise<Response> {
   await supabase.from("contacts").upsert({ user_id: userId, contact_user_id: msgReq.sender_id }, { onConflict: "user_id,contact_user_id" });
   await supabase.from("contacts").upsert({ user_id: msgReq.sender_id, contact_user_id: userId }, { onConflict: "user_id,contact_user_id" });
 
+  // In-app notification for the requester (their request was accepted by the
+  // receiver). Non-fatal: the acceptance already succeeded above.
+  try {
+    const { error: notifErr } = await supabase.from("user_notifications").insert({
+      user_id: msgReq.sender_id,
+      actor_id: userId,
+      type: "message_request_accepted",
+    });
+    if (notifErr) {
+      console.warn("respond-message-request: notification insert failed", notifErr);
+    }
+  } catch (notifErr) {
+    console.warn("respond-message-request: notification insert threw", notifErr);
+  }
+
   return json({ accepted: true, conversationId: canonicalId });
 }
 serve(handler, { port: 9034 });

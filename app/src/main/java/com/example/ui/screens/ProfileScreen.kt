@@ -35,7 +35,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
@@ -44,9 +43,9 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.outlined.AlternateEmail
 import androidx.compose.material.icons.outlined.Cake
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Public
@@ -94,7 +93,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -140,14 +138,11 @@ private val RESERVED_USERNAMES = setOf(
 )
 
 // ============================================================================
-// About / Links limits
+// About limits
 // ============================================================================
 private const val MIN_NAME = 2
 private const val MAX_NAME = 50
 private const val MAX_ABOUT = 350
-private const val MAX_LINK_NAME = 25
-private const val MAX_LINK_URL = 2048
-private const val MAX_LINKS = 3
 private const val MIN_DOB_AGE = 13
 private const val MAX_DOB_AGE = 120
 
@@ -166,26 +161,6 @@ private fun validateName(name: String): String? {
     // and control characters.
     if (!Regex("^[\\p{L}][\\p{L}\\s'\\-.,]*$").matches(trimmed)) {
         return "Name can only contain letters, spaces, hyphens, and apostrophes"
-    }
-    return null
-}
-
-/**
- * Validates a URL: must start with http:// or https://, max 2048 chars,
- * must have a valid hostname.
- */
-private fun validateUrl(url: String): String? {
-    val trimmed = url.trim()
-    if (trimmed.isEmpty()) return "URL is required"
-    if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-        return "URL must start with http:// or https://"
-    }
-    if (trimmed.length > MAX_LINK_URL) return "URL is too long (max $MAX_LINK_URL chars)"
-    try {
-        val u = java.net.URI(trimmed)
-        if (u.host.isNullOrBlank()) return "URL is missing a domain"
-    } catch (_: Exception) {
-        return "Invalid URL format"
     }
     return null
 }
@@ -210,8 +185,6 @@ private fun validateDob(dobStr: String): String? {
         "Invalid date format"
     }
 }
-
-private data class LinkItem(val name: String, val url: String)
 
 private sealed class UsernameAvailability {
     object Idle : UsernameAvailability()
@@ -289,7 +262,6 @@ fun ProfileScreen(
     var showEditNameDialog by remember { mutableStateOf(false) }
     var showEditAboutDialog by remember { mutableStateOf(false) }
     var showEditUsernameDialog by remember { mutableStateOf(false) }
-    var showEditLinksDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showPhotoSheet by remember { mutableStateOf(false) }
     var showPhotoViewer by remember { mutableStateOf(false) }
@@ -303,7 +275,6 @@ fun ProfileScreen(
     var isNameSaving by remember { mutableStateOf(false) }
     var isAboutSaving by remember { mutableStateOf(false) }
     var isUsernameSaving by remember { mutableStateOf(false) }
-    var isLinksSaving by remember { mutableStateOf(false) }
     var isGenderSaving by remember { mutableStateOf(false) }
     var isCountrySaving by remember { mutableStateOf(false) }
     var isDobSaving by remember { mutableStateOf(false) }
@@ -726,23 +697,6 @@ fun ProfileScreen(
 
                     HorizontalDivider(color = TriggerDivider, thickness = 1.dp)
 
-                    // 3b) Links — opens the LinksEditDialog. The dialog existed
-                    // but NO row could ever set showEditLinksDialog=true, so
-                    // the editor was unreachable.
-                    ProfileDetailItem(
-                        icon = Icons.Outlined.Link,
-                        label = "Links",
-                        value = run {
-                            val n = try { org.json.JSONArray(profile.links).length() } catch (e: Exception) { 0 }
-                            if (n > 0) "$n link${if (n == 1) "" else "s"}" else "Add links"
-                        },
-                        isValueGreen = false,
-                        onClick = { showEditLinksDialog = true },
-                        testTag = "profile_links_item"
-                    )
-
-                    HorizontalDivider(color = TriggerDivider, thickness = 1.dp)
-
                     // 4) Email — read-only (no edit icon, not clickable)
                     ProfileDetailItem(
                         icon = Icons.Outlined.Email,
@@ -914,6 +868,31 @@ fun ProfileScreen(
                     Text("Gallery", fontSize = 16.sp, color = TriggerTextPrimary)
                 }
 
+                // Remove profile picture — only when a photo is set. Opens the
+                // SAME compact confirm dialog used by the photo viewer's trash
+                // action (which calls removeAvatar()).
+                if (profile.avatarUri != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showPhotoSheet = false
+                                showDeletePhotoConfirm = true
+                            }
+                            .padding(horizontal = 24.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Delete,
+                            contentDescription = "Remove profile picture",
+                            tint = Color(0xFFEA4335),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(20.dp))
+                        Text("Remove profile picture", fontSize = 16.sp, color = Color(0xFFEA4335))
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
@@ -1028,7 +1007,7 @@ fun ProfileScreen(
     }
 
     // ------------------------------------------------------------------------
-    // Edit dialogs — Name / About / Username / Links
+    // Edit dialogs — Name / About / Username
     // ------------------------------------------------------------------------
     if (showEditNameDialog) {
         ProfileEditDialog(
@@ -1106,31 +1085,6 @@ fun ProfileScreen(
                         showEditUsernameDialog = false
                     } else {
                         val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save username"
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
-        )
-    }
-
-    if (showEditLinksDialog) {
-        LinksEditDialog(
-            initialLinksJson = profile.links,
-            isSaving = isLinksSaving,
-            onDismiss = { if (!isLinksSaving) showEditLinksDialog = false },
-            onConfirm = { linksJson ->
-                isLinksSaving = true
-                coroutineScope.launch {
-                    val arr = JSONArray(linksJson)
-                    val payload = JSONObject().put("links", arr)
-                    val result = AppServiceContainer.supabaseClient.invokeFunction("sync-user-profile", payload)
-                    isLinksSaving = false
-                    if (result is SupabaseResult.Success) {
-                        UserRepository.updateLinks(linksJson)
-                        Toast.makeText(context, "Links saved", Toast.LENGTH_SHORT).show()
-                        showEditLinksDialog = false
-                    } else {
-                        val err = (result as? SupabaseResult.Error)?.message ?: "Failed to save links"
                         Toast.makeText(context, err, Toast.LENGTH_LONG).show()
                     }
                 }
@@ -1739,224 +1693,6 @@ fun UsernameEditDialog(
             Button(
                 onClick = { onConfirm(cleanUsername) },
                 enabled = canSave,
-                colors = ButtonDefaults.buttonColors(containerColor = TriggerGreenAccent),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                SaveButtonContent(isSaving = isSaving)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !isSaving) {
-                Text("Cancel", color = TriggerTextSecondary)
-            }
-        }
-    )
-}
-
-// ============================================================================
-// LinksEditDialog — list of {name, url} pairs with Add (max 3) and per-row
-// delete. Stored as a JSON array string in UserProfile.links.
-// ============================================================================
-@Composable
-fun LinksEditDialog(
-    initialLinksJson: String,
-    isSaving: Boolean,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    val initialLinks = remember(initialLinksJson) {
-        try {
-            val arr = JSONArray(initialLinksJson)
-            (0 until arr.length()).map { i ->
-                val obj = arr.getJSONObject(i)
-                LinkItem(obj.optString("label").ifEmpty { obj.optString("name") }, obj.optString("url"))
-            }
-        } catch (_: Exception) {
-            emptyList()
-        }
-    }
-
-    var links by remember { mutableStateOf(initialLinks) }
-    var newName by remember { mutableStateOf("") }
-    var newUrl by remember { mutableStateOf("") }
-
-    // Use the shared validateUrl function for thorough URL validation
-    // (checks protocol, hostname, length).
-    val urlError = if (newUrl.isEmpty()) null else validateUrl(newUrl)
-    val nameError = if (newName.isEmpty()) null else if (newName.length > MAX_LINK_NAME) "Name too long (max $MAX_LINK_NAME)" else null
-    val canAdd = !isSaving &&
-        links.size < MAX_LINKS &&
-        newName.isNotBlank() &&
-        newName.length <= MAX_LINK_NAME &&
-        urlError == null &&
-        newUrl.isNotBlank()
-
-    AlertDialog(
-        onDismissRequest = { if (!isSaving) onDismiss() },
-        containerColor = Color.White,
-        shape = RoundedCornerShape(16.dp),
-        title = {
-            Text(text = "Links", color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                if (links.isEmpty()) {
-                    Text(
-                        text = "No links yet. Add up to $MAX_LINKS.",
-                        fontSize = 13.sp,
-                        color = TriggerTextSecondary,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                } else {
-                    links.forEachIndexed { idx, link ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = link.name.ifBlank { "Untitled" },
-                                    fontWeight = FontWeight.Medium,
-                                    color = TriggerTextPrimary,
-                                    fontSize = 14.sp
-                                )
-                                Text(
-                                    text = link.url,
-                                    color = TriggerTextSecondary,
-                                    fontSize = 12.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            IconButton(
-                                onClick = {
-                                    links = links.toMutableList().also { it.removeAt(idx) }
-                                },
-                                enabled = !isSaving
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Delete,
-                                    contentDescription = "Delete link",
-                                    tint = TriggerDanger
-                                )
-                            }
-                        }
-                    }
-                }
-
-                HorizontalDivider(color = TriggerDivider, thickness = 1.dp, modifier = Modifier.padding(vertical = 8.dp))
-
-                Text(
-                    text = "Add new",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = TriggerTextSecondary
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-
-                OutlinedTextField(
-                    value = newName,
-                    onValueChange = { if (it.length <= MAX_LINK_NAME) newName = it },
-                    label = { Text("Name (max $MAX_LINK_NAME)") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = TriggerTextPrimary,
-                        unfocusedTextColor = TriggerTextPrimary,
-                        focusedBorderColor = TriggerGreenAccent,
-                        unfocusedBorderColor = Color(0xFFCFD8DC),
-                        cursorColor = TriggerGreenAccent
-                    ),
-                    enabled = !isSaving && links.size < MAX_LINKS,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                OutlinedTextField(
-                    value = newUrl,
-                    onValueChange = { newUrl = it },
-                    label = { Text("URL (https://...)") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    isError = urlError != null,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = TriggerTextPrimary,
-                        unfocusedTextColor = TriggerTextPrimary,
-                        focusedBorderColor = TriggerGreenAccent,
-                        unfocusedBorderColor = Color(0xFFCFD8DC),
-                        cursorColor = TriggerGreenAccent
-                    ),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Uri,
-                        imeAction = ImeAction.Done
-                    ),
-                    enabled = !isSaving && links.size < MAX_LINKS,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (urlError != null) {
-                    Text(
-                        text = urlError,
-                        color = TriggerDanger,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Button(
-                        onClick = {
-                            if (canAdd) {
-                                links = links + LinkItem(
-                                    name = newName.trim().take(MAX_LINK_NAME),
-                                    url = newUrl.trim()
-                                )
-                                newName = ""
-                                newUrl = ""
-                            }
-                        },
-                        enabled = canAdd,
-                        colors = ButtonDefaults.buttonColors(containerColor = TriggerFabGreen),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Add,
-                            contentDescription = "Add link",
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Add", color = Color.White)
-                    }
-                }
-
-                if (links.size >= MAX_LINKS) {
-                    Text(
-                        text = "Maximum $MAX_LINKS links reached.",
-                        fontSize = 12.sp,
-                        color = TriggerTextSecondary,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val arr = JSONArray()
-                    links.forEach { l ->
-                        arr.put(JSONObject().put("label", l.name).put("url", l.url))
-                    }
-                    onConfirm(arr.toString())
-                },
-                enabled = !isSaving,
                 colors = ButtonDefaults.buttonColors(containerColor = TriggerGreenAccent),
                 shape = RoundedCornerShape(8.dp)
             ) {

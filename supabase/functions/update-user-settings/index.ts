@@ -20,9 +20,9 @@
 //     "twoStepEnabled"?: boolean,
 //     "readReceipts"?: boolean,
 //     "fingerprintLock"?: boolean,
-//     "lastSeen"?: "everyone" | "contacts" | "nobody",
-//     "profilePhotoVisibility"?: "everyone" | "contacts" | "nobody",
-//     "aboutVisibility"?: "everyone" | "contacts" | "nobody",
+//     "lastSeen"?: "everyone" | "contacts" | "followers" | "following" | "nobody",
+//     "profilePhotoVisibility"?: "everyone" | "contacts" | "followers" | "following" | "nobody",
+//     "aboutVisibility"?: "everyone" | "contacts" | "followers" | "following" | "nobody",
 //     "groupsVisibility"?: "everyone" | "contacts" | "nobody",
 //     "disappearingDefault"?: "OFF" | "24H" | "7D" | "90D",
 //     "enterIsSend"?: boolean,
@@ -51,6 +51,10 @@ import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
 import { checkRateLimit, RATE_LIMITS } from "../_shared/rate_limit.ts";
 
 type Visibility = "everyone" | "contacts" | "nobody";
+// Social visibility — superset accepted for lastSeen / profilePhotoVisibility /
+// aboutVisibility. 'contacts' stays valid for old clients; new clients write
+// 'followers' | 'following'. Mirrors the widened user_settings CHECKs.
+type SocialVisibility = "everyone" | "contacts" | "followers" | "following" | "nobody";
 type Disappearing = "OFF" | "24H" | "7D" | "90D";
 type FontSize = "small" | "medium" | "large";
 type MediaMode = "auto" | "on" | "off";
@@ -60,9 +64,9 @@ interface Body {
   twoStepEnabled?: boolean;
   readReceipts?: boolean;
   fingerprintLock?: boolean;
-  lastSeen?: Visibility;
-  profilePhotoVisibility?: Visibility;
-  aboutVisibility?: Visibility;
+  lastSeen?: SocialVisibility;
+  profilePhotoVisibility?: SocialVisibility;
+  aboutVisibility?: SocialVisibility;
   groupsVisibility?: Visibility;
   disappearingDefault?: Disappearing;
   enterIsSend?: boolean;
@@ -82,6 +86,7 @@ interface Body {
 }
 
 const VISIBILITY: Visibility[] = ["everyone", "contacts", "nobody"];
+const SOCIAL_VISIBILITY: SocialVisibility[] = ["everyone", "contacts", "followers", "following", "nobody"];
 const DISAPPEARING: Disappearing[] = ["OFF", "24H", "7D", "90D"];
 const FONT_SIZE: FontSize[] = ["small", "medium", "large"];
 const MEDIA_MODE: MediaMode[] = ["auto", "on", "off"];
@@ -139,6 +144,11 @@ async function handler(req: Request): Promise<Response> {
       case "lastSeen":
       case "profilePhotoVisibility":
       case "aboutVisibility":
+        if (!isIn(value, SOCIAL_VISIBILITY)) {
+          return errorResponse(`${field} must be one of: ${SOCIAL_VISIBILITY.join(", ")}`, 422, ErrorCode.VALIDATION_FAILED);
+        }
+        patch[col] = value;
+        break;
       case "groupsVisibility":
         if (!isIn(value, VISIBILITY)) {
           return errorResponse(`${field} must be one of: ${VISIBILITY.join(", ")}`, 422, ErrorCode.VALIDATION_FAILED);

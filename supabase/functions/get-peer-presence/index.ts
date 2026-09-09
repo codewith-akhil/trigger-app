@@ -5,9 +5,12 @@
 // Returns the peer's online state + last-seen ONLY when the peer allows it:
 //   - viewer must share an ACCEPTED conversation with the peer (same gate as
 //     the user_presences RLS), otherwise visible=false;
-//   - peer's user_settings.last_seen = 'nobody'           → visible=false;
-//   - 'contacts' → visible only when the peer has the viewer in their
-//     contacts table; 'everyone' → visible.
+//   - peer's user_settings.last_seen = 'nobody'            → visible=false;
+//   - 'followers' (or legacy 'contacts') → visible only when the VIEWER
+//     follows the PEER (viewer ∈ peer's followers);
+//   - 'following' → visible only when the PEER follows the VIEWER
+//     (viewer ∈ the peers the peer follows);
+//   - 'everyone' → visible.
 // When visible=false the client renders a BLANK subtitle (never "offline").
 //
 // Auth: requires a valid Supabase JWT.
@@ -77,6 +80,8 @@ async function handler(req: Request): Promise<Response> {
   }
 
   // 2. Peer's privacy setting (default 'everyone' when unset).
+  //    'contacts' is a legacy token — the social graph replaced the contacts
+  //    table as the relationship source, so it is treated as 'followers'.
   const { data: settings } = await admin
     .from("user_settings")
     .select("last_seen")
@@ -87,14 +92,32 @@ async function handler(req: Request): Promise<Response> {
   let visible = true;
   if (lastSeenSetting === "nobody") {
     visible = false;
-  } else if (lastSeenSetting === "contacts") {
-    const { data: contact } = await admin
-      .from("contacts")
-      .select("contact_user_id")
-      .eq("user_id", peerId)
-      .eq("contact_user_id", userId)
-      .limit(1);
-    visible = Array.isArray(contact) && contact.length > 0;
+  } else if (lastSeenSetting === "followers" || lastSeenSetting === "contacts") {
+    // Audience = the peer's followers → the viewer must follow the peer.
+    const { data: follow, error: followErr } = await admin
+      .from("follows")
+      .select("id")
+      .eq("follower_id", userId)
+      .eq("following_id", peerId)
+      .maybeSingle();
+    if (followErr) {
+      console.error("get-peer-presence followers check failed", followErr);
+      return errorResponse("Failed to resolve follow state", 500, ErrorCode.INTERNAL_ERROR);
+    }
+    visible = !!follow;
+  } else if (lastSeenSetting === "following") {
+    // Audience = users the peer follows → the peer must follow the viewer.
+    const { data: follow, error: followErr } = await admin
+      .from("follows")
+      .select("id")
+      .eq("follower_id", peerId)
+      .eq("following_id", userId)
+      .maybeSingle();
+    if (followErr) {
+      console.error("get-peer-presence following check failed", followErr);
+      return errorResponse("Failed to resolve follow state", 500, ErrorCode.INTERNAL_ERROR);
+    }
+    visible = !!follow;
   }
   if (!visible) {
     return json({ online: false, lastSeenAt: null, visible: false });

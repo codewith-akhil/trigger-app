@@ -57,6 +57,20 @@ class ChatRepositoryImpl(
         }
     }
 
+    /** Refreshes a conversation row's last-message preview + activity stamp so
+     *  the dashboard chat list reorders/completes on live events without
+     *  waiting for the next sync-conversations pull. No-op when the row does
+     *  not exist (the caller ensures it first). */
+    suspend fun updateConversationLastMessage(
+        id: String,
+        preview: String,
+        timestamp: String,
+        timestampMillis: Long
+    ) {
+        if (conversationDao.getConversationByIdOnce(id) == null) return
+        conversationDao.updateLastMessage(id, preview, timestamp, timestampMillis)
+    }
+
     fun getMessages(conversationId: String): Flow<List<DomainMessage>> {
         return messageDao.getMessagesForConversation(conversationId).map { list ->
             list.map { entity ->

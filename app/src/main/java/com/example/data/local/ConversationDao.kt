@@ -20,6 +20,16 @@ interface ConversationDao {
     @Query("SELECT * FROM conversations WHERE peerId = :peerId LIMIT 1")
     suspend fun getConversationByPeer(peerId: String): ConversationEntity?
 
+    /** One-shot snapshot of every conversation row — used by the dashboard
+     *  sync to purge legacy rows that the server pull no longer contains. */
+    @Query("SELECT * FROM conversations")
+    suspend fun getAllConversationRowsOnce(): List<ConversationEntity>
+
+    /** Batch delete by primary key — removes dedupe losers, declined/blocked
+     *  mirrors and legacy non-UUID rows during the sync-conversations pull. */
+    @Query("DELETE FROM conversations WHERE id IN (:ids)")
+    suspend fun deleteConversationsByIds(ids: List<String>)
+
     @Query("UPDATE conversations SET peerId = :peerId WHERE id = :id")
     suspend fun updatePeerId(id: String, peerId: String?)
 

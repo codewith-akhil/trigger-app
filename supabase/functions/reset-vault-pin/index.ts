@@ -9,8 +9,10 @@
 //   Step 1 (no body, or {"action":"send_otp"}) → emails a 6-digit OTP via the
 //          existing send-email-otp machinery (60s cooldown enforced there).
 //   Step 2 ({"action":"reset","otp":"123456","newPin":"654321"}) → verifies
-//          the OTP via verify-email-otp, then clears the lockout + sets the
-//          new hashed PIN (without requiring the old PIN).
+//          the OTP via verify-email-otp, then clears the lockout (attempts=0
+//          AND first_fail_at=null — closes the 3-strikes/24h window introduced
+//          in 20260922_vault_lockout.sql) + sets the new hashed PIN (without
+//          requiring the old PIN).
 //
 // Auth: requires a valid Supabase JWT.
 // ----------------------------------------------------------------------------
@@ -163,9 +165,11 @@ async function handler(req: Request): Promise<Response> {
     const salt = crypto.randomUUID();
     const hash = await sha256Hex(`${newPin}:${salt}`);
     const pinHash = `${salt}:${hash}`;
+    // attempts + first_fail_at are cleared together so the 3-strikes/24h
+    // window (20260922_vault_lockout.sql) fully restarts after a reset.
     const { error: pinError } = await supabase
       .from("vault_pins")
-      .upsert({ user_id: userId, pin_hash: pinHash, attempts: 0 }, { onConflict: "user_id" });
+      .upsert({ user_id: userId, pin_hash: pinHash, attempts: 0, first_fail_at: null }, { onConflict: "user_id" });
     if (pinError) {
       console.error("vault pin reset failed", pinError);
       return errorResponse("Failed to reset vault PIN", 500);

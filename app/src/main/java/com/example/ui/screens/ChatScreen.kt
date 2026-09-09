@@ -38,6 +38,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.EmojiEmotions
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.*
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -80,6 +81,7 @@ import coil.compose.AsyncImage
 import com.example.R
 import com.example.di.AppServiceContainer
 import com.example.model.*
+import com.example.service.VaultMediaItem
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.ChatViewModel
 import com.example.ui.viewmodel.SearchFilter
@@ -205,6 +207,11 @@ fun ChatScreen(
     val activeViewerMessage by viewModel.activeViewerMessage.collectAsState()
     val currentlyPlayingAudioId by viewModel.currentlyPlayingAudioId.collectAsState()
     val audioProgress by viewModel.audioPlaybackProgress.collectAsState()
+    // Inline audio playback failure + voice recording error (both were
+    // previously swallowed — failures were totally silent).
+    val audioPlaybackFailedId by viewModel.audioPlaybackFailedId.collectAsState()
+    val audioPlaybackError by viewModel.audioPlaybackError.collectAsState()
+    val voiceError by viewModel.voiceErrorMessage.collectAsState()
 
     val context = LocalContext.current
     val isBlocked = conversationInfo?.isBlocked ?: false
@@ -240,6 +247,11 @@ fun ChatScreen(
     var isEmojiPickerOpen by remember { mutableStateOf(false) }
     var isGifPickerOpen by remember { mutableStateOf(false) }
     var showArchiveConfirmDialog by remember { mutableStateOf(false) }
+
+    // ---- Vault attach flow (third attach-sheet row) ----
+    // PIN is verified on EVERY entry — the unlock is never cached for this flow.
+    var showVaultPinDialog by remember { mutableStateOf(false) }
+    var showVaultPickerSheet by remember { mutableStateOf(false) }
 
     // Track the long-pressed message so we can show Edit/Reply/Delete/Copy
     // actions in the selection action bar.
@@ -555,119 +567,124 @@ fun ChatScreen(
         containerColor = WhatsAppChatBg,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            when {
-                selectedIds.isNotEmpty() -> {
-                    // Selection Mode Action Bar — with Edit, Reply, Delete, Copy
-                    val firstSelected = messages.find { it.id == selectedIds.first() }
-                    val canEdit = selectedIds.size == 1 && firstSelected != null &&
-                        firstSelected.isOutgoing &&
-                        firstSelected.type == MessageType.TEXT &&
-                        (System.currentTimeMillis() - firstSelected.timestampMillis) <= 15L * 60 * 1000
-                    ChatSelectionTopBar(
-                        selectedCount = selectedIds.size,
-                        onClearSelection = { viewModel.clearSelection() },
-                        onReply = {
-                            val msg = messages.find { it.id == selectedIds.first() }
-                            if (msg != null) viewModel.replyToSelected(msg)
-                        },
-                        onDelete = { showDeleteDialog = true },
-                        onCopy = {
-                            val selectedTexts = messages
-                                .filter { selectedIds.contains(it.id) }
-                                .joinToString("\n") { it.text }
-                            clipboardManager.setText(AnnotatedString(selectedTexts))
-                            viewModel.clearSelection()
-                        },
-                        onEdit = if (canEdit && firstSelected != null) {
-                            { viewModel.startEditing(firstSelected) }
-                        } else null
-                    )
-                }
+            // The SendLocation overlay covers the whole screen with its OWN
+            // header — keeping the chat topBar composed underneath made two
+            // stacked headers flicker on every map repaint.
+            if (!showSendLocationScreen) {
+                when {
+                    selectedIds.isNotEmpty() -> {
+                        // Selection Mode Action Bar — with Edit, Reply, Delete, Copy
+                        val firstSelected = messages.find { it.id == selectedIds.first() }
+                        val canEdit = selectedIds.size == 1 && firstSelected != null &&
+                            firstSelected.isOutgoing &&
+                            firstSelected.type == MessageType.TEXT &&
+                            (System.currentTimeMillis() - firstSelected.timestampMillis) <= 15L * 60 * 1000
+                        ChatSelectionTopBar(
+                            selectedCount = selectedIds.size,
+                            onClearSelection = { viewModel.clearSelection() },
+                            onReply = {
+                                val msg = messages.find { it.id == selectedIds.first() }
+                                if (msg != null) viewModel.replyToSelected(msg)
+                            },
+                            onDelete = { showDeleteDialog = true },
+                            onCopy = {
+                                val selectedTexts = messages
+                                    .filter { selectedIds.contains(it.id) }
+                                    .joinToString("\n") { it.text }
+                                clipboardManager.setText(AnnotatedString(selectedTexts))
+                                viewModel.clearSelection()
+                            },
+                            onEdit = if (canEdit && firstSelected != null) {
+                                { viewModel.startEditing(firstSelected) }
+                            } else null
+                        )
+                    }
 
-                isSearchMode -> {
-                    // In-Chat Search Bar with filter chips
-                    ChatSearchTopBar(
-                        query = inChatSearchQuery,
-                        onQueryChanged = {
-                            viewModel.inChatSearchQuery.value = it
-                            // Re-run server-side search when query changes
-                            if (it.isNotBlank()) {
-                                viewModel.runSearchEx(searchFilter, query = it)
-                            } else {
+                    isSearchMode -> {
+                        // In-Chat Search Bar with filter chips
+                        ChatSearchTopBar(
+                            query = inChatSearchQuery,
+                            onQueryChanged = {
+                                viewModel.inChatSearchQuery.value = it
+                                // Re-run server-side search when query changes
+                                if (it.isNotBlank()) {
+                                    viewModel.runSearchEx(searchFilter, query = it)
+                                } else {
+                                    viewModel.searchResultsEx.value = emptyList()
+                                }
+                            },
+                            matchCount = matchingIndices.size,
+                            currentIndex = if (matchingIndices.isEmpty()) 0 else currentMatchIndex + 1,
+                            onCloseSearch = {
+                                viewModel.isSearchMode.value = false
+                                viewModel.inChatSearchQuery.value = ""
                                 viewModel.searchResultsEx.value = emptyList()
+                            },
+                            onNextMatch = {
+                                if (matchingIndices.isNotEmpty()) {
+                                    currentMatchIndex = (currentMatchIndex + 1) % matchingIndices.size
+                                }
+                            },
+                            onPreviousMatch = {
+                                if (matchingIndices.isNotEmpty()) {
+                                    currentMatchIndex = if (currentMatchIndex <= 0) matchingIndices.size - 1 else currentMatchIndex - 1
+                                }
+                            },
+                            searchFilter = searchFilter,
+                            onFilterSelected = { filter ->
+                                viewModel.runSearchEx(filter, query = inChatSearchQuery)
                             }
-                        },
-                        matchCount = matchingIndices.size,
-                        currentIndex = if (matchingIndices.isEmpty()) 0 else currentMatchIndex + 1,
-                        onCloseSearch = {
-                            viewModel.isSearchMode.value = false
-                            viewModel.inChatSearchQuery.value = ""
-                            viewModel.searchResultsEx.value = emptyList()
-                        },
-                        onNextMatch = {
-                            if (matchingIndices.isNotEmpty()) {
-                                currentMatchIndex = (currentMatchIndex + 1) % matchingIndices.size
-                            }
-                        },
-                        onPreviousMatch = {
-                            if (matchingIndices.isNotEmpty()) {
-                                currentMatchIndex = if (currentMatchIndex <= 0) matchingIndices.size - 1 else currentMatchIndex - 1
-                            }
-                        },
-                        searchFilter = searchFilter,
-                        onFilterSelected = { filter ->
-                            viewModel.runSearchEx(filter, query = inChatSearchQuery)
-                        }
-                    )
-                }
+                        )
+                    }
 
-                else -> {
-                    // Normal Chat Top App Bar
-                    ChatMainTopBar(
-                        contactName = contactName,
-                        presenceText = when {
-                            isBlocked -> "Blocked"
-                            isRequestPending -> "Message request"
-                            else -> presence.second
-                        },
-                        avatarRes = contactAvatarRes,
-                        avatarUrl = peerAvatarUrl,
-                        onBack = onBack,
-                        onOpenProfile = onOpenProfile,
-                        onVideoCall = {
-                            if (isBlocked) showUnblockDialog = true
-                            else viewModel.startVideoCall()
-                        },
-                        onVoiceCall = {
-                            if (isBlocked) showUnblockDialog = true
-                            else viewModel.startAudioCall()
-                        },
-                        onMenuClick = { showOptionsMenu = true },
-                        showMenu = showOptionsMenu,
-                        onDismissMenu = { showOptionsMenu = false },
-                        onViewContact = {
-                            showOptionsMenu = false
-                            viewModel.refreshChatInfo()
-                            showContactInfoSheet = true
-                        },
-                        onClearChat = {
-                            showOptionsMenu = false
-                            showClearChatDialog = true
-                        },
-                        onDisappearingClick = {
-                            showAutoDeleteDialog = true
-                        },
-                        onBlockToggleClick = {
-                            if (isBlocked) showUnblockDialog = true
-                            else showBlockDialog = true
-                        },
-                        onArchiveClick = {
-                            showOptionsMenu = false
-                            showArchiveConfirmDialog = true
-                        },
-                        isArchived = conversationArchived,
-                        isBlocked = isBlocked
-                    )
+                    else -> {
+                        // Normal Chat Top App Bar
+                        ChatMainTopBar(
+                            contactName = contactName,
+                            presenceText = when {
+                                isBlocked -> "Blocked"
+                                isRequestPending -> "Message request"
+                                else -> presence.second
+                            },
+                            avatarRes = contactAvatarRes,
+                            avatarUrl = peerAvatarUrl,
+                            onBack = onBack,
+                            onOpenProfile = onOpenProfile,
+                            onVideoCall = {
+                                if (isBlocked) showUnblockDialog = true
+                                else viewModel.startVideoCall()
+                            },
+                            onVoiceCall = {
+                                if (isBlocked) showUnblockDialog = true
+                                else viewModel.startAudioCall()
+                            },
+                            onMenuClick = { showOptionsMenu = true },
+                            showMenu = showOptionsMenu,
+                            onDismissMenu = { showOptionsMenu = false },
+                            onViewContact = {
+                                showOptionsMenu = false
+                                viewModel.refreshChatInfo()
+                                showContactInfoSheet = true
+                            },
+                            onClearChat = {
+                                showOptionsMenu = false
+                                showClearChatDialog = true
+                            },
+                            onDisappearingClick = {
+                                showAutoDeleteDialog = true
+                            },
+                            onBlockToggleClick = {
+                                if (isBlocked) showUnblockDialog = true
+                                else showBlockDialog = true
+                            },
+                            onArchiveClick = {
+                                showOptionsMenu = false
+                                showArchiveConfirmDialog = true
+                            },
+                            isArchived = conversationArchived,
+                            isBlocked = isBlocked
+                        )
+                    }
                 }
             }
         },
@@ -689,6 +706,24 @@ fun ChatScreen(
                     )
                 } else if (isRequestRequester) {
                     MessageRequestRequesterBanner(messagesSent = conversationMeta?.myRequestMessageCount ?: 0)
+                }
+                // Voice recording failure — surfaced inline (tap to dismiss)
+                // instead of being swallowed silently.
+                voiceError?.let { err ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.clearVoiceError() }
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = err,
+                            color = Color(0xFFEA4335),
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
                 if (isBlocked) {
                     // Blocked contact notice banner
@@ -986,6 +1021,12 @@ fun ChatScreen(
                                     // Graceful no-op when the original message
                                     // is no longer in the list.
                                     scrollToMessageId(replySourceId)
+                                },
+                                audioErrorText = if (audioPlaybackFailedId == message.id) {
+                                    audioPlaybackError ?: "Playback failed"
+                                } else null,
+                                onSeekAudio = { fraction ->
+                                    viewModel.seekAudioTo(message.id, fraction)
                                 }
                             )
 
@@ -1042,9 +1083,45 @@ fun ChatScreen(
                 onContactSelected = {
                     showAttachmentSheet = false
                     launchContactPicker()
+                },
+                onVaultSelected = {
+                    showAttachmentSheet = false
+                    showVaultPinDialog = true
                 }
             )
         }
+    }
+
+    // Vault PIN gate — compact dialog with the app's keypad style. The PIN is
+    // verified on EVERY entry; the unlock is never cached for this flow.
+    if (showVaultPinDialog) {
+        VaultPinGateDialog(
+            onDismiss = { showVaultPinDialog = false },
+            onVerified = {
+                showVaultPinDialog = false
+                showVaultPickerSheet = true
+            }
+        )
+    }
+
+    // Vault media picker — 3-column grid of the decrypted vault files; a tap
+    // feeds the local file straight into the normal media pre-send preview
+    // (UploadServiceImpl.resolveUploadSource handles plain file paths).
+    if (showVaultPickerSheet) {
+        VaultMediaPickerSheet(
+            onDismiss = { showVaultPickerSheet = false },
+            onPick = { item ->
+                showVaultPickerSheet = false
+                viewModel.selectMediaForPreview(
+                    type = if (item.isVideo) MessageType.VIDEO else MessageType.IMAGE,
+                    fileName = item.name,
+                    fileSize = item.sizeBytes,
+                    previewUrl = item.filePath,
+                    filePath = item.filePath,
+                    mimeType = if (item.isVideo) "video/mp4" else "image/jpeg"
+                )
+            }
+        )
     }
 
     // Full emoji reaction picker sheet ("+" in the quick reaction bar).
@@ -2168,7 +2245,8 @@ fun WhatsAppAttachmentSheetContent(
     onGallerySelected: () -> Unit,
     onAudioSelected: () -> Unit,
     onLocationSelected: () -> Unit,
-    onContactSelected: () -> Unit
+    onContactSelected: () -> Unit,
+    onVaultSelected: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -2202,6 +2280,21 @@ fun WhatsAppAttachmentSheetContent(
             AttachmentIconItem(icon = Icons.Filled.Headphones, label = "Audio", color = Color(0xFFE56A38), onClick = onAudioSelected)
             AttachmentIconItem(icon = Icons.Filled.LocationOn, label = "Location", color = Color(0xFF1FA855), onClick = onLocationSelected)
             AttachmentIconItem(icon = Icons.Filled.Person, label = "Contact", color = Color(0xFF009DE2), onClick = onContactSelected)
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Third row — media from the PIN-protected Secret Vault
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceAround
+        ) {
+            AttachmentIconItem(
+                icon = Icons.Outlined.Lock,
+                label = "Vault",
+                color = Color(0xFF0F665E),
+                onClick = onVaultSelected
+            )
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -2265,6 +2358,250 @@ fun queryFileInfo(context: Context, uri: Uri, fallbackName: String): Pair<String
         // Fallback default
     }
     return Pair(name, size)
+}
+
+/**
+ * Compact vault PIN gate (22-e dialog conventions: white, 16dp corners, 16sp
+ * bold title, green accents). Minimal 4x3 keypad + masked dots — the vault
+ * screen's CustomPinKeypad is dark-theme-coupled. NO fake autofill: the PIN
+ * must be typed on EVERY entry (never cached for this flow).
+ */
+@Composable
+fun VaultPinGateDialog(
+    onDismiss: () -> Unit,
+    onVerified: () -> Unit
+) {
+    var pin by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var verifying by remember { mutableStateOf(false) }
+
+    fun appendDigit(d: String) {
+        if (verifying) return
+        errorMessage = null
+        if (pin.length < 6) pin += d
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!verifying) onDismiss() },
+        containerColor = Color.White,
+        shape = RoundedCornerShape(16.dp),
+        title = {
+            Text(
+                text = "Enter vault PIN",
+                color = Color(0xFF111B21),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                // Masked dots
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    repeat(6) { index ->
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (index < pin.length) Color(0xFF008069)
+                                    else Color(0xFF667781).copy(alpha = 0.3f)
+                                )
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Inline error (the service API exposes no attempts-left count)
+                Text(
+                    text = errorMessage ?: " ",
+                    color = Color(0xFFEA4335),
+                    fontSize = 12.sp,
+                    minLines = 1
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Minimal 4x3 keypad — 180dp wide, 48dp keys
+                val rows = listOf(
+                    listOf("1", "2", "3"),
+                    listOf("4", "5", "6"),
+                    listOf("7", "8", "9"),
+                    listOf("C", "0", "⌫")
+                )
+                Column(
+                    modifier = Modifier.width(180.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    for (row in rows) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            for (btn in row) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFF0F2F5))
+                                        .clickable {
+                                            when (btn) {
+                                                "⌫" -> { if (!verifying && pin.isNotEmpty()) pin = pin.dropLast(1) }
+                                                "C" -> { if (!verifying) pin = "" }
+                                                else -> appendDigit(btn)
+                                            }
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (btn == "⌫") {
+                                        Icon(
+                                            imageVector = Icons.Filled.Backspace,
+                                            contentDescription = "Backspace",
+                                            tint = Color(0xFF54656F),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    } else {
+                                        Text(
+                                            text = btn,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFF111B21)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(
+                onClick = { onDismiss() },
+                enabled = !verifying
+            ) {
+                Text("Cancel", color = Color(0xFF008069))
+            }
+        }
+    )
+
+    // Auto-verify as soon as 6 digits are entered. verifyPin is synchronous
+    // (local-hash result; the server-side check runs inside the service and
+    // keeps isUnlocked in sync). Compile-safe + defensive against the
+    // SecretVaultService API evolving under parallel work.
+    LaunchedEffect(pin) {
+        if (pin.length == 6 && !verifying) {
+            verifying = true
+            val ok = try {
+                AppServiceContainer.secretVaultService.verifyPin(pin)
+            } catch (e: Exception) {
+                android.util.Log.w("ChatScreen", "vault verifyPin failed: ${e.message}")
+                false
+            }
+            if (ok) {
+                onVerified()
+            } else {
+                errorMessage = "Wrong PIN"
+                pin = ""
+            }
+            verifying = false
+        }
+    }
+}
+
+/**
+ * Vault media picker — 3-column grid (100dp cells) of the user's decrypted
+ * vault files. Tapping an item feeds the LOCAL file path into the normal
+ * media pre-send preview flow.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VaultMediaPickerSheet(
+    onDismiss: () -> Unit,
+    onPick: (VaultMediaItem) -> Unit
+) {
+    val vaultService = AppServiceContainer.secretVaultService
+    val vaultItems by vaultService.vaultItems.collectAsState()
+
+    // Refresh the local listing when the sheet opens (best-effort; the
+    // service exposes loadVaultItems() — newer API names are handled by
+    // the caller if the parallel vault task lands them).
+    LaunchedEffect(Unit) {
+        try {
+            vaultService.loadVaultItems()
+        } catch (e: Exception) {
+            android.util.Log.w("ChatScreen", "vault loadVaultItems failed: ${e.message}")
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp)
+        ) {
+            Text(
+                text = "Vault",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF111B21),
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            if (vaultItems.isEmpty()) {
+                Text(
+                    text = "No media in your vault yet — add some from Settings → Secret Vault.",
+                    color = Color(0xFF667781),
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(vertical = 24.dp)
+                )
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.height(320.dp)
+                ) {
+                    items(vaultItems, key = { it.id }) { item ->
+                        Box(
+                            modifier = Modifier
+                                .size(100.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFFE9EDEF))
+                                .clickable { onPick(item) }
+                        ) {
+                            AsyncImage(
+                                model = File(item.filePath),
+                                contentDescription = item.name,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            if (item.isVideo) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.Center)
+                                        .size(30.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.Black.copy(alpha = 0.45f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.PlayArrow,
+                                        contentDescription = "Video",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**

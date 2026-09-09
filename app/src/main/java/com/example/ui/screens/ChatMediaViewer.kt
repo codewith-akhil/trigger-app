@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
@@ -290,6 +291,12 @@ fun ChatMediaViewer(
 /**
  * Real video playback — media3 ExoPlayer driving a PlayerView with the
  * standard transport controls (play/pause, seek, real duration/position).
+ *
+ * Accepts ANY source: https(s) server URLs, content:// (the sender's fresh
+ * upload — the bubble carries the local URI while SENDING), file:// and plain
+ * absolute paths. Previously the player was gated on `startsWith("http")`, so
+ * the sender's own video during upload rendered as a blank AsyncImage (Coil
+ * cannot decode a video URL).
  */
 @Composable
 private fun RealVideoPlayer(
@@ -297,12 +304,31 @@ private fun RealVideoPlayer(
     thumbnailUrl: String?
 ) {
     val context = LocalContext.current
-    val player = remember(mediaUrl) {
-        mediaUrl?.takeIf { it.startsWith("http") }?.let { url ->
-            ExoPlayer.Builder(context).build().apply {
-                setMediaItem(MediaItem.fromUri(url))
-                playWhenReady = false
-                prepare()
+    var playbackError by remember(mediaUrl) { mutableStateOf<String?>(null) }
+    var retryTick by remember(mediaUrl) { mutableIntStateOf(0) }
+
+    val player = remember(mediaUrl, retryTick) {
+        mediaUrl?.let { url ->
+            try {
+                val uri = when {
+                    url.startsWith("content://") || url.startsWith("file://") ||
+                        url.startsWith("http://") || url.startsWith("https://") ->
+                        android.net.Uri.parse(url)
+                    else -> android.net.Uri.fromFile(java.io.File(url))
+                }
+                ExoPlayer.Builder(context).build().apply {
+                    setMediaItem(MediaItem.fromUri(uri))
+                    playWhenReady = false
+                    addListener(object : Player.Listener {
+                        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                            playbackError = error.localizedMessage ?: "Video can't be played"
+                        }
+                    })
+                    prepare()
+                }
+            } catch (e: Exception) {
+                playbackError = e.localizedMessage ?: "Video can't be played"
+                null
             }
         }
     }
@@ -318,34 +344,77 @@ private fun RealVideoPlayer(
             .background(Color(0xFF1F2C34)),
         contentAlignment = Alignment.Center
     ) {
-        if (player != null) {
-            AndroidView(
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        useController = true
-                        setShowSubtitleButton(false)
-                        controllerShowTimeoutMs = 0 // keep controls visible
-                        this.player = player
+        when {
+            // Inline error state with retry — previously a player failure was
+            // completely silent (blank surface).
+            playbackError != null -> {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Filled.ErrorOutline,
+                        contentDescription = "Video error",
+                        tint = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier.size(40.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = playbackError ?: "Video can't be played",
+                        color = Color.White.copy(alpha = 0.8f),
+                        fontSize = 12.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    // 48dp target — re-creates the player (remember key tick).
+                    OutlinedButton(
+                        onClick = {
+                            playbackError = null
+                            retryTick++
+                        },
+                        modifier = Modifier.heightIn(min = 48.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Retry", fontSize = 13.sp)
                     }
-                },
-                update = { view -> view.player = player },
-                modifier = Modifier.fillMaxSize()
-            )
-        } else {
-            if (!thumbnailUrl.isNullOrEmpty() || !mediaUrl.isNullOrEmpty()) {
-                AsyncImage(
-                    model = thumbnailUrl ?: mediaUrl,
-                    contentDescription = "Video Thumbnail",
-                    contentScale = ContentScale.Crop,
+                }
+            }
+
+            player != null -> {
+                AndroidView(
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            useController = true
+                            setShowSubtitleButton(false)
+                            controllerShowTimeoutMs = 0 // keep controls visible
+                            this.player = player
+                        }
+                    },
+                    update = { view -> view.player = player },
                     modifier = Modifier.fillMaxSize()
                 )
-            } else {
-                Icon(
-                    imageVector = Icons.Filled.BrokenImage,
-                    contentDescription = "Video unavailable",
-                    tint = Color.White.copy(alpha = 0.7f),
-                    modifier = Modifier.size(64.dp)
-                )
+            }
+
+            else -> {
+                if (!thumbnailUrl.isNullOrEmpty() || !mediaUrl.isNullOrEmpty()) {
+                    AsyncImage(
+                        model = thumbnailUrl ?: mediaUrl,
+                        contentDescription = "Video Thumbnail",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Filled.BrokenImage,
+                        contentDescription = "Video unavailable",
+                        tint = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier.size(64.dp)
+                    )
+                }
             }
         }
     }

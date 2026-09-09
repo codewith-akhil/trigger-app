@@ -1,11 +1,13 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,10 +16,15 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -273,7 +280,10 @@ fun VoiceMessageBubbleContent(
     durationSec: Int,
     isPlaying: Boolean,
     progress: Float,
-    onTogglePlay: () -> Unit
+    onTogglePlay: () -> Unit,
+    // Tapping the waveform seeks the currently-playing message (null → purely
+    // cosmetic bar, e.g. while the upload is still running).
+    onSeek: ((Float) -> Unit)? = null
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -300,16 +310,33 @@ fun VoiceMessageBubbleContent(
 
         Spacer(modifier = Modifier.width(8.dp))
 
-        // Audio waveform representation
+        // Audio waveform representation.
+        // NOTE: the bar heights are a DETERMINISTIC pseudo-waveform derived
+        // from the duration — VISUAL ONLY. Real per-sample amplitudes would
+        // require a Room schema change (out of scope); live recording already
+        // renders genuine MediaRecorder amplitudes in ChatVoiceRecordingBar.
         Column(modifier = Modifier.weight(1f)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(20.dp),
+                    .height(20.dp)
+                    .then(
+                        if (onSeek != null) {
+                            Modifier.pointerInput(durationSec) {
+                                detectTapGestures { offset ->
+                                    if (size.width > 0) {
+                                        onSeek((offset.x / size.width).coerceIn(0f, 1f))
+                                    }
+                                }
+                            }
+                        } else Modifier
+                    ),
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val barHeights = listOf(6, 12, 18, 10, 14, 8, 16, 20, 12, 6, 14, 18, 10, 8, 16, 12, 6, 14)
+                val barHeights = remember(durationSec) {
+                    List(18) { i -> 6 + ((i * 37 + durationSec * 13) % 15) }
+                }
                 barHeights.forEachIndexed { i, h ->
                     val isPast = (i.toFloat() / barHeights.size) <= progress
                     Box(
@@ -415,6 +442,224 @@ fun UploadProgressBanner(
     }
 }
 
+// ============================================================================
+// In-bubble upload overlays (WhatsApp-style). While an upload task is active
+// for a message, the bubble keeps rendering its LOCAL preview under a scrim
+// instead of a separate banner — per-asset progress lives ON the asset.
+// ============================================================================
+
+/** ETA suffix for upload labels, e.g. " (17s left)" — blank when unknown. */
+private fun uploadEtaSuffix(remainingSeconds: Int): String =
+    if (remainingSeconds > 0) " (${remainingSeconds}s left)" else ""
+
+/**
+ * IMAGE overlay: dark scrim + centered 44dp translucent cancel button with a
+ * thin green progress ring around it.
+ */
+@Composable
+private fun ImageUploadOverlay(
+    percent: Int,
+    onCancel: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.35f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(60.dp) // 44dp visual button + ring clearance → ≥48dp touch target
+                .clickable(onClick = onCancel),
+            contentAlignment = Alignment.Center
+        ) {
+            // Thin green progress ring
+            Canvas(modifier = Modifier.size(60.dp)) {
+                val strokeW = 3.dp.toPx()
+                val inset = strokeW / 2
+                drawArc(
+                    color = Color.White.copy(alpha = 0.3f),
+                    startAngle = -90f,
+                    sweepAngle = 360f,
+                    useCenter = false,
+                    topLeft = Offset(inset, inset),
+                    size = androidx.compose.ui.geometry.Size(size.width - strokeW, size.height - strokeW),
+                    style = Stroke(width = strokeW, cap = StrokeCap.Round)
+                )
+                drawArc(
+                    color = WhatsAppFabGreen,
+                    startAngle = -90f,
+                    sweepAngle = 360f * (percent.coerceIn(0, 100) / 100f),
+                    useCenter = false,
+                    topLeft = Offset(inset, inset),
+                    size = androidx.compose.ui.geometry.Size(size.width - strokeW, size.height - strokeW),
+                    style = Stroke(width = strokeW, cap = StrokeCap.Round)
+                )
+            }
+            // 44dp translucent cancel button
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.55f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Cancel upload",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+        // Percent label under the ring
+        Text(
+            text = "$percent%",
+            color = Color.White,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 10.dp)
+        )
+    }
+}
+
+/**
+ * VIDEO overlay strip: full-width bottom bar "✕ 14% (17s left)" in white 13sp
+ * on 45% black — the right-aligned timestamp stays visible INSIDE the strip.
+ */
+@Composable
+private fun VideoUploadStrip(
+    percent: Int,
+    remainingSeconds: Int,
+    message: DomainMessage,
+    isOutgoing: Boolean,
+    onRetryUpload: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.45f))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Close,
+            contentDescription = "Cancel upload",
+            tint = Color.White,
+            modifier = Modifier
+                .size(28.dp) // ≥24dp icon inside padded target
+                .clip(CircleShape)
+                .clickable(onClick = onCancel)
+                .padding(4.dp)
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = "Uploading $percent%${uploadEtaSuffix(remainingSeconds)}",
+            color = Color.White,
+            fontSize = 13.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (message.isStarred) {
+            Icon(
+                imageVector = Icons.Filled.Star,
+                contentDescription = "Starred",
+                tint = Color(0xFFFFC107),
+                modifier = Modifier.size(10.dp)
+            )
+            Spacer(modifier = Modifier.width(2.dp))
+        }
+        Text(
+            text = message.timestamp,
+            color = Color.White,
+            fontSize = 10.5.sp,
+            fontWeight = FontWeight.Medium
+        )
+        if (isOutgoing) {
+            Spacer(modifier = Modifier.width(3.dp))
+            ChatTicksOverlayIcon(
+                status = message.status,
+                onRetry = onRetryUpload
+            )
+        }
+    }
+}
+
+/** AUDIO / DOCUMENT overlay row: linear progress + percent + cancel. */
+@Composable
+private fun LinearUploadRow(
+    percent: Int,
+    remainingSeconds: Int,
+    onCancel: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        LinearProgressIndicator(
+            progress = { percent.coerceIn(0, 100) / 100f },
+            modifier = Modifier
+                .weight(1f)
+                .height(5.dp)
+                .clip(RoundedCornerShape(2.5.dp)),
+            color = WhatsAppFabGreen,
+            trackColor = Color(0xFF8696A0).copy(alpha = 0.35f)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = "$percent%${uploadEtaSuffix(remainingSeconds)}",
+            color = Color(0xFF667781),
+            fontSize = 11.sp
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Icon(
+            imageVector = Icons.Filled.Close,
+            contentDescription = "Cancel upload",
+            tint = Color(0xFF667781),
+            modifier = Modifier
+                .size(32.dp) // 48dp-equivalent hit area with padding
+                .clip(CircleShape)
+                .clickable(onClick = onCancel)
+                .padding(7.dp)
+        )
+    }
+}
+
+/** Terminal FAILED state: small red "Tap to retry" bar (also covers uploads
+ *  that failed with no task alive, e.g. after a process restart). */
+@Composable
+private fun UploadFailedBar(onRetry: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color(0xFFEA4335).copy(alpha = 0.12f))
+            .clickable(onClick = onRetry)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Filled.ErrorOutline,
+            contentDescription = null,
+            tint = Color(0xFFEA4335),
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = "Tap to retry",
+            color = Color(0xFFEA4335),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
 @Composable
 private fun MessageTimestampAndTicksRow(
     message: DomainMessage,
@@ -495,7 +740,12 @@ fun DomainChatBubble(
     onReactionClick: (String) -> Unit,
     // Invoked with the reply-source message id when an in-bubble quoted
     // preview is tapped (no-op if the caller can't scroll to it).
-    onQuoteClick: (String) -> Unit = {}
+    onQuoteClick: (String) -> Unit = {},
+    // Inline playback failure for THIS message (red 12sp text under the
+    // waveform) — playback errors were previously swallowed entirely.
+    audioErrorText: String? = null,
+    // Tapping the voice waveform seeks the playing audio (fraction 0..1).
+    onSeekAudio: (Float) -> Unit = {}
 ) {
     // SYSTEM chat messages render as a centered small pill (like the in-list
     // auto-delete notice), never as a left/right chat bubble — covers legacy
@@ -510,6 +760,16 @@ fun DomainChatBubble(
     val isCaptionedMedia = (message.type == MessageType.IMAGE || message.type == MessageType.VIDEO) &&
         !message.isViewOnce && !message.isDeletedForEveryone && message.text.isNotBlank()
     val isMediaOrDoc = isPureMedia || isCaptionedMedia || message.type == MessageType.DOCUMENT
+
+    // ---- In-bubble upload state (WhatsApp-style overlay) ----
+    val isVideoMessage = message.type == MessageType.VIDEO
+    val uploadActive = uploadTask != null && !uploadTask.isCompleted && !uploadTask.isFailed
+    val uploadFailed = (uploadTask?.isFailed == true) ||
+        (uploadTask == null && isOutgoing && message.status == MessageStatus.FAILED)
+    val uploadPercent = if (uploadTask != null && uploadTask.totalBytes > 0L) {
+        ((uploadTask.uploadedBytes.toFloat() / uploadTask.totalBytes) * 100f).toInt().coerceIn(0, 100)
+    } else 0
+    val uploadRemaining = uploadTask?.remainingSeconds ?: 0
 
     val bubbleShape = if (isOutgoing) {
         RoundedCornerShape(topStart = 14.dp, topEnd = 2.dp, bottomStart = 14.dp, bottomEnd = 14.dp)
@@ -656,10 +916,18 @@ fun DomainChatBubble(
                                 .clip(mediaInnerShape)
                                 .clickable(onClick = onOpenMediaViewer)
                         ) {
-                            // Media image or fallback
-                            if (!message.mediaUrl.isNullOrEmpty() || !message.mediaThumbnail.isNullOrEmpty()) {
+                            // Media image or fallback. VIDEO bubbles render the
+                            // poster frame (mediaThumbnail) — Coil cannot decode a
+                            // video URL as an image, which used to leave both
+                            // parties staring at a blank bubble.
+                            val mediaModel = if (isVideoMessage && !message.mediaThumbnail.isNullOrEmpty()) {
+                                message.mediaThumbnail
+                            } else {
+                                message.mediaUrl ?: message.mediaThumbnail
+                            }
+                            if (!mediaModel.isNullOrEmpty()) {
                                 AsyncImage(
-                                    model = message.mediaUrl ?: message.mediaThumbnail,
+                                    model = mediaModel,
                                     contentDescription = "Media",
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
@@ -710,7 +978,7 @@ fun DomainChatBubble(
                             }
 
                             // Bottom-left video duration pill
-                            if (message.type == MessageType.VIDEO) {
+                            if (message.type == MessageType.VIDEO && !(uploadActive && isVideoMessage)) {
                                 Box(
                                     modifier = Modifier
                                         .align(Alignment.BottomStart)
@@ -737,53 +1005,77 @@ fun DomainChatBubble(
                                 }
                             }
 
-                            // Bottom-right overlay pill: timestamp & ticks directly inside image
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(end = 6.dp, bottom = 6.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(Color.Black.copy(alpha = 0.45f))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (message.isStarred) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Star,
-                                            contentDescription = "Starred",
-                                            tint = Color(0xFFFFC107),
-                                            modifier = Modifier.size(10.dp)
+                            // Bottom-right overlay pill: timestamp & ticks directly inside image.
+                            // Hidden while a video upload strip replaces it (the strip
+                            // carries the timestamp so it stays right-aligned + visible).
+                            if (!(uploadActive && isVideoMessage)) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .padding(end = 6.dp, bottom = 6.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color.Black.copy(alpha = 0.45f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (message.isStarred) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Star,
+                                                contentDescription = "Starred",
+                                                tint = Color(0xFFFFC107),
+                                                modifier = Modifier.size(10.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(2.dp))
+                                        }
+                                        Text(
+                                            text = message.timestamp,
+                                            color = Color.White,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Medium
                                         )
-                                        Spacer(modifier = Modifier.width(2.dp))
-                                    }
-                                    Text(
-                                        text = message.timestamp,
-                                        color = Color.White,
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    if (isOutgoing) {
-                                        Spacer(modifier = Modifier.width(3.dp))
-                                        ChatTicksOverlayIcon(
-                                            status = message.status,
-                                            onRetry = onRetryUpload
-                                        )
+                                        if (isOutgoing) {
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            ChatTicksOverlayIcon(
+                                                status = message.status,
+                                                onRetry = onRetryUpload
+                                            )
+                                        }
                                     }
                                 }
                             }
 
-                            // Upload banner
-                            if (uploadTask != null && !uploadTask.isCompleted) {
+                            // In-bubble upload overlay (WhatsApp-style) — progress
+                            // lives ON the asset instead of a detached banner.
+                            if (uploadActive) {
+                                if (isVideoMessage) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .fillMaxWidth()
+                                    ) {
+                                        VideoUploadStrip(
+                                            percent = uploadPercent,
+                                            remainingSeconds = uploadRemaining,
+                                            message = message,
+                                            isOutgoing = isOutgoing,
+                                            onRetryUpload = onRetryUpload,
+                                            onCancel = onCancelUpload
+                                        )
+                                    }
+                                } else {
+                                    ImageUploadOverlay(
+                                        percent = uploadPercent,
+                                        onCancel = onCancelUpload
+                                    )
+                                }
+                            } else if (uploadFailed) {
                                 Box(
                                     modifier = Modifier
                                         .align(Alignment.BottomCenter)
                                         .fillMaxWidth()
+                                        .padding(horizontal = 6.dp, vertical = 6.dp)
                                 ) {
-                                    UploadProgressBanner(
-                                        uploadTask = uploadTask,
-                                        onCancel = onCancelUpload,
-                                        onRetry = onRetryUpload
-                                    )
+                                    UploadFailedBar(onRetry = onRetryUpload)
                                 }
                             }
                         }
@@ -799,9 +1091,16 @@ fun DomainChatBubble(
                                     .clip(RoundedCornerShape(topStart = 11.dp, topEnd = 11.dp, bottomStart = 4.dp, bottomEnd = 4.dp))
                                     .clickable(onClick = onOpenMediaViewer)
                             ) {
-                                if (!message.mediaUrl.isNullOrEmpty() || !message.mediaThumbnail.isNullOrEmpty()) {
+                                // VIDEO prefers the poster frame — Coil cannot
+                                // decode a video URL as an image.
+                                val mediaModel = if (isVideoMessage && !message.mediaThumbnail.isNullOrEmpty()) {
+                                    message.mediaThumbnail
+                                } else {
+                                    message.mediaUrl ?: message.mediaThumbnail
+                                }
+                                if (!mediaModel.isNullOrEmpty()) {
                                     AsyncImage(
-                                        model = message.mediaUrl ?: message.mediaThumbnail,
+                                        model = mediaModel,
                                         contentDescription = "Media",
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize()
@@ -838,6 +1137,41 @@ fun DomainChatBubble(
                                             tint = Color.White,
                                             modifier = Modifier.size(28.dp)
                                         )
+                                    }
+                                }
+
+                                // In-bubble upload overlay (same treatment as
+                                // the pure-media branch).
+                                if (uploadActive) {
+                                    if (isVideoMessage) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomCenter)
+                                                .fillMaxWidth()
+                                        ) {
+                                            VideoUploadStrip(
+                                                percent = uploadPercent,
+                                                remainingSeconds = uploadRemaining,
+                                                message = message,
+                                                isOutgoing = isOutgoing,
+                                                onRetryUpload = onRetryUpload,
+                                                onCancel = onCancelUpload
+                                            )
+                                        }
+                                    } else {
+                                        ImageUploadOverlay(
+                                            percent = uploadPercent,
+                                            onCancel = onCancelUpload
+                                        )
+                                    }
+                                } else if (uploadFailed) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 6.dp, vertical = 6.dp)
+                                    ) {
+                                        UploadFailedBar(onRetry = onRetryUpload)
                                     }
                                 }
                             }
@@ -877,8 +1211,30 @@ fun DomainChatBubble(
                                 durationSec = message.mediaDurationSec.coerceAtLeast(1),
                                 isPlaying = isPlayingAudio,
                                 progress = audioProgress,
-                                onTogglePlay = onTogglePlayAudio
+                                onTogglePlay = onTogglePlayAudio,
+                                onSeek = onSeekAudio
                             )
+                            // Upload progress row (WhatsApp-style) + terminal failed state
+                            if (uploadActive) {
+                                LinearUploadRow(
+                                    percent = uploadPercent,
+                                    remainingSeconds = uploadRemaining,
+                                    onCancel = onCancelUpload
+                                )
+                            }
+                            if (uploadFailed) {
+                                Spacer(modifier = Modifier.height(3.dp))
+                                UploadFailedBar(onRetry = onRetryUpload)
+                            }
+                            // Inline playback failure (previously swallowed)
+                            if (audioErrorText != null) {
+                                Text(
+                                    text = audioErrorText,
+                                    color = Color(0xFFEA4335),
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
                             MessageTimestampAndTicksRow(
                                 message = message,
                                 isOutgoing = isOutgoing,
@@ -936,6 +1292,18 @@ fun DomainChatBubble(
                                         color = Color(0xFF667781)
                                     )
                                 }
+                            }
+                            // Upload progress row (WhatsApp-style) + terminal failed state
+                            if (uploadActive) {
+                                LinearUploadRow(
+                                    percent = uploadPercent,
+                                    remainingSeconds = uploadRemaining,
+                                    onCancel = onCancelUpload
+                                )
+                            }
+                            if (uploadFailed) {
+                                Spacer(modifier = Modifier.height(3.dp))
+                                UploadFailedBar(onRetry = onRetryUpload)
                             }
                             Spacer(modifier = Modifier.height(3.dp))
                             MessageTimestampAndTicksRow(

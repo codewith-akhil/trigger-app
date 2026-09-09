@@ -5,14 +5,37 @@ import androidx.lifecycle.viewModelScope
 import com.example.di.AppServiceContainer
 import com.example.model.DomainConversation
 import com.example.model.PresenceStatus
+import com.example.service.MediaUrlResolver
+import com.example.service.supabase.SupabaseResult
 import com.example.ui.screens.ChatFilter
+import com.example.util.ChatTimeFormatter
+import com.example.util.optStringOrNull
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+
+/**
+ * INTERNAL — one parsed `sync-conversations` pull row plus its dedupe keys.
+ * File-private so [DashboardViewModel.applyConversationPull] stays readable.
+ */
+private data class DashboardPullRow(
+    val id: String,
+    val otherId: String,
+    val isMirrored: Boolean,
+    val pairKey: String,
+    val createdAtMillis: Long,
+    val lastActivityMillis: Long,
+    val unreadCount: Int,
+    val entity: com.example.data.local.ConversationEntity
+)
 
 class DashboardViewModel : ViewModel() {
     private val repository = AppServiceContainer.chatRepository
     private val presenceService = AppServiceContainer.presenceService
     private val supabaseClient = AppServiceContainer.supabaseClient
+    // Direct DAO access for the sync pull's batch dedupe/purge — the repository
+    // surface has no bulk-delete primitive and its domain mapping drops the
+    // lastActivityMillis stamp the chat list needs for timestamp rendering.
+    private val conversationDao = AppServiceContainer.database.conversationDao()
 
     val connectionState: StateFlow<PresenceStatus> = presenceService.connectionState
 
@@ -26,6 +49,14 @@ class DashboardViewModel : ViewModel() {
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
+    // Unread count for the dashboard header bell badge. Fetched on init and
+    // refreshed on every dashboard (re)composition; the notifications screen
+    // clears it via [clearNotificationsBadge] after marking rows read.
+    private val _notificationsUnread = MutableStateFlow(0)
+    val notificationsUnread: StateFlow<Int> = _notificationsUnread.asStateFlow()
+
+    private var notificationsRefreshInFlight = false
+
     init {
         // Sync conversations from Supabase on app launch (multi-device sync)
         viewModelScope.launch {
@@ -35,9 +66,9 @@ class DashboardViewModel : ViewModel() {
                     put("action", "pull")
                 }
                 val result = supabaseClient.invokeFunction("sync-conversations", payload)
-                if (result is com.example.service.supabase.SupabaseResult.Success) {
+                if (result is SupabaseResult.Success) {
                     result.data.optJSONArray("conversations")?.let { applyConversationPull(it) }
-                } else if (result is com.example.service.supabase.SupabaseResult.Error) {
+                } else if (result is SupabaseResult.Error) {
                     _errorMessage.value = result.message.ifBlank { "Failed to sync conversations." }
                 }
             } catch (e: Exception) {
@@ -46,74 +77,244 @@ class DashboardViewModel : ViewModel() {
                 _isSyncing.value = false
             }
         }
+        // Bell badge seed. Defensive by design: the user_notifications table may
+        // not exist yet on older deployments — any failure simply means 0.
+        refreshNotificationsUnread()
     }
 
     /**
-     * Applies a `sync-conversations` pull payload to Room. Both the initial
-     * sync and retrySync() route through here — retrySync() previously rebuilt
-     * the entity WITHOUT [peerId], silently severing presence/typing/calls for
-     * every conversation after the first retry.
+     * Applies a `sync-conversations` pull payload to Room with dedupe +
+     * completeness so the chat list shows exactly one row per peer pair:
+     *
+     *  1. Rows whose request_status is "declined"/"blocked" are never upserted
+     *     and any stale local copy is deleted.
+     *  2. Rows are grouped by peer pair (the OTHER user's uuid, mirroring the
+     *     MessageServiceImpl canonical convention: the pair's OLDEST row is the
+     *     thread every client converges on). The group keeps one canonical row
+     *     and merges max(lastActivityMillis) + max(unreadCount) into it; loser
+     *     ids are deleted from Room.
+     *  3. Legacy local rows whose id is not a valid UUID and that the pull does
+     *     not contain are purged.
+     *  4. Owner-perspective peer_name fix: on mirrored rows (peer_id == me, the
+     *     other user's row) the server's peer_name is MY name — display
+     *     name/avatar are resolved from the profiles batch instead.
      */
     private suspend fun applyConversationPull(arr: org.json.JSONArray) {
         val myId = supabaseClient.currentUser?.id ?: ""
+        if (myId.isBlank()) return
+
+        val pulledIds = HashSet<String>()
+        val rows = ArrayList<DashboardPullRow>()
         for (i in 0 until arr.length()) {
             val obj = arr.getJSONObject(i)
-            // H4/H5: persist the OTHER user's uuid on the row so a chat opened
-            // by conversation uuid can still key presence/typing/calls.
-            val ownerId = obj.optString("owner_id", "")
-            val peerRaw = obj.optString("peer_id", "")
+            val id = obj.optString("id")
+            if (id.isBlank()) continue
+            pulledIds.add(id)
+
+            // Declined/blocked request mirrors must vanish from the list —
+            // never upsert them and drop any stale local copy.
+            val requestStatus = obj.optStringOrNull("request_status")
+            if (requestStatus != null &&
+                (requestStatus.equals("declined", true) || requestStatus.equals("blocked", true))
+            ) {
+                conversationDao.deleteConversationsByIds(listOf(id))
+                continue
+            }
+
+            val ownerId = obj.optStringOrNull("owner_id") ?: ""
+            val peerRaw = obj.optStringOrNull("peer_id") ?: ""
+            val isMirrored = peerRaw == myId && ownerId != myId
             val otherId = when {
                 ownerId == myId -> peerRaw
                 peerRaw == myId -> ownerId
                 else -> peerRaw
             }
-            val id = obj.getString("id")
-            // isArchived is a LOCAL-ONLY flag (not part of the server pull).
-            // insertConversation is REPLACE — without preserving it, every
-            // sync silently un-archived all archived chats.
-            val existing = repository.getConversationByIdOnce(id)
-            val conv = com.example.data.local.ConversationEntity(
-                id = id,
-                peerId = otherId.takeIf { it.isNotBlank() },
-                name = obj.optString("peer_name", "Unknown"),
-                avatarRes = null,
-                initialColor = obj.optLong("peer_avatar_color", 0xFF00A884),
-                lastMessage = obj.optString("last_message", ""),
-                timestamp = obj.optString("last_message_at", ""),
-                lastActivityMillis = parseIsoToMillis(obj.optString("last_message_at", "")),
-                unreadCount = obj.optInt("unread_count", 0),
-                isPinned = obj.optBoolean("is_pinned", false),
-                hasStatusUpdate = false,
-                isGroup = obj.optBoolean("is_group", false),
-                isOnline = false,
-                lastSeenText = "offline",
-                disappearingDuration = obj.optString("disappearing_duration", "OFF"),
-                disappearingUpdatedAtMillis =
-                    parseIsoToMillis(obj.optString("disappearing_updated_at", "")).takeIf { it > 0L },
-                isMuted = obj.optBoolean("is_muted", false),
-                isBlocked = obj.optBoolean("is_blocked", false),
+            val isGroup = obj.optBoolean("is_group", false)
+            // Group rows have no single peer — dedupe them by their own id.
+            val pairKey = if (!isGroup && MediaUrlResolver.isUuid(otherId)) "peer:$otherId" else "id:$id"
+
+            val lastMessageAt = obj.optString("last_message_at", "")
+            val lastActivityMillis = parseIsoToMillis(lastMessageAt)
+
+            rows.add(
+                DashboardPullRow(
+                    id = id,
+                    otherId = otherId,
+                    isMirrored = isMirrored,
+                    pairKey = pairKey,
+                    createdAtMillis = parseIsoToMillis(obj.optString("created_at", "")),
+                    lastActivityMillis = lastActivityMillis,
+                    unreadCount = obj.optInt("unread_count", 0).coerceAtLeast(0),
+                    entity = com.example.data.local.ConversationEntity(
+                        id = id,
+                        peerId = otherId.takeIf { it.isNotBlank() },
+                        name = obj.optString("peer_name", "Unknown"),
+                        avatarRes = null,
+                        initialColor = obj.optLong("peer_avatar_color", 0xFF00A884),
+                        lastMessage = obj.optString("last_message", ""),
+                        timestamp = lastMessageAt,
+                        lastActivityMillis = lastActivityMillis,
+                        unreadCount = obj.optInt("unread_count", 0),
+                        isPinned = obj.optBoolean("is_pinned", false),
+                        hasStatusUpdate = false,
+                        isGroup = isGroup,
+                        isOnline = false,
+                        lastSeenText = "offline",
+                        disappearingDuration = obj.optString("disappearing_duration", "OFF"),
+                        disappearingUpdatedAtMillis =
+                            parseIsoToMillis(obj.optString("disappearing_updated_at", "")).takeIf { it > 0L },
+                        isMuted = obj.optBoolean("is_muted", false),
+                        isBlocked = obj.optBoolean("is_blocked", false),
+                        isArchived = false,
+                        requestStatus = requestStatus ?: "accepted",
+                        peerAvatarUrl = obj.optStringOrNull("peer_avatar_url")
+                    )
+                )
+            )
+        }
+
+        // Group by peer pair; canonical = OLDEST row (created_at asc) — the same
+        // convention resolveCanonicalConversationId / resolveOrCreateConversation
+        // use when healing mirror pairs on chat open.
+        val grouped = rows.groupBy { it.pairKey }
+        val losers = ArrayList<String>()
+        val keptRows = ArrayList<DashboardPullRow>()
+        for (group in grouped.values) {
+            val sorted = group.sortedWith(compareBy({ it.createdAtMillis }, { it.id }))
+            val canonical = sorted.first()
+            if (group.size > 1) {
+                losers.addAll(group.filter { it.id != canonical.id }.map { it.id })
+            }
+            // Merge the pair's freshest activity + highest unread onto the row
+            // the list keeps (the canonical row can lag the mirror on either).
+            val mergedActivity = group.maxOf { it.lastActivityMillis }
+            val mergedUnread = group.maxOf { it.unreadCount }
+            val mergedEntity = if (mergedActivity != canonical.lastActivityMillis ||
+                mergedUnread != canonical.unreadCount
+            ) {
+                canonical.entity.copy(
+                    lastActivityMillis = mergedActivity,
+                    unreadCount = mergedUnread,
+                    lastMessage = group.maxBy { it.lastActivityMillis }.entity.lastMessage
+                )
+            } else canonical.entity
+            keptRows.add(canonical.copy(lastActivityMillis = mergedActivity, unreadCount = mergedUnread, entity = mergedEntity))
+        }
+        if (losers.isNotEmpty()) {
+            conversationDao.deleteConversationsByIds(losers.distinct())
+        }
+
+        // Owner-perspective fix: on mirrored rows the server peer_name is MY
+        // display name — resolve the REAL other-user name/avatar from profiles.
+        val mirroredOtherIds = keptRows.filter { it.isMirrored && MediaUrlResolver.isUuid(it.otherId) }
+            .map { it.otherId }.distinct()
+        val profilesById = if (mirroredOtherIds.isNotEmpty()) fetchProfiles(mirroredOtherIds) else emptyMap()
+
+        for (row in keptRows) {
+            val existing = conversationDao.getConversationByIdOnce(row.id)
+            var entity = row.entity.copy(
+                // isArchived is a LOCAL-ONLY flag (not part of the server pull).
+                // insertConversation is REPLACE — without preserving it, every
+                // sync silently un-archived all archived chats.
                 isArchived = existing?.isArchived ?: false
             )
-            repository.insertConversation(conv)
+            if (row.isMirrored) {
+                val profile = profilesById[row.otherId]
+                entity = entity.copy(
+                    name = profile?.first?.takeIf { it.isNotBlank() }
+                        ?: existing?.name?.takeIf { it.isNotBlank() && it != "Unknown" }
+                        ?: "Unknown",
+                    peerAvatarUrl = profile?.second ?: entity.peerAvatarUrl
+                )
+            }
+            conversationDao.insertConversation(entity)
         }
+
+        // Purge legacy rows: ids that were never real conversation UUIDs
+        // (peer-uuid keys, seeded demos) and that this pull does not carry.
+        val locals = conversationDao.getAllConversationRowsOnce()
+        val legacyIds = locals
+            .filter { !MediaUrlResolver.isUuid(it.id) && it.id !in pulledIds }
+            .map { it.id }
+        if (legacyIds.isNotEmpty()) {
+            conversationDao.deleteConversationsByIds(legacyIds)
+        }
+    }
+
+    /** Batch profiles lookup → (display name, avatar url) per user id. */
+    private suspend fun fetchProfiles(
+        ids: List<String>
+    ): Map<String, Pair<String, String?>> {
+        return try {
+            when (val res = supabaseClient.getTable(
+                "profiles",
+                "id=in.(${ids.joinToString(",")})&select=id,full_name,username,avatar_url"
+            )) {
+                is SupabaseResult.Success -> {
+                    val map = HashMap<String, Pair<String, String?>>()
+                    for (i in 0 until res.data.length()) {
+                        val p = res.data.getJSONObject(i)
+                        val fullName = p.optStringOrNull("full_name")
+                        val username = p.optStringOrNull("username")
+                        val name = fullName ?: username ?: ""
+                        if (p.optString("id").isNotBlank()) {
+                            map[p.optString("id")] = Pair(name, p.optStringOrNull("avatar_url"))
+                        }
+                    }
+                    map
+                }
+                is SupabaseResult.Error -> emptyMap()
+            }
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
+    /** Unread user_notifications count for the bell badge. Never throws: an
+     *  error (including a 404 while the table migration is still rolling out)
+     *  renders as 0. */
+    private suspend fun fetchUnreadNotificationsCount(): Int {
+        val me = supabaseClient.currentSession?.user?.id ?: return 0
+        return try {
+            when (val res = supabaseClient.getTable(
+                "user_notifications",
+                "user_id=eq.$me&is_read=eq.false&select=id"
+            )) {
+                is SupabaseResult.Success -> res.data.length()
+                is SupabaseResult.Error -> 0
+            }
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    /** Re-fetches the unread notifications count for the bell badge. Safe to
+     *  call on every dashboard (re)composition — in-flight calls collapse. */
+    fun refreshNotificationsUnread() {
+        if (notificationsRefreshInFlight) return
+        notificationsRefreshInFlight = true
+        viewModelScope.launch {
+            try {
+                _notificationsUnread.value = fetchUnreadNotificationsCount()
+            } catch (e: Exception) {
+                // Badge is best-effort; never crash the dashboard over it.
+            } finally {
+                notificationsRefreshInFlight = false
+            }
+        }
+    }
+
+    /** Clears the bell badge immediately after the notifications screen has
+     *  marked my rows read server-side (server state stays authoritative —
+     *  the next refresh simply re-derives the same value). */
+    fun clearNotificationsBadge() {
+        _notificationsUnread.value = 0
     }
 
     /** Parses an ISO-8601 timestamp ("2026-09-07T16:21:39Z") to epoch millis;
      *  returns 0L when unparsable so rows sort deterministically until the
      *  next real message refreshes the value. */
-    private fun parseIsoToMillis(iso: String): Long {
-        if (iso.isBlank()) return 0L
-        return try {
-            java.time.Instant.parse(iso).toEpochMilli()
-        } catch (e: Exception) {
-            try {
-                // Fallback: offset form ("2026-09-07T16:21:39+00:00")
-                java.time.OffsetDateTime.parse(iso).toInstant().toEpochMilli()
-            } catch (e2: Exception) {
-                0L
-            }
-        }
-    }
+    private fun parseIsoToMillis(iso: String): Long = ChatTimeFormatter.parseIsoToMillis(iso)
 
     /** Clears [errorMessage] after the UI has shown it (e.g. user dismissed
      *  the retry banner or successfully retried). */
@@ -133,9 +334,9 @@ class DashboardViewModel : ViewModel() {
                     put("action", "pull")
                 }
                 val result = supabaseClient.invokeFunction("sync-conversations", payload)
-                if (result is com.example.service.supabase.SupabaseResult.Success) {
+                if (result is SupabaseResult.Success) {
                     result.data.optJSONArray("conversations")?.let { applyConversationPull(it) }
-                } else if (result is com.example.service.supabase.SupabaseResult.Error) {
+                } else if (result is SupabaseResult.Error) {
                     _errorMessage.value = result.message.ifBlank { "Failed to sync conversations." }
                 }
             } catch (e: Exception) {
@@ -155,13 +356,20 @@ class DashboardViewModel : ViewModel() {
     private val _showArchived = MutableStateFlow(false)
     val showArchived = _showArchived.asStateFlow()
 
+    // Entity-backed (not repository-backed) so the chat-list timestamp can be
+    // rendered from lastActivityMillis — the entity's ISO `timestamp` string
+    // may be raw server UTC or a legacy local "h:mm a" value.
     val conversations: StateFlow<List<DomainConversation>> = combine(
-        repository.getAllConversations(),
+        conversationDao.getAllConversations(),
         _searchQuery,
         _selectedFilter,
         _showArchived
     ) { all, query, filter, showArchived ->
-        all.filter { conv ->
+        all.map { entity ->
+            entity.toDomain().copy(
+                timestamp = ChatTimeFormatter.formatForList(entity.lastActivityMillis, entity.timestamp)
+            )
+        }.filter { conv ->
             // Archived filter — when showArchived=false, hide archived chats;
             // when showArchived=true, show only archived chats.
             val matchesArchiveFilter = if (showArchived) conv.isArchived else !conv.isArchived

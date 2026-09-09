@@ -55,11 +55,6 @@ data class MessageRequestItem(
     val messageCount: Int, val createdAt: String
 )
 
-data class ContactItem(
-    val id: String, val name: String, val username: String?,
-    val avatarUrl: String?, val isOnline: Boolean
-)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NewMessageScreen(
@@ -74,10 +69,13 @@ fun NewMessageScreen(
     var searchQuery by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<UserSearchResult>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
-    var contacts by remember { mutableStateOf<List<ContactItem>>(emptyList()) }
+    var contacts by remember { mutableStateOf<List<UserSearchResult>>(emptyList()) }
+    var followersList by remember { mutableStateOf<List<UserSearchResult>>(emptyList()) }
     var messageRequests by remember { mutableStateOf<List<MessageRequestItem>>(emptyList()) }
     var followingUsers by remember { mutableStateOf<List<UserSearchResult>>(emptyList()) }
     var showSendDialog by remember { mutableStateOf<UserSearchResult?>(null) }
+    // Header caption counts — null until get-follow-info responds.
+    var followCounts by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
     // Instagram-model state
     var followState by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) } // userId -> I follow them
@@ -103,22 +101,22 @@ fun NewMessageScreen(
         }
     }
 
-    // Fetch contacts + message requests + following on load
+    // Fetch contacts + message requests + followers + following on load
     LaunchedEffect(Unit) {
         coroutineScope.launch {
-            // Get contacts
+            // Get contacts — NOT rendered anymore, but the accepted-contact id
+            // set still drives openOrRequest gating (chat vs message request).
             val contactsResult = AppServiceContainer.supabaseClient.invokeFunction("get-contacts", JSONObject())
             if (contactsResult is SupabaseResult.Success) {
                 val arr = contactsResult.data.optJSONArray("contacts") ?: JSONArray()
-                val list = mutableListOf<ContactItem>()
+                val list = mutableListOf<UserSearchResult>()
                 for (i in 0 until arr.length()) {
                     val obj = arr.getJSONObject(i)
-                    list.add(ContactItem(
+                    list.add(UserSearchResult(
                         id = obj.getString("id"),
                         name = obj.getString("full_name"),
                         username = obj.optString("username", null),
-                        avatarUrl = obj.optStringOrNull("avatar_url"),
-                        isOnline = obj.optBoolean("is_online", false)
+                        avatarUrl = obj.optStringOrNull("avatar_url")
                     ))
                 }
                 contacts = list
@@ -145,6 +143,34 @@ fun NewMessageScreen(
                 }
                 messageRequests = list
             }
+            // Get the users who follow me (paged — cap 3 pages of 100) for the
+            // Followers section.
+            var offset = 0
+            var pages = 0
+            val followerAcc = mutableListOf<UserSearchResult>()
+            while (pages < 3) {
+                val followResult = AppServiceContainer.supabaseClient.invokeFunction(
+                    "get-follow-list",
+                    JSONObject().put("type", "followers").put("limit", 100).put("offset", offset)
+                )
+                if (followResult !is SupabaseResult.Success) break
+                val arr = followResult.data.optJSONArray("users") ?: JSONArray()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    followerAcc.add(UserSearchResult(
+                        id = obj.getString("id"),
+                        name = obj.getString("full_name"),
+                        username = obj.optString("username", null),
+                        avatarUrl = obj.optStringOrNull("avatar_url")
+                    ))
+                }
+                pages++
+                val total = followResult.data.optInt("count", followerAcc.size)
+                if (followerAcc.size >= total || arr.length() == 0) break
+                offset = followerAcc.size
+            }
+            followersList = followerAcc
+            refreshFollowStates(followerAcc.map { it.id })
             // Get the users I follow (Instagram model)
             val followResult = AppServiceContainer.supabaseClient.invokeFunction(
                 "get-follow-list", JSONObject().put("type", "following").put("limit", 50)
@@ -163,6 +189,19 @@ fun NewMessageScreen(
                 }
                 followingUsers = list
                 refreshFollowStates(list.map { it.id })
+            }
+            // Follow counts for the header caption ("Followers N · Following M").
+            val myId = AppServiceContainer.supabaseClient.currentSession?.user?.id
+            if (myId != null) {
+                val infoResult = AppServiceContainer.supabaseClient.invokeFunction(
+                    "get-follow-info", JSONObject().put("targetUserId", myId)
+                )
+                if (infoResult is SupabaseResult.Success) {
+                    followCounts = Pair(
+                        infoResult.data.optInt("followersCount", 0),
+                        infoResult.data.optInt("followingCount", 0)
+                    )
+                }
             }
         }
     }
@@ -214,6 +253,14 @@ fun NewMessageScreen(
                     followingUsers =
                         if (!currentlyFollowing) followingUsers + user
                         else followingUsers.filter { it.id != user.id }
+                    followCounts?.let { (n, m) ->
+                        followCounts = if (!currentlyFollowing) {
+                            // I started following someone → my following count grew.
+                            Pair(n, m + 1)
+                        } else {
+                            Pair(n, (m - 1).coerceAtLeast(0))
+                        }
+                    }
                 }
                 is SupabaseResult.Error ->
                     Toast.makeText(context, "Action failed", Toast.LENGTH_SHORT).show()
@@ -240,6 +287,18 @@ fun NewMessageScreen(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
+            // Header caption — follow counts (13sp secondary)
+            followCounts?.let { counts ->
+                item {
+                    Text(
+                        "Followers ${counts.first} · Following ${counts.second}",
+                        fontSize = 13.sp,
+                        color = TriggerTextSecondary,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+            }
+
             // Search bar
             item {
                 OutlinedTextField(
@@ -340,16 +399,18 @@ fun NewMessageScreen(
                     item { HorizontalDivider(thickness = 8.dp, color = TriggerDivider) }
                 }
 
-                // Contacts section
+                // Followers section (replaces the old Contacts section — the
+                // social graph is the primary people list now; accepted
+                // contacts still gate openOrRequest via contactIds)
                 item {
                     Text(
-                        "Contacts on Trigger (${contacts.size})",
+                        "Followers (${followersList.size})",
                         fontSize = 13.sp, fontWeight = FontWeight.Bold,
                         color = TriggerTextSecondary,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
                 }
-                if (contacts.isEmpty()) {
+                if (followersList.isEmpty()) {
                     item {
                         Column(
                             modifier = Modifier.fillMaxWidth().padding(32.dp),
@@ -358,18 +419,23 @@ fun NewMessageScreen(
                             Icon(Icons.Filled.PersonAdd, contentDescription = null,
                                 tint = TriggerTextSecondary, modifier = Modifier.size(40.dp))
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("No contacts yet", color = TriggerTextSecondary, fontSize = 14.sp)
+                            Text("No followers yet", color = TriggerTextSecondary, fontSize = 14.sp)
                             Text("Search for users by username to start chatting",
                                 color = TriggerTextSecondary, fontSize = 12.sp)
                         }
                     }
                 } else {
-                    items(contacts, key = { "contact_${it.id}" }) { contact ->
-                        ContactRow(contact = contact, onClick = {
-                            // Open chat with this contact — ChatScreen resolves
-                            // the canonical conversation id.
-                            onChatOpened("", contact.id, contact.name)
-                        })
+                    items(followersList, key = { "follower_${it.id}" }) { user ->
+                        UserSearchRow(
+                            user = user,
+                            isFollowing = followState[user.id] ?: false,
+                            followBusy = user.id in followBusy,
+                            isContact = user.id in contactIds,
+                            requestSent = user.id in requestSentTo,
+                            onFollowToggle = { toggleFollow(user) },
+                            onClick = { openOrRequest(user) },
+                            followBackLabel = "Follow back"
+                        )
                     }
                 }
 
@@ -516,7 +582,8 @@ private fun UserSearchRow(
     isContact: Boolean,
     requestSent: Boolean,
     onFollowToggle: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    followBackLabel: String = "Follow"
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
@@ -542,14 +609,16 @@ private fun UserSearchRow(
             }
         }
         Spacer(modifier = Modifier.width(8.dp))
-        // Instagram-model Follow / Following toggle (ONLY button on the right side)
+        // Instagram-model Follow / Following toggle (ONLY button on the right side).
+        // 48dp minimum touch target on both variants.
         if (isFollowing) {
             OutlinedButton(
                 onClick = onFollowToggle,
                 enabled = !followBusy,
                 shape = RoundedCornerShape(18.dp),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = TriggerTextSecondary)
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = TriggerTextSecondary),
+                modifier = Modifier.heightIn(min = 48.dp)
             ) {
                 if (followBusy) {
                     CircularProgressIndicator(strokeWidth = 1.5.dp, modifier = Modifier.size(12.dp))
@@ -563,12 +632,13 @@ private fun UserSearchRow(
                 enabled = !followBusy,
                 shape = RoundedCornerShape(18.dp),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = TriggerGreenAccent)
+                colors = ButtonDefaults.buttonColors(containerColor = TriggerGreenAccent),
+                modifier = Modifier.heightIn(min = 48.dp)
             ) {
                 if (followBusy) {
                     CircularProgressIndicator(strokeWidth = 1.5.dp, modifier = Modifier.size(12.dp), color = Color.White)
                 } else {
-                    Text("Follow", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                    Text(followBackLabel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                 }
             }
         }
@@ -632,34 +702,6 @@ private fun MessageRequestRow(
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("Decline", fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
-        }
-    }
-}
-
-@Composable
-private fun ContactRow(contact: ContactItem, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(modifier = Modifier.size(44.dp).clip(CircleShape).background(Color(0xFFE2E8F0)),
-            contentAlignment = Alignment.Center) {
-            if (contact.avatarUrl != null) {
-                AsyncImage(model = contact.avatarUrl, contentDescription = null,
-                    modifier = Modifier.fillMaxSize().clip(CircleShape))
-            } else {
-                Text(contact.name.take(1).uppercase(), color = TriggerTextSecondary, fontWeight = FontWeight.Bold)
-            }
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(contact.name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = TriggerTextPrimary)
-            if (contact.username != null) {
-                Text("@${contact.username}", fontSize = 13.sp, color = TriggerTextSecondary)
-            }
-        }
-        if (contact.isOnline) {
-            Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(TriggerFabGreen))
         }
     }
 }

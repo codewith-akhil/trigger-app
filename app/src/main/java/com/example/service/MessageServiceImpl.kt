@@ -12,6 +12,7 @@ import com.example.model.PresenceStatus
 import com.example.service.supabase.RealtimeEvent
 import com.example.service.supabase.SupabaseClient
 import com.example.service.supabase.SupabaseResult
+import com.example.util.optStringOrNull
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.json.JSONArray
@@ -270,6 +271,38 @@ class MessageServiceImpl(
                 if (senderId != currentUserId) {
                     val domainMsg = mapSupabaseToDomain(record, isOutgoing = false)
                     repository.insertMessage(domainMsg)
+                    // Chat-list completeness: a conversation the local DB has
+                    // never seen must surface IMMEDIATELY (previously it stayed
+                    // invisible until the next sync-conversations pull, which is
+                    // why "some users are not in the list"). ensureConversationRow
+                    // is a no-op when the row exists; the preview update then
+                    // reorders the list either way.
+                    try {
+                        val senderName = record.optStringOrNull("sender_name")
+                        repository.ensureConversationRow(
+                            id = domainMsg.conversationId,
+                            peerId = senderId,
+                            name = senderName
+                        )
+                        val preview = when (domainMsg.type) {
+                            MessageType.IMAGE -> "📷 Photo"
+                            MessageType.VIDEO -> "🎥 Video"
+                            MessageType.AUDIO -> "🎤 Voice message"
+                            MessageType.DOCUMENT -> "📄 ${domainMsg.fileName ?: "Document"}"
+                            MessageType.LOCATION -> "📍 Location"
+                            MessageType.CONTACT -> "👤 ${domainMsg.contactName ?: "Contact"}"
+                            MessageType.CALL_LOG -> domainMsg.text
+                            else -> domainMsg.text
+                        }
+                        repository.updateConversationLastMessage(
+                            id = domainMsg.conversationId,
+                            preview = preview,
+                            timestamp = domainMsg.timestamp,
+                            timestampMillis = domainMsg.timestampMillis
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "realtime conversation ensure failed: ${e.message}")
+                    }
                     // Auto-mark as DELIVERED (we received it) — locally first
                     // (instant double-tick on our own copy), then persist it on
                     // the server so the SENDER's device flips to ✓✓ too.
@@ -679,10 +712,13 @@ class MessageServiceImpl(
         repository.updateMessageMediaFull(task.messageId, finalUrl, task.bucket, task.mediaPath)
 
         // 2. NOW create the server row — with the remote URL, never content://
+        //    The thumbnail becomes the REMOTE poster-frame URL (the local
+        //    cache path is useless to the receiver).
         val updated = msg.copy(
             mediaUrl = finalUrl,
             mediaBucket = task.bucket,
-            mediaPath = task.mediaPath
+            mediaPath = task.mediaPath,
+            mediaThumbnail = task.thumbnailUrl ?: msg.mediaThumbnail
         )
         val payload = buildMessagePayload(updated, task.peerId, task.peerName)
         val result = AppServiceContainer.supabaseClient.invokeFunction("send-message", payload)
@@ -780,15 +816,43 @@ class MessageServiceImpl(
     override suspend fun retryFailedMessage(messageId: String) {
         // Re-call send-message with the same message data
         val msg = repository.getMessageById(messageId) ?: return
-        // Media rows whose upload never completed still hold a local content://
-        // preview (or null) as mediaUrl — re-sending would store a dead URL on
-        // the server. Their retry path is re-upload (upload retry affordance),
-        // not re-send.
         val isMedia = msg.type in listOf(MessageType.IMAGE, MessageType.VIDEO, MessageType.AUDIO, MessageType.DOCUMENT)
-        if (isMedia && (msg.mediaUrl.isNullOrBlank() || !msg.mediaUrl.startsWith("http"))) {
-            Log.w(TAG, "retryFailedMessage: media message $messageId has no remote URL — needs re-upload")
-            repository.updateMessageStatus(messageId, MessageStatus.FAILED)
-            return
+        if (isMedia) {
+            // Media rows whose upload never completed still hold a local
+            // content:// preview (or null) as mediaUrl — re-SENDING would
+            // store a dead URL on the server. Their retry path is a RE-UPLOAD
+            // (the upload task streams the local file again, then the normal
+            // completeMediaUpload creates the server row).
+            val localSource = msg.mediaUrl?.takeIf { it.isNotBlank() && !it.startsWith("http") }
+            if (localSource == null) {
+                // Nothing local to re-upload: either it already carries a
+                // remote URL (plain send failure → re-send below) or the
+                // source file is gone (re-send would store a dead URL).
+                if (msg.mediaUrl.isNullOrBlank()) {
+                    Log.w(TAG, "retryFailedMessage: media message $messageId has no local source — cannot re-upload")
+                    repository.updateMessageStatus(messageId, MessageStatus.FAILED)
+                    return
+                }
+            } else {
+                repository.updateMessageStatus(messageId, MessageStatus.SENDING)
+                val (realConvId, realPeerId) = resolveConversationForRetry(msg.conversationId)
+                val conv = repository.getConversationByIdOnce(realConvId)
+                val task = com.example.model.UploadTask(
+                    id = "upload_$messageId",
+                    messageId = messageId,
+                    conversationId = realConvId,
+                    fileName = msg.fileName ?: "media_${System.currentTimeMillis()}",
+                    fileType = msg.type,
+                    totalBytes = msg.fileSize,
+                    filePath = localSource,
+                    mimeType = null, // resolved from the extension at upload time
+                    thumbnailPath = msg.mediaThumbnail?.takeIf { !it.startsWith("http") },
+                    peerId = realPeerId,
+                    peerName = conv?.name
+                )
+                AppServiceContainer.uploadService.enqueueUpload(task)
+                return
+            }
         }
         repository.updateMessageStatus(messageId, MessageStatus.SENDING)
         // H4: route by the REAL conversation uuid + the conversation's peer —

@@ -53,9 +53,12 @@ fun WhatsAppDashboardScreen(
     onOpenNewMessage: () -> Unit = {},
     onOpenProfile: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onOpenNotifications: () -> Unit = {},
     onNavigateToScheduleStream: () -> Unit = {},
     onNavigateToStreamHistory: () -> Unit = {},
-    onRestartFlow: () -> Unit
+    // Full cleanup (presence offline -> realtime disconnect -> server signOut
+    // -> Room/vault/wallet wipe) THEN navigate — owned by the NavHost lambda.
+    onLogout: () -> Unit = {}
 ) {
     val viewModel: com.example.ui.viewmodel.DashboardViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val dbConversations by viewModel.conversations.collectAsState()
@@ -70,11 +73,15 @@ fun WhatsAppDashboardScreen(
     var showTopMenu by remember { mutableStateOf(false) }
     var showNewChatDialog by remember { mutableStateOf(false) }
     var showStatusStoryDialog by remember { mutableStateOf<String?>(null) }
-    var showCameraDialog by remember { mutableStateOf(false) }
     var showGoLiveDialog by remember { mutableStateOf(false) }
     var showActiveCallDialog by remember { mutableStateOf(false) }
     var activeCallContactName by remember { mutableStateOf("Contact") }
     var activeCallIsVideo by remember { mutableStateOf(false) }
+
+    // Bell badge count — refreshes on every dashboard (re)composition, so it
+    // also re-derives after returning from the notifications screen.
+    val notificationsUnread by viewModel.notificationsUnread.collectAsState()
+    LaunchedEffect(Unit) { viewModel.refreshNotificationsUnread() }
 
     val allChats = remember(dbConversations) {
         if (dbConversations.isNotEmpty()) {
@@ -116,13 +123,13 @@ fun WhatsAppDashboardScreen(
                         title = if (isStreamTab) "Live Stream" else "Trigger App",
                         isStreamHeader = isStreamTab,
                         onNewStreamClick = onNavigateToScheduleStream,
-                        onCameraClick = { showCameraDialog = true },
+                        unreadNotifications = notificationsUnread,
+                        onOpenNotifications = onOpenNotifications,
                         onMenuClick = { showTopMenu = true },
                         showMenu = showTopMenu,
                         onDismissMenu = { showTopMenu = false },
                         onOpenProfile = { selectedTab = DashboardTab.PROFILE },
                         onOpenSettings = onOpenSettings,
-                        onRestartOnboarding = onRestartFlow,
                         onToggleNetwork = { viewModel.toggleNetworkConnection() }
                     )
                     if (connectionState == com.example.model.PresenceStatus.OFFLINE) {
@@ -304,13 +311,10 @@ fun WhatsAppDashboardScreen(
                 DashboardTab.PROFILE -> {
                     ProfileScreen(
                         onBack = { selectedTab = DashboardTab.CHATS },
-                        // Same full cleanup as the PROFILE route (NavHost):
-                        // presence offline -> realtime disconnect -> server
-                        // signOut -> Room/vault/wallet wipe, THEN navigate.
-                        // Passing onRestartFlow directly skipped ALL of it.
-                        onLogout = {
-                            com.example.service.AccountStateManager.performLogout(onRestartFlow)
-                        },
+                        // Full logout chain + navigation live in the NavHost
+                        // lambda (the old code piggybacked on the removed
+                        // "Restart Onboarding Flow" handler and skipped cleanup).
+                        onLogout = onLogout,
                         showHeader = false
                     )
                 }
@@ -475,47 +479,8 @@ fun WhatsAppDashboardScreen(
         )
     }
 
-    // Camera preview dialog
-    if (showCameraDialog) {
-        AlertDialog(
-            onDismissRequest = { showCameraDialog = false },
-            containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
-            title = {
-                Text("Camera", color = GeometricTextDark, fontWeight = FontWeight.Bold)
-            },
-            text = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(180.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFFF0F2F5)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.CameraAlt,
-                        contentDescription = null,
-                        tint = WhatsAppHeaderGreen,
-                        modifier = Modifier.size(54.dp)
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { showCameraDialog = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = WhatsAppFabGreen)
-                ) {
-                    Text("Take Photo", color = Color.White)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCameraDialog = false }) {
-                    Text("Cancel", color = GeometricTextSecondary)
-                }
-            }
-        )
-    }
+    // (The dead mock "Camera preview" dialog was removed — the header slot it
+    // served now holds the real notifications bell.)
 }
 
 @Composable
@@ -523,13 +488,13 @@ fun WhatsAppTopHeader(
     title: String = "Trigger App",
     isStreamHeader: Boolean = false,
     onNewStreamClick: () -> Unit = {},
-    onCameraClick: () -> Unit,
+    unreadNotifications: Int = 0,
+    onOpenNotifications: () -> Unit = {},
     onMenuClick: () -> Unit,
     showMenu: Boolean,
     onDismissMenu: () -> Unit,
     onOpenProfile: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
-    onRestartOnboarding: () -> Unit,
     onToggleNetwork: () -> Unit = {}
 ) {
     val headerBgColor = if (isStreamHeader) TriggerHeaderGreen else Color.White
@@ -578,17 +543,39 @@ fun WhatsAppTopHeader(
                     )
                 }
             } else {
-                // Camera icon on regular tabs
-                IconButton(
-                    onClick = onCameraClick,
-                    modifier = Modifier.size(38.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.PhotoCamera,
-                        contentDescription = "Camera",
-                        tint = iconColor,
-                        modifier = Modifier.size(24.dp)
-                    )
+                // Notifications bell with unread badge (replaces the removed
+                // mock camera icon). 48dp touch target, real DB-backed count.
+                Box {
+                    IconButton(
+                        onClick = onOpenNotifications,
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Notifications,
+                            contentDescription = "Notifications",
+                            tint = iconColor,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    if (unreadNotifications > 0) {
+                        // Small green count pill, capped at "9+".
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 3.dp, end = 2.dp)
+                                .defaultMinSize(minWidth = 17.dp, minHeight = 17.dp)
+                                .background(WhatsAppFabGreen, RoundedCornerShape(8.5.dp))
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (unreadNotifications > 9) "9+" else unreadNotifications.toString(),
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
 
@@ -628,14 +615,9 @@ fun WhatsAppTopHeader(
                             onOpenSettings()
                         }
                     )
-                    HorizontalDivider(color = GeometricBorderLight)
-                    DropdownMenuItem(
-                        text = { Text("Restart Onboarding Flow", color = WhatsAppHeaderGreen, fontWeight = FontWeight.SemiBold) },
-                        onClick = {
-                            onDismissMenu()
-                            onRestartOnboarding()
-                        }
-                    )
+                    // (The dead "Restart Onboarding Flow" item was removed —
+                    // onboarding restart is no longer reachable from the
+                    // dashboard; logout keeps its own full-cleanup chain.)
                 }
             }
         }

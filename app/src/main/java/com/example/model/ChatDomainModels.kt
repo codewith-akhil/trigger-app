@@ -156,6 +156,12 @@ data class UploadTask(
     /** Object path INSIDE the bucket ("u/<userId>/<file>.jpg") — persisted to
      *  Room so expired URLs can be rebuilt forever. */
     val mediaPath: String? = null,
+    /** VIDEO only: local JPEG frame (cacheDir) generated before staging. It is
+     *  uploaded alongside the media; the server row then carries the REMOTE
+     *  thumbnail URL via completeMediaUpload. */
+    val thumbnailPath: String? = null,
+    /** Remote URL of the uploaded thumbnail (null until the upload finished). */
+    val thumbnailUrl: String? = null,
     // Routing metadata carried through the upload so the message can be
     // sent to the server AFTER the upload completes with the real URL.
     val peerId: String? = null,
