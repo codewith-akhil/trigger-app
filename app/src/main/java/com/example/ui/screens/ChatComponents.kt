@@ -32,8 +32,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import androidx.compose.ui.platform.LocalContext
 import com.example.config.ChatConfig
 import com.example.model.*
+import com.example.service.MediaUrlResolver
 import com.example.ui.theme.*
 
 @Composable
@@ -722,6 +725,30 @@ private fun formatMediaDuration(durationSec: Int): String {
     return String.format("%d:%02d", mins, secs)
 }
 
+/**
+ * Task 24 — stable-cache image model for PRIVATE-bucket media. Signed URLs
+ * rotate every session, but Coil's memory+disk cache entries are keyed on the
+ * BUCKET-QUALIFIED OBJECT PATH, so previously-viewed media keep hitting the
+ * same cache entry across sessions — including while offline (Coil serves the
+ * disk cache before attempting the network). Public/local URLs pass through
+ * as plain strings. Pass `path = null` when the URL is a thumbnail whose own
+ * object path should be derived.
+ */
+@Composable
+fun privateMediaModel(bucket: String?, url: String?, path: String?): Any {
+    if (url.isNullOrEmpty()) return ""
+    if (!MediaUrlResolver.isPrivateBucket(bucket)) return url
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val stableKey = remember(bucket, url, path) {
+        MediaUrlResolver.stableCacheKey(bucket, url, path)
+    } ?: return url
+    return ImageRequest.Builder(context)
+        .data(url)
+        .memoryCacheKey(stableKey)
+        .diskCacheKey(stableKey)
+        .build()
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DomainChatBubble(
@@ -927,7 +954,13 @@ fun DomainChatBubble(
                             }
                             if (!mediaModel.isNullOrEmpty()) {
                                 AsyncImage(
-                                    model = mediaModel,
+                                    // Task 24: stable bucket/path cache keys so rotated
+                                    // signed URLs keep hitting Coil's cached copy.
+                                    model = privateMediaModel(
+                                        message.mediaBucket,
+                                        mediaModel,
+                                        if (mediaModel == message.mediaThumbnail) null else message.mediaPath
+                                    ),
                                     contentDescription = "Media",
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
@@ -1100,7 +1133,12 @@ fun DomainChatBubble(
                                 }
                                 if (!mediaModel.isNullOrEmpty()) {
                                     AsyncImage(
-                                        model = mediaModel,
+                                        // Task 24: stable bucket/path cache keys.
+                                        model = privateMediaModel(
+                                            message.mediaBucket,
+                                            mediaModel,
+                                            if (mediaModel == message.mediaThumbnail) null else message.mediaPath
+                                        ),
                                         contentDescription = "Media",
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize()

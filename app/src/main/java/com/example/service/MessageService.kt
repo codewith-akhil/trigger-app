@@ -44,6 +44,14 @@ interface MessageService {
     fun getMediaMessages(conversationId: String): Flow<List<DomainMessage>>
     fun getDocumentMessages(conversationId: String): Flow<List<DomainMessage>>
     suspend fun retryFailedMessage(messageId: String)
+
+    /** Local-first outbox flush (Task 24): retries every outgoing message
+     *  stuck in SENDING (app killed mid-send) or FAILED that is older than
+     *  2 minutes. Called automatically when connectivity returns and on app
+     *  start. Idempotent — send-message dedupes by the stable idempotency
+     *  key, so a message that actually reached the server is never sent
+     *  twice. Returns the number of messages retried. */
+    suspend fun retryPendingOutbox(): Int
     suspend fun forwardMessage(message: DomainMessage, targetConversationIds: List<String>)
     suspend fun toggleStarMessage(messageId: String)
 

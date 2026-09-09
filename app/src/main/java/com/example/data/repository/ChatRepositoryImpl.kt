@@ -4,6 +4,7 @@ import com.example.data.local.ChatDatabase
 import com.example.data.local.ConversationEntity
 import com.example.data.local.MessageEntity
 import com.example.model.*
+import com.example.service.MediaUrlResolver
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -71,24 +72,26 @@ class ChatRepositoryImpl(
         conversationDao.updateLastMessage(id, preview, timestamp, timestampMillis)
     }
 
+    /** Task 24: mint short-lived signed URLs for PRIVATE-bucket media before
+     *  any render surface. Memoized in MediaUrlResolver (first call per object
+     *  signs; later calls hit the in-memory cache; offline falls back to the
+     *  last known signature + Coil's stable disk-cache key). */
+    private suspend fun DomainMessage.withSignedMedia(): DomainMessage {
+        if (!MediaUrlResolver.isPrivateBucket(mediaBucket)) return this
+        val freshUrl = MediaUrlResolver.resolveWithRefresh(mediaUrl, mediaBucket, mediaPath)
+        val thumbPath = MediaUrlResolver.objectPathOf(mediaThumbnail, mediaBucket, null)
+        val freshThumb = if (thumbPath != null) {
+            MediaUrlResolver.resolveWithRefresh(mediaThumbnail, mediaBucket, thumbPath)
+        } else mediaThumbnail
+        return copy(
+            mediaUrl = freshUrl ?: mediaUrl,
+            mediaThumbnail = freshThumb ?: mediaThumbnail
+        )
+    }
+
     fun getMessages(conversationId: String): Flow<List<DomainMessage>> {
         return messageDao.getMessagesForConversation(conversationId).map { list ->
-            list.map { entity ->
-                val msg = entity.toDomainMessage()
-                // Private-bucket media (voice notes, documents) carries
-                // expiring signed URLs — re-sign on render instead of showing
-                // dead media after expiry.
-                if (com.example.service.MediaUrlResolver.isExpiringUrl(msg.mediaUrl) &&
-                    msg.mediaBucket != null &&
-                    msg.mediaBucket != com.example.service.MediaUrlResolver.CHAT_MEDIA_BUCKET
-                ) {
-                    msg.copy(
-                        mediaUrl = com.example.service.MediaUrlResolver.resolveWithRefresh(
-                            msg.mediaUrl, msg.mediaBucket, msg.mediaPath
-                        )
-                    )
-                } else msg
-            }
+            list.map { it.toDomainMessage().withSignedMedia() }
         }
     }
 
@@ -97,7 +100,8 @@ class ChatRepositoryImpl(
      * Used for cursor-based pagination when the user scrolls to the top.
      */
     suspend fun getMessagesPage(conversationId: String, beforeTimestamp: Long, limit: Int = 50): List<DomainMessage> {
-        return messageDao.getMessagesPage(conversationId, beforeTimestamp, limit).map { it.toDomainMessage() }
+        return messageDao.getMessagesPage(conversationId, beforeTimestamp, limit)
+            .map { it.toDomainMessage().withSignedMedia() }
     }
 
     /**
@@ -108,18 +112,25 @@ class ChatRepositoryImpl(
         return messageDao.getAllFailedMessages().map { it.toDomainMessage() }
     }
 
+    /** Outbox scan for the connectivity-triggered retry (Task 24). */
+    suspend fun getStaleOutgoingMessages(olderThanMillis: Long): List<DomainMessage> {
+        return messageDao.getStaleOutgoingMessages(olderThanMillis).map { it.toDomainMessage() }
+    }
+
     /**
      * Returns starred messages in a conversation.
      */
     suspend fun getStarredMessages(conversationId: String): List<DomainMessage> {
-        return messageDao.getStarredMessages(conversationId).map { it.toDomainMessage() }
+        return messageDao.getStarredMessages(conversationId)
+            .map { it.toDomainMessage().withSignedMedia() }
     }
 
     /**
      * Returns pinned messages in a conversation.
      */
     suspend fun getPinnedMessages(conversationId: String): List<DomainMessage> {
-        return messageDao.getPinnedMessages(conversationId).map { it.toDomainMessage() }
+        return messageDao.getPinnedMessages(conversationId)
+            .map { it.toDomainMessage().withSignedMedia() }
     }
 
     suspend fun sendMessage(message: DomainMessage, isOnline: Boolean) {
@@ -213,13 +224,13 @@ class ChatRepositoryImpl(
 
     fun getMediaMessages(conversationId: String): Flow<List<DomainMessage>> {
         return messageDao.getMediaMessages(conversationId).map { list ->
-            list.map { it.toDomainMessage() }
+            list.map { it.toDomainMessage().withSignedMedia() }
         }
     }
 
     fun getDocumentMessages(conversationId: String): Flow<List<DomainMessage>> {
         return messageDao.getDocumentMessages(conversationId).map { list ->
-            list.map { it.toDomainMessage() }
+            list.map { it.toDomainMessage().withSignedMedia() }
         }
     }
 

@@ -64,7 +64,8 @@ data class ConversationEntity(
             disappearingUpdatedAtMillis = disappearingUpdatedAtMillis,
             isMuted = isMuted,
             isBlocked = isBlocked,
-            isArchived = isArchived
+            isArchived = isArchived,
+            requestStatus = requestStatus
         )
     }
 
@@ -87,7 +88,8 @@ data class ConversationEntity(
                 disappearingDuration = d.disappearingDuration.name,
                 isMuted = d.isMuted,
                 isBlocked = d.isBlocked,
-                isArchived = d.isArchived
+                isArchived = d.isArchived,
+                requestStatus = d.requestStatus
             )
         }
     }

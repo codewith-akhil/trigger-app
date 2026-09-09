@@ -124,6 +124,10 @@ async function handler(req: Request): Promise<Response> {
       request_status: "accepted", is_contact: true,
       last_message: canonical.last_message, last_message_type: canonical.last_message_type,
       last_message_at: canonical.last_message_at,
+      // Task 24: the mirror UPDATE branch used to leave unread_count stale —
+      // the client merges unread as max(canonical, mirror) on every pull, so
+      // a stale mirror value resurrected a phantom badge forever.
+      unread_count: unread,
     }).eq("id", existingMirror.id);
   } else {
     // Unique(pair) race with a concurrent accept: on 23505 re-select the

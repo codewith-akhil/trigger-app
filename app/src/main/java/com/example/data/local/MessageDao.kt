@@ -21,6 +21,12 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE status = 'FAILED'")
     suspend fun getAllFailedMessages(): List<MessageEntity>
 
+    /** Offline outbox (Task 24): every outgoing message still stuck in
+     *  SENDING (app killed mid-send) or FAILED older than [olderThanMillis]
+     *  — retried automatically when connectivity returns. */
+    @Query("SELECT * FROM messages WHERE isOutgoing = 1 AND status IN ('SENDING', 'FAILED') AND timestampMillis < :olderThanMillis")
+    suspend fun getStaleOutgoingMessages(olderThanMillis: Long): List<MessageEntity>
+
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND isStarred = 1 ORDER BY timestampMillis DESC")
     suspend fun getStarredMessages(conversationId: String): List<MessageEntity>
 

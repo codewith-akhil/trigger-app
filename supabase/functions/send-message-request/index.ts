@@ -51,6 +51,18 @@ async function handler(req: Request): Promise<Response> {
   const { data: receiver } = await supabase.from("profiles").select("id").eq("id", receiverId).maybeSingle();
   if (!receiver) return json({ error: "User not found" }, 404);
 
+  // Blocked-contacts enforcement (Task 24) — both directions.
+  {
+    const { data: blockedRow } = await supabase
+      .from("blocked_contacts")
+      .select("id")
+      .or(`and(user_id.eq.${senderId},blocked_user_id.eq.${receiverId}),and(user_id.eq.${receiverId},blocked_user_id.eq.${senderId})`)
+      .limit(1);
+    if (blockedRow && blockedRow.length > 0) {
+      return json({ error: "You can't message this user", code: "BLOCKED" }, 403);
+    }
+  }
+
   // Sender profile (request card + conversation metadata)
   const { data: sender } = await supabase
     .from("profiles").select("full_name, username, avatar_url").eq("id", senderId).maybeSingle();
@@ -132,24 +144,79 @@ async function handler(req: Request): Promise<Response> {
   }
 
   // No conversation yet — create the canonical (sender-owned) pending row.
+  // Task 24: creation goes through get_or_create_conversation (advisory lock
+  // on the UNORDERED pair) so a first-request racing a first-message from the
+  // other side cannot yield two pair rows. On a lost race, re-select the
+  // winner and route through the same status gate.
   const { data: receiverProfile } = await supabase
     .from("profiles").select("full_name, avatar_url").eq("id", receiverId).maybeSingle();
-  const { data: conv, error: convErr } = await supabase
-    .from("conversations")
-    .insert({
-      owner_id: senderId, peer_id: receiverId,
-      peer_name: receiverProfile?.full_name ?? body.receiverName ?? "Unknown",
-      peer_avatar_url: receiverProfile?.avatar_url ?? null,
-      request_status: "pending", is_contact: false,
-      last_message: message, last_message_type: "TEXT",
-      last_message_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
-  if (convErr || !conv) {
-    console.error("send-message-request: conversation insert failed", convErr);
+  const { data: rpcRes, error: rpcErr } = await supabase.rpc("get_or_create_conversation", {
+    p_owner: senderId,
+    p_peer: receiverId,
+    p_peer_name: receiverProfile?.full_name ?? body.receiverName ?? "Unknown",
+  });
+  if (rpcErr || !rpcRes || rpcRes.length === 0) {
+    console.error("send-message-request: conversation create failed", rpcErr);
     return json({ error: "Failed to send request" }, 500);
   }
+  const rpcRow = rpcRes[0] as { conversation_id: string; was_created: boolean };
+  if (!rpcRow.was_created) {
+    const { data: winner } = await supabase
+      .from("conversations")
+      .select("id, owner_id, peer_id, request_status")
+      .eq("id", rpcRow.conversation_id)
+      .maybeSingle();
+    if (winner) {
+      if (winner.request_status === "accepted") {
+        return json({ error: "You can already chat with this user", code: "ALREADY_CONNECTED" }, 409);
+      }
+      if (winner.request_status === "blocked" || winner.request_status === "declined") {
+        return json({ error: "This conversation is not open for messages", code: "CONVERSATION_BLOCKED" }, 403);
+      }
+      if (winner.owner_id === senderId) {
+        // Pending row created by a concurrent request from us — insert this
+        // message atomically and fall through to the normal pending return.
+        const { data: msg, error: msgErr } = await supabase.rpc("try_send_pending_message", {
+          p_conversation_id: winner.id,
+          p_sender_id: senderId,
+          p_text: message,
+          p_timestamp_millis: null,
+        });
+        if (msgErr || !msg) {
+          return json({ error: "Failed to send message" }, 500);
+        }
+        await supabase.from("conversations").update({
+          last_message: message.slice(0, 100), last_message_type: "TEXT",
+          last_message_at: new Date().toISOString(),
+        }).eq("id", winner.id);
+        await supabase.from("message_requests").upsert({
+          sender_id: senderId, receiver_id: receiverId,
+          sender_name: sender.full_name, sender_username: sender.username,
+          sender_avatar_url: sender.avatar_url, initial_message: message,
+          status: "pending", conversation_id: winner.id,
+        }, { onConflict: "sender_id,receiver_id" });
+        const { count: sentNow } = await supabase
+          .from("messages")
+          .select("id", { count: "exact", head: true })
+          .eq("conversation_id", winner.id)
+          .eq("sender_id", senderId);
+        return json({
+          sent: true, status: "pending", conversationId: winner.id,
+          messagesSent: sentNow ?? 1, messagesRemaining: Math.max(0, MAX_REQUEST_MESSAGES - (sentNow ?? 1)),
+        });
+      }
+      return json({ error: "You can already chat with this user", code: "ALREADY_CONNECTED" }, 409);
+    }
+  }
+  const conv = { id: rpcRow.conversation_id };
+
+  // Stamp the sender's request text + receiver avatar on the canonical row
+  // (get_or_create_conversation inserts a bare pending row).
+  await supabase.from("conversations").update({
+    peer_avatar_url: receiverProfile?.avatar_url ?? null,
+    last_message: message, last_message_type: "TEXT",
+    last_message_at: new Date().toISOString(),
+  }).eq("id", conv.id);
 
   // Register the request and link it to the canonical conversation.
   const { error: reqError } = await supabase.from("message_requests").upsert({

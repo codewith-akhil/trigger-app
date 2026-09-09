@@ -197,10 +197,12 @@ class UploadServiceImpl(
                     throw Exception("Storage upload failed: ${response.code} - ${responseBody.take(200)}")
                 }
 
-                // Public buckets (chat_media since 20260918, voice_notes since
-                // 20260922) → the plain public URL is permanent; no more 7-day
-                // signing that used to brick every chat image after a week.
-                val finalUrl = MediaUrlResolver.publicUrl(bucket, objectPath)
+                // Task 24: chat_media + voice_notes are PRIVATE buckets with
+                // participant-only storage RLS. Persist the BARE OBJECT PATH
+                // ("{uid}/{uuid}.ext") — never a public URL. Every reader
+                // mints a short-lived signed URL from bucket+path via
+                // MediaUrlResolver at render/play time.
+                val finalUrl = objectPath
 
                 // ---- Video thumbnail (poster frame) ----
                 // Uploaded alongside the media so BOTH parties' bubbles show a
@@ -225,7 +227,8 @@ class UploadServiceImpl(
                         }
                         thumbResponse.use { r ->
                             if (r.isSuccessful) {
-                                thumbnailUrl = MediaUrlResolver.publicUrl(bucket, thumbObjectPath)
+                                // Bare object path (private bucket — see Task 24 note above).
+                                thumbnailUrl = thumbObjectPath
                             } else {
                                 Log.w(TAG, "Thumbnail upload failed: ${r.code}")
                             }

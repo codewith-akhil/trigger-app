@@ -1212,17 +1212,66 @@ fun ChatScreen(
                 viewModel.activeViewerMessage.value = null
             },
             onShare = {
-                val mediaUrl = activeViewerMessageValue.mediaUrl
+                val msg = activeViewerMessageValue
+                val mediaUrl = msg.mediaUrl
                 if (!mediaUrl.isNullOrEmpty()) {
                     try {
-                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                            type = if (activeViewerMessageValue.type == MessageType.VIDEO) "video/*"
-                                   else if (activeViewerMessageValue.type == MessageType.DOCUMENT) "*/*"
+                        val mime = if (msg.type == MessageType.VIDEO) "video/*"
+                                   else if (msg.type == MessageType.DOCUMENT) "*/*"
                                    else "image/*"
-                            putExtra(Intent.EXTRA_STREAM, Uri.parse(mediaUrl))
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        // Task 24: chat media lives in PRIVATE buckets — the
+                        // stored value is a bare object path and any resolved
+                        // URL is a SHORT-LIVED signed one, useless to the
+                        // receiving app. Materialize the bytes into the app
+                        // cache and share through the existing FileProvider.
+                        // Fully async: the download runs on IO and the chooser
+                        // is started from the main thread once the file exists.
+                        coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            var shareUri: Uri? = null
+                            try {
+                                when {
+                                    mediaUrl.startsWith("content://") -> shareUri = Uri.parse(mediaUrl)
+                                    mediaUrl.startsWith("http") -> {
+                                        val ext = (msg.fileName?.substringAfterLast('.', "")
+                                            ?.takeIf { it.length in 1..5 }
+                                            ?: mediaUrl.substringBefore('?').substringAfterLast('.', "jpg"))
+                                        val dir = File(context.cacheDir, "share_media")
+                                        dir.mkdirs()
+                                        val outFile = File(dir, "${System.currentTimeMillis()}.$ext")
+                                        val conn = java.net.URL(mediaUrl).openConnection() as java.net.HttpURLConnection
+                                        conn.connectTimeout = 10_000
+                                        conn.readTimeout = 60_000
+                                        if (conn.responseCode in 200..299) {
+                                            conn.inputStream.use { input ->
+                                                outFile.outputStream().use { input.copyTo(it) }
+                                            }
+                                            shareUri = androidx.core.content.FileProvider.getUriForFile(
+                                                context, "${context.packageName}.fileprovider", outFile
+                                            )
+                                        }
+                                    }
+                                    mediaUrl.startsWith("/") && File(mediaUrl).exists() ->
+                                        shareUri = androidx.core.content.FileProvider.getUriForFile(
+                                            context, "${context.packageName}.fileprovider", File(mediaUrl)
+                                        )
+                                    else -> shareUri = Uri.parse(mediaUrl)
+                                }
+                            } catch (_: Exception) {
+                            }
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                val uri = shareUri ?: Uri.parse(mediaUrl)
+                                try {
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = mime
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "Share via"))
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                            }
                         }
-                        context.startActivity(Intent.createChooser(shareIntent, "Share via"))
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }

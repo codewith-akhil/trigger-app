@@ -133,7 +133,12 @@ data class DomainConversation(
      *  Null = never set (no system notice, no purge floor). */
     val disappearingUpdatedAtMillis: Long? = null,
     val isMuted: Boolean = false,
-    val isBlocked: Boolean = false
+    val isBlocked: Boolean = false,
+    /** Server request_status ('pending' | 'accepted' | 'declined' | 'blocked')
+     *  — 'pending' threads (outgoing message requests) are HIDDEN from the
+     *  chat list until the recipient accepts (Task 24; requests surface via
+     *  NewMessage → Message Requests instead). */
+    val requestStatus: String = "accepted"
 )
 
 data class UploadTask(

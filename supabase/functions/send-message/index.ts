@@ -146,23 +146,37 @@ async function handler(req: Request): Promise<Response> {
       // another IS a message request — it must start PENDING (it previously
       // auto-created as "accepted", letting anyone message anyone while
       // bypassing the whole request/3-message gate).
-      const { data: newConv, error: createErr } = await supabase
-        .from("conversations")
-        .insert({
-          owner_id: userId,
-          peer_id: body.peer_id,
-          peer_name: body.peer_name ?? "Unknown",
-          request_status: "pending",
-          is_group: false,
-        })
-        .select("id, owner_id, peer_id, request_status")
-        .single();
-      if (createErr || !newConv) {
+      //
+      // Creation goes through get_or_create_conversation (Task 24): the RPC
+      // takes a pg advisory lock keyed on the UNORDERED pair, so two
+      // simultaneous first-sends from opposite sides serialize and only ONE
+      // pending row exists (the ordered-pair unique index alone cannot span
+      // (A,B)+(B,A)). If the RPC reports the row already existed we lost the
+      // race — re-select it and continue with the winner.
+      const { data: rpcRes, error: createErr } = await supabase.rpc("get_or_create_conversation", {
+        p_owner: userId,
+        p_peer: body.peer_id,
+        p_peer_name: body.peer_name ?? "Unknown",
+      });
+      if (createErr || !rpcRes || rpcRes.length === 0) {
         console.error("send-message: failed to auto-create conversation", createErr);
         return json({ error: "Conversation not found and could not be created. Provide a valid conversation_id or peer_id.", code: ErrorCode.NOT_FOUND }, 404);
       }
-      conv = newConv;
-      conversationId = newConv.id;
+      const rpcRow = rpcRes[0] as { conversation_id: string; was_created: boolean };
+      if (rpcRow.was_created) {
+        conv = { id: rpcRow.conversation_id, owner_id: userId, peer_id: body.peer_id, request_status: "pending" };
+      } else {
+        const { data: winner } = await supabase
+          .from("conversations")
+          .select("id, owner_id, peer_id, request_status")
+          .eq("id", rpcRow.conversation_id)
+          .maybeSingle();
+        if (!winner) {
+          return json({ error: "Conversation not found and could not be created. Provide a valid conversation_id or peer_id.", code: ErrorCode.NOT_FOUND }, 404);
+        }
+        conv = winner;
+      }
+      conversationId = conv.id;
       // Mirror the request into message_requests (same as send-message-request
       // does) so the receiver's Requests list shows it.
       try {
@@ -195,6 +209,24 @@ async function handler(req: Request): Promise<Response> {
   }
   if (conv.request_status === "blocked") {
     return json({ error: "This conversation is blocked", code: ErrorCode.FORBIDDEN }, 403);
+  }
+
+  // Blocked-contacts enforcement (Task 24): in-chat block was previously a
+  // client-UI-only flag — the server never learned about it and a blocked
+  // peer could keep sending. Blocking writes blocked_contacts (via
+  // manage-blocked-contacts), so check it here in BOTH directions.
+  {
+    const other = conv.owner_id === userId ? conv.peer_id : conv.owner_id;
+    if (other) {
+      const { data: blockedRow } = await supabase
+        .from("blocked_contacts")
+        .select("id")
+        .or(`and(user_id.eq.${userId},blocked_user_id.eq.${other}),and(user_id.eq.${other},blocked_user_id.eq.${userId})`)
+        .limit(1);
+      if (blockedRow && blockedRow.length > 0) {
+        return json({ error: "This conversation is blocked", code: ErrorCode.FORBIDDEN }, 403);
+      }
+    }
   }
 
   // --- Message-request gating (Instagram model) ---------------------------

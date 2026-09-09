@@ -9,6 +9,7 @@ import com.example.service.MediaUrlResolver
 import com.example.service.supabase.SupabaseResult
 import com.example.ui.screens.ChatFilter
 import com.example.util.ChatTimeFormatter
+import com.example.util.ConnectivityObserver
 import com.example.util.optStringOrNull
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -58,6 +59,22 @@ class DashboardViewModel : ViewModel() {
     private var notificationsRefreshInFlight = false
 
     init {
+        // Local-first (Task 24): seed the process-wide connectivity signal and
+        // flush the offline outbox whenever internet comes back (stuck SENDING
+        // / FAILED messages retry automatically; idempotency keys prevent
+        // duplicates). Also flush once on app start — anything that expired
+        // while the app was closed gets a chance now.
+        ConnectivityObserver.start(AppServiceContainer.context)
+        viewModelScope.launch {
+            ConnectivityObserver.isOnline.collect { online ->
+                if (online) {
+                    try {
+                        AppServiceContainer.messageService.retryPendingOutbox()
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        }
         // Sync conversations from Supabase on app launch (multi-device sync)
         viewModelScope.launch {
             _isSyncing.value = true
@@ -185,10 +202,13 @@ class DashboardViewModel : ViewModel() {
             if (group.size > 1) {
                 losers.addAll(group.filter { it.id != canonical.id }.map { it.id })
             }
-            // Merge the pair's freshest activity + highest unread onto the row
-            // the list keeps (the canonical row can lag the mirror on either).
+            // Merge the pair's freshest activity onto the row the list keeps.
+            // Task 24: unread is taken from the CANONICAL row only — the server
+            // increments/decrements unread on the canonical row exclusively,
+            // so the old max(canonical, mirror) merge resurrected a phantom
+            // badge from the accept-time mirror snapshot on every pull.
             val mergedActivity = group.maxOf { it.lastActivityMillis }
-            val mergedUnread = group.maxOf { it.unreadCount }
+            val mergedUnread = canonical.unreadCount
             val mergedEntity = if (mergedActivity != canonical.lastActivityMillis ||
                 mergedUnread != canonical.unreadCount
             ) {
@@ -370,6 +390,11 @@ class DashboardViewModel : ViewModel() {
                 timestamp = ChatTimeFormatter.formatForList(entity.lastActivityMillis, entity.timestamp)
             )
         }.filter { conv ->
+            // Task 24: outgoing message REQUESTS stay off the chat list until
+            // accepted (v10 contract: requests surface via NewMessage →
+            // Message Requests, mirroring Instagram/WhatsApp behaviour).
+            val notPending = conv.requestStatus != "pending"
+
             // Archived filter — when showArchived=false, hide archived chats;
             // when showArchived=true, show only archived chats.
             val matchesArchiveFilter = if (showArchived) conv.isArchived else !conv.isArchived
@@ -384,7 +409,7 @@ class DashboardViewModel : ViewModel() {
                 ChatFilter.GROUPS -> conv.isGroup
             }
 
-            matchesArchiveFilter && matchesQuery && matchesFilter
+            notPending && matchesArchiveFilter && matchesQuery && matchesFilter
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 

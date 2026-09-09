@@ -343,7 +343,13 @@ fun ChatContactInfoSheet(
                                         ) {
                                             mediaMessages.take(4).forEach {
                                                 AsyncImage(
-                                                    model = it.mediaThumbnail ?: it.mediaUrl,
+                                                    // Task 24: stable bucket/path cache keys
+                                                    // for private-bucket media.
+                                                    model = privateMediaModel(
+                                                        it.mediaBucket,
+                                                        it.mediaThumbnail ?: it.mediaUrl,
+                                                        if (it.mediaThumbnail != null) null else it.mediaPath
+                                                    ),
                                                     contentDescription = "Shared media",
                                                     contentScale = ContentScale.Crop,
                                                     modifier = Modifier

@@ -1,11 +1,62 @@
 // Edge function: forward-message
 // Forwards a message to one or more target conversations. Creates a copy of
 // the original message in each target conversation with a new ID.
+//
+// Task 24: chat_media/voice_notes are PRIVATE buckets with participant-only
+// RLS keyed on the uploader's object folder ("{uid}/{uuid}.ext"). A forwarded
+// copy that still points into the ORIGINAL uploader's folder would 403 for
+// the new recipient, so every media object is server-side COPIED into the
+// forwarder's own folder before the message rows are inserted.
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { handleOptions, json, errorResponse, ErrorCode } from "../_shared/cors.ts";
 import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
 
 interface Body { message_id?: string; target_conversation_ids?: string[]; }
+
+/** Buckets whose objects must be re-homed into the forwarder's folder. */
+const PRIVATE_MEDIA_BUCKETS = new Set(["chat_media", "voice_notes"]);
+
+/** Extracts the bare object path from a stored media_url (bare path since
+ *  migration 20260924; public/signed URL form on pre-migration rows). */
+function extractObjectPath(stored: string, bucket: string): string | null {
+  for (const marker of [
+    `/storage/v1/object/public/${bucket}/`,
+    `/storage/v1/object/sign/${bucket}/`,
+    `/storage/v1/object/authenticated/${bucket}/`,
+  ]) {
+    const idx = stored.indexOf(marker);
+    if (idx >= 0) return stored.substring(idx + marker.length).split("?")[0];
+  }
+  // Bare path form: "uid/uuid.ext" (no scheme, no leading slash).
+  if (!stored.startsWith("http") && stored.includes("/") && !stored.startsWith("/")) return stored;
+  return null;
+}
+
+/** Server-side storage copy via POST /storage/v1/object/copy (service role). */
+async function copyStorageObject(bucket: string, sourcePath: string, destPath: string): Promise<boolean> {
+  try {
+    const base = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!base || !serviceKey) return false;
+    const res = await fetch(`${base}/storage/v1/object/copy`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${serviceKey}`,
+        "apikey": serviceKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        bucketId: bucket,
+        sourceKey: sourcePath,
+        destinationBucket: bucket,
+        destinationKey: destPath,
+      }),
+    });
+    return res.ok;
+  } catch (_e) {
+    return false;
+  }
+}
 
 async function handler(req: Request): Promise<Response> {
   const preflight = handleOptions(req); if (preflight) return preflight;
@@ -66,14 +117,41 @@ async function handler(req: Request): Promise<Response> {
   const forwarded = [];
   for (const targetId of targetIds) {
     const newId = crypto.randomUUID();
+
+    // Task 24: re-home private-bucket media into the FORWARDER's folder so
+    // the new recipient passes participant storage RLS. On copy failure the
+    // original coordinates are kept (legacy behavior) rather than failing
+    // the whole forward.
+    let mediaUrl = orig.media_url ?? null;
+    let mediaThumbnail = orig.media_thumbnail ?? null;
+    const bucket = orig.media_bucket ?? null;
+    if (bucket && PRIVATE_MEDIA_BUCKETS.has(bucket)) {
+      const srcPath = mediaUrl ? extractObjectPath(mediaUrl, bucket) : null;
+      if (srcPath) {
+        const ext = srcPath.includes(".") ? srcPath.split(".").pop() : "bin";
+        const destPath = `${userId}/${crypto.randomUUID()}.${ext}`;
+        if (await copyStorageObject(bucket, srcPath, destPath)) {
+          mediaUrl = destPath;  // bare path — same storage shape as Task 24 uploads
+        }
+      }
+      const srcThumb = mediaThumbnail ? extractObjectPath(mediaThumbnail, bucket) : null;
+      if (srcThumb && mediaUrl && mediaUrl !== orig.media_url) {
+        const thumbExt = srcThumb.includes(".") ? srcThumb.split(".").pop() : "jpg";
+        const destThumb = `${userId}/${crypto.randomUUID()}.${thumbExt}`;
+        if (await copyStorageObject(bucket, srcThumb, destThumb)) {
+          mediaThumbnail = destThumb;
+        }
+      }
+    }
+
     const insertData = {
       id: newId,
       conversation_id: targetId,
       sender_id: userId,
       type: orig.type,
       text: orig.text ?? "",
-      media_url: orig.media_url ?? null,
-      media_thumbnail: orig.media_thumbnail ?? null,
+      media_url: mediaUrl,
+      media_thumbnail: mediaThumbnail,
       media_bucket: orig.media_bucket ?? null,
       file_name: orig.file_name ?? null,
       file_size: orig.file_size ?? 0,

@@ -169,12 +169,19 @@ class MessageServiceImpl(
         }
 
         // 3. Create (self-chats allowed: owner = peer = me).
+        // Task 24: this client-side insert previously wrote request_status
+        // "accepted", bypassing the whole request/3-message gate whenever the
+        // contacts table held an entry without a live conversation row. New
+        // conversations now start PENDING like every server-created one (the
+        // self-chat needs no request). The pair lookup above plus the
+        // (owner_id,peer_id) unique index keep this from duplicating rows.
+        val requestStatus = if (peerId == me) "accepted" else "pending"
         val insert = supabaseClient.insertRecord(
             "conversations",
             org.json.JSONObject()
                 .put("owner_id", me)
                 .put("peer_id", peerId)
-                .put("request_status", "accepted")
+                .put("request_status", requestStatus)
                 .put("is_group", false)
         )
         return when (insert) {
@@ -466,6 +473,14 @@ class MessageServiceImpl(
             val createdAt = record.optString("created_at", "")
             parseIsoToMillis(createdAt)
         }
+        // Task 24: private buckets — the server row carries the BARE OBJECT
+        // PATH in media_url/media_thumbnail plus the bucket in media_bucket.
+        // Map ALL THREE so Room rows can re-sign on read. Legacy rows (public
+        // URL form) get their path derived so they keep resolving too.
+        val rawMediaUrl = record.optString("media_url", null)
+        val rawThumb = record.optString("media_thumbnail", null)
+        val rawBucket = record.optString("media_bucket", null)?.takeIf { it.isNotBlank() }
+        val derivedMediaPath = MediaUrlResolver.objectPathOf(rawMediaUrl, rawBucket, null)
         return DomainMessage(
             id = record.optString("id", ""),
             conversationId = record.optString("conversation_id", ""),
@@ -475,8 +490,10 @@ class MessageServiceImpl(
                 MessageType.valueOf(record.optString("type", "TEXT"))
             } catch (e: Exception) { MessageType.TEXT },
             text = record.optString("text", ""),
-            mediaUrl = record.optString("media_url", null),
-            mediaThumbnail = record.optString("media_thumbnail", null),
+            mediaUrl = rawMediaUrl,
+            mediaThumbnail = rawThumb,
+            mediaBucket = rawBucket,
+            mediaPath = derivedMediaPath,
             fileName = record.optString("file_name", null),
             fileSize = record.optLong("file_size", 0L),
             mediaDurationSec = record.optInt("media_duration_sec", 0),
@@ -823,17 +840,25 @@ class MessageServiceImpl(
             // store a dead URL on the server. Their retry path is a RE-UPLOAD
             // (the upload task streams the local file again, then the normal
             // completeMediaUpload creates the server row).
-            val localSource = msg.mediaUrl?.takeIf { it.isNotBlank() && !it.startsWith("http") }
-            if (localSource == null) {
-                // Nothing local to re-upload: either it already carries a
-                // remote URL (plain send failure → re-send below) or the
-                // source file is gone (re-send would store a dead URL).
+            // Task 24: mediaUrl is a BARE OBJECT PATH ("uid/uuid.ext") once
+            // the upload completed — that is NOT a local file. Decide by
+            // checking the file system, and when the storage coordinates are
+            // already known, skip the re-upload and go straight to re-send
+            // (the idempotency key prevents a duplicate server row).
+            val rawMediaUrl = msg.mediaUrl?.takeIf { it.isNotBlank() && !it.startsWith("http") }
+            val isLocalFile = rawMediaUrl != null && java.io.File(rawMediaUrl).exists()
+            val alreadyUploaded = !isLocalFile &&
+                !msg.mediaPath.isNullOrBlank() && !msg.mediaBucket.isNullOrBlank()
+            if (!isLocalFile && !alreadyUploaded) {
+                // Nothing local to re-upload and no upload ever completed:
+                // either the source file is gone (re-send would store a dead
+                // URL) or the row never had media.
                 if (msg.mediaUrl.isNullOrBlank()) {
                     Log.w(TAG, "retryFailedMessage: media message $messageId has no local source — cannot re-upload")
                     repository.updateMessageStatus(messageId, MessageStatus.FAILED)
                     return
                 }
-            } else {
+            } else if (isLocalFile) {
                 repository.updateMessageStatus(messageId, MessageStatus.SENDING)
                 val (realConvId, realPeerId) = resolveConversationForRetry(msg.conversationId)
                 val conv = repository.getConversationByIdOnce(realConvId)
@@ -844,15 +869,19 @@ class MessageServiceImpl(
                     fileName = msg.fileName ?: "media_${System.currentTimeMillis()}",
                     fileType = msg.type,
                     totalBytes = msg.fileSize,
-                    filePath = localSource,
+                    filePath = rawMediaUrl!!, // verified above
                     mimeType = null, // resolved from the extension at upload time
-                    thumbnailPath = msg.mediaThumbnail?.takeIf { !it.startsWith("http") },
+                    thumbnailPath = msg.mediaThumbnail?.takeIf {
+                        !it.startsWith("http") && java.io.File(it).exists()
+                    },
                     peerId = realPeerId,
                     peerName = conv?.name
                 )
                 AppServiceContainer.uploadService.enqueueUpload(task)
                 return
             }
+            // alreadyUploaded (or plain remote-URL re-send) → fall through to
+            // the normal send path below.
         }
         repository.updateMessageStatus(messageId, MessageStatus.SENDING)
         // H4: route by the REAL conversation uuid + the conversation's peer —
@@ -879,6 +908,33 @@ class MessageServiceImpl(
         }
         // Unknown — let the server find-or-create by treating it as a peer.
         return Pair(idOrPeer, idOrPeer)
+    }
+
+    /** Local-first outbox flush (Task 24). Stale = outgoing SENDING/FAILED
+     *  older than 2 minutes (a fresh SENDING row is just an in-flight send —
+     *  retrying it would race the live path). Each retry goes through
+     *  [retryFailedMessage], which now distinguishes local files from bare
+     *  object paths and relies on the stable idempotency key server-side. */
+    override suspend fun retryPendingOutbox(): Int {
+        val cutoff = System.currentTimeMillis() - 2 * 60 * 1000L
+        val stale = try {
+            repository.getStaleOutgoingMessages(cutoff)
+        } catch (e: Exception) {
+            Log.w(TAG, "outbox query failed: ${e.message}")
+            return 0
+        }
+        if (stale.isEmpty()) return 0
+        Log.i(TAG, "Outbox flush: retrying ${stale.size} stale outgoing message(s)")
+        var retried = 0
+        stale.forEach { msg ->
+            try {
+                retryFailedMessage(msg.id)
+                retried++
+            } catch (e: Exception) {
+                Log.w(TAG, "outbox retry failed for ${msg.id}: ${e.message}")
+            }
+        }
+        return retried
     }
 
     override suspend fun retryAllFailedMessages() {

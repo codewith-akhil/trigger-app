@@ -9,6 +9,7 @@ import com.example.model.*
 import com.example.service.CallSession
 import com.example.service.LiveLocationService
 import com.example.service.LiveLocationShareState
+import com.example.service.MediaUrlResolver
 import com.example.service.MessageServiceImpl
 import com.example.service.supabase.RealtimeEvent
 import com.example.service.supabase.SupabaseResult
@@ -923,7 +924,39 @@ class ChatViewModel(
 
     fun setBlocked(isBlocked: Boolean) {
         viewModelScope.launch {
+            // Local flag (Room) — hides the chat UI-side immediately.
             repository.setBlocked(conversationId, isBlocked)
+            // Task 24: sync the block to the SERVER. Previously this was a
+            // local-only flag — the peer could keep sending because neither
+            // blocked_contacts nor conversations.request_status ever changed.
+            // The server-side gate lives in send-message / send-message-request
+            // (blocked_contacts check, both directions).
+            if (peerId.isNotBlank() && MediaUrlResolver.isUuid(peerId)) {
+                try {
+                    AppServiceContainer.supabaseClient.invokeFunction(
+                        "manage-blocked-contacts",
+                        org.json.JSONObject()
+                            .put("action", if (isBlocked) "block" else "unblock")
+                            .put("blockedIdentifier", peerId)
+                            .put("blockedUserId", peerId)
+                    )
+                    if (!isBlocked && contactName.isNotBlank() && contactName != peerId) {
+                        // Also clear a block that was created from the profile
+                        // screen (identifier = display name there).
+                        try {
+                            AppServiceContainer.supabaseClient.invokeFunction(
+                                "manage-blocked-contacts",
+                                org.json.JSONObject()
+                                    .put("action", "unblock")
+                                    .put("blockedIdentifier", contactName)
+                            )
+                        } catch (_: Exception) {
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("ChatViewModel", "server block sync failed: ${e.message}")
+                }
+            }
         }
     }
 
@@ -1227,6 +1260,11 @@ class ChatViewModel(
         audioPlaybackJob = viewModelScope.launch(Dispatchers.IO) {
             var player: android.media.MediaPlayer? = null
             try {
+                // Task 24: resolve a PLAYABLE source — a previously cached
+                // local copy wins (offline replay, zero re-download), otherwise
+                // a short-lived signed URL is minted (and cached for next time).
+                val url = resolvePlayableAudioUrl(message)
+                    ?: throw IllegalStateException("no playable audio source")
                 player = android.media.MediaPlayer()
                 mediaPlayer = player
                 player.setAudioAttributes(
@@ -1257,7 +1295,25 @@ class ChatViewModel(
                     }
                     true
                 }
-                player.prepare()  // blocking — we're on Dispatchers.IO
+                try {
+                    player.prepare()  // blocking — we're on Dispatchers.IO
+                } catch (firstAttempt: Exception) {
+                    // Task 24: the bubble's signed URL (1 h TTL) may have
+                    // expired between Room read and play. Force-refresh the
+                    // signature once and retry before surfacing an error.
+                    player.reset()
+                    val freshUrl = resolvePlayableAudioUrl(message, forceRefresh = true)
+                    if (freshUrl != null) {
+                        if (freshUrl.startsWith("content://")) {
+                            player.setDataSource(AppServiceContainer.context, android.net.Uri.parse(freshUrl))
+                        } else {
+                            player.setDataSource(freshUrl)
+                        }
+                        player.prepare()
+                    } else {
+                        throw firstAttempt
+                    }
+                }
                 player.start()
 
                 val durationMs = player.duration.coerceAtLeast(1)
@@ -1275,6 +1331,53 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    /** Resolves a PLAYABLE audio source for a voice message (Task 24):
+     *  - local sources (content://, recorded file, cached download) pass
+     *    through untouched;
+     *  - private-bucket remote notes mint a fresh short-lived signed URL and
+     *    download the bytes into an app-private cache file so replay, seek
+     *    and OFFLINE playback work without re-streaming;
+     *  - [forceRefresh] bypasses the cached file and re-signs (expired-URL
+     *    retry path). */
+    private suspend fun resolvePlayableAudioUrl(
+        message: DomainMessage,
+        forceRefresh: Boolean = false
+    ): String? {
+        val raw = message.mediaUrl ?: return null
+        if (!raw.startsWith("http")) return raw // content:// or local file
+        val bucket = message.mediaBucket
+        val objectPath = message.mediaPath
+            ?: MediaUrlResolver.extractObjectPath(raw, bucket ?: MediaUrlResolver.CHAT_MEDIA_BUCKET)
+        if (bucket == null || !MediaUrlResolver.isPrivateBucket(bucket) || objectPath == null) {
+            return MediaUrlResolver.resolveWithRefresh(raw, bucket, message.mediaPath, forceRefresh = forceRefresh) ?: raw
+        }
+        // Stable per-object cache file under cacheDir/voice_cache/
+        val safe = objectPath.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val cacheDir = java.io.File(AppServiceContainer.context.cacheDir, "voice_cache")
+        val cacheFile = java.io.File(cacheDir, safe)
+        if (!forceRefresh && cacheFile.exists() && cacheFile.length() > 0) {
+            return cacheFile.absolutePath
+        }
+        val signedUrl = MediaUrlResolver.resolveWithRefresh(raw, bucket, objectPath, forceRefresh = forceRefresh)
+            ?: return if (cacheFile.exists() && cacheFile.length() > 0) cacheFile.absolutePath else null
+        // Best-effort local cache: on any failure we simply stream the URL.
+        try {
+            cacheDir.mkdirs()
+            val conn = java.net.URL(signedUrl).openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 30_000
+            if (conn.responseCode in 200..299) {
+                conn.inputStream.use { input ->
+                    cacheFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                return cacheFile.absolutePath
+            }
+        } catch (_: Exception) {
+            // cache miss — the signed URL still streams
+        }
+        return signedUrl
     }
 
     /** Seeks the CURRENTLY PLAYING message's audio to [fraction] (0..1) —

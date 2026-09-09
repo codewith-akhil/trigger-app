@@ -88,13 +88,20 @@ fun ChatMediaViewer(
             if (message.type == MessageType.VIDEO) {
                 RealVideoPlayer(
                     mediaUrl = message.mediaUrl,
-                    thumbnailUrl = message.mediaThumbnail
+                    thumbnailUrl = message.mediaThumbnail,
+                    mediaBucket = message.mediaBucket,
+                    mediaPath = message.mediaPath
                 )
             } else {
                 // Image viewer with pinch to zoom
                 if (!message.mediaUrl.isNullOrEmpty() || !message.mediaThumbnail.isNullOrEmpty()) {
                     AsyncImage(
-                        model = message.mediaUrl ?: message.mediaThumbnail,
+                        // Task 24: stable bucket/path cache keys for private media.
+                        model = com.example.ui.screens.privateMediaModel(
+                            message.mediaBucket,
+                            message.mediaUrl ?: message.mediaThumbnail,
+                            message.mediaPath
+                        ),
                         contentDescription = "Photo",
                         contentScale = ContentScale.Fit,
                         modifier = Modifier
@@ -301,14 +308,30 @@ fun ChatMediaViewer(
 @Composable
 private fun RealVideoPlayer(
     mediaUrl: String?,
-    thumbnailUrl: String?
+    thumbnailUrl: String?,
+    mediaBucket: String? = null,
+    mediaPath: String? = null
 ) {
     val context = LocalContext.current
     var playbackError by remember(mediaUrl) { mutableStateOf<String?>(null) }
     var retryTick by remember(mediaUrl) { mutableIntStateOf(0) }
 
-    val player = remember(mediaUrl, retryTick) {
-        mediaUrl?.let { url ->
+    // Task 24: signed URLs (1 h TTL) can expire between Room read and play.
+    // Every Retry press force-mints a fresh signature before the player is
+    // rebuilt (remember(effectiveUrl, retryTick)).
+    var effectiveUrl by remember(mediaUrl) { mutableStateOf(mediaUrl) }
+    LaunchedEffect(mediaUrl, retryTick) {
+        if (retryTick > 0 && mediaUrl != null && mediaUrl.startsWith("http") &&
+            com.example.service.MediaUrlResolver.isPrivateBucket(mediaBucket)
+        ) {
+            effectiveUrl = com.example.service.MediaUrlResolver.resolveWithRefresh(
+                mediaUrl, mediaBucket, mediaPath, forceRefresh = true
+            ) ?: mediaUrl
+        }
+    }
+
+    val player = remember(effectiveUrl, retryTick) {
+        effectiveUrl?.let { url ->
             try {
                 val uri = when {
                     url.startsWith("content://") || url.startsWith("file://") ||
@@ -402,7 +425,10 @@ private fun RealVideoPlayer(
             else -> {
                 if (!thumbnailUrl.isNullOrEmpty() || !mediaUrl.isNullOrEmpty()) {
                     AsyncImage(
-                        model = thumbnailUrl ?: mediaUrl,
+                        // Task 24: stable bucket/path cache keys for the poster.
+                        model = com.example.ui.screens.privateMediaModel(
+                            mediaBucket, thumbnailUrl ?: mediaUrl, mediaPath
+                        ),
                         contentDescription = "Video Thumbnail",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()

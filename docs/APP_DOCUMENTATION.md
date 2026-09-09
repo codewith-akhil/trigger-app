@@ -293,6 +293,76 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-09 (Task 24 — 5 priority fixes: private media, canonical
+  conversation hardening, DB security audit, local-first messaging;
+  NO AAB/APK rebuild per user instruction — artifacts remain versionCode 4):**
+  2 recon agents + main-agent implementation, verified with a 47-check live
+  E2E suite (2 real user accounts + outsider account) and direct RLS probes.
+  Migration `20260924_private_media_and_hardening.sql` applied live; 4 edge
+  functions redeployed. Full work log in `worklog.md` Task 24.
+  - **Private media (§1–2 of the user brief):** `chat_media` + `voice_notes`
+    flipped back to **private** (undoing 20260918/20260922); the
+    any-authenticated read policies are gone; new participant-only SELECT
+    policies authorize an object when the viewer owns it or shares a
+    pending/accepted conversation with the uploader's folder uid.
+    `messages.media_url`/`media_thumbnail` migrated from permanent
+    `/object/public/` URLs to **bare object paths** (`{uid}/{uuid}.ext`) +
+    `media_bucket`; all 4 legacy rows rewritten (0 URLs left). The client now
+    mints **1-hour signed URLs** on demand (MediaUrlResolver: memo cache with
+    5-min safety margin, stale entries retained as offline fallback), syncs
+    `media_bucket`/object path into Room (`mapSupabaseToDomain`), and re-signs
+    with force-refresh on player retry (voice + video). Uploads persist bare
+    paths (no public URL is ever stored or exposed). REAL BUG FIXED:
+    signed-URL fetch must be `{base}/storage/v1{signedURL}` — the previous
+    `{base}{signedURL}` form 404'd for every private-bucket render including
+    the vault.
+  - **Canonical/mirror conversation model (§3):** verified end-to-end — one
+    canonical (oldest) row per pair holds the thread, mirror rows are chat-list
+    metadata; accept creates/updates the receiver mirror; client heals mirror
+    ids onto the canonical id. Fixes: new `get_or_create_conversation` RPC
+    (advisory lock on the UNORDERED pair) closes the simultaneous-first-send
+    duplicate race in send-message + send-message-request; the client
+    resolve-or-create fallback no longer inserts `request_status='accepted'`
+    (request bypass) — pending unless self-chat; mirror unread is reset on
+    accept-update and the dashboard merges unread from the canonical row only
+    (phantom-badge resurrection fixed); `pending` threads are hidden from the
+    chat list (requests surface via Message Requests); in-chat block now
+    writes `blocked_contacts` server-side and send-message/send-message-request
+    enforce it in both directions.
+  - **DB security audit (§4):** `try_send_pending_message` now verifies the
+    sender is a participant (defense in depth; still atomic via
+    pg_advisory_xact_lock + FOR UPDATE, still service-role only);
+    `message_reactions` INSERT/DELETE RLS tightened to conversation
+    participants (was: any authenticated user could react to any message id);
+    `messages` DELETE tightened to sender-only (was: conversation owner could
+    hard-delete the peer's rows); vault media re-confirmed owner-only
+    (table `vm_owner_all` + storage policies). BONUS ROOT-CAUSE FIX: the
+    `sync_message_reactions` trigger nulled the NOT NULL `messages.reactions`
+    column when a message's LAST reaction was removed (jsonb_object_agg over
+    an empty set → NULL → 23502), silently breaking every same-emoji-removes
+    toggle — now coalesced to `'{}'` and verified live (add → remove →
+    re-add → switch → remove all pass, jsonb syncs).
+  - **Local-first (§5):** `ConnectivityObserver` (process-wide StateFlow) +
+    `MessageService.retryPendingOutbox()` — stuck SENDING/FAILED outgoing
+    messages (older than 2 min) retry automatically when connectivity returns
+    and on dashboard start; idempotency keys keep retries duplicate-free
+    (verified: same key twice → one row); retryFailedMessage now distinguishes
+    local files from already-uploaded bare paths (no bogus re-upload);
+    Coil memory/disk cache keys are the stable bucket-qualified path so
+    previously-viewed media load from cache across sessions and offline;
+    voice notes download into an app-private cache on first play (offline
+    replay, no re-stream); share intent materializes private media through the
+    existing FileProvider instead of sharing a useless URL string. Confirmed:
+    received media is never auto-saved to the gallery (0 MediaStore writes);
+    chats open from Room without blocking on Supabase.
+  - **Verification:** `compileReleaseKotlin` green on the full tree; migration
+    + 4 functions (send-message, send-message-request, respond-message-request,
+    forward-message — the last now server-side COPIES forwarded media into the
+    forwarder's folder so the new recipient passes participant RLS) deployed
+    and probed; E2E suite 47/47 (request→accept→both-send→reactions→image/
+    voice→signed-URL access→outsider denial→block/unblock→idempotency→pair
+    dedupe); test fixtures deleted.
+
 - **2026-09-09 (code-only wave 2 — media/voice/upload UX, location map,
   dashboard + notifications, followers, privacy overhaul, vault hardening;
   NO AAB/APK rebuild per user instruction — artifacts remain versionCode 4):**
