@@ -48,17 +48,22 @@ fun AccountSettingsScreen(
     var showTwoStepDialog by remember { mutableStateOf(false) }
     var showRequestReportSnackbar by remember { mutableStateOf(false) }
 
-    // Hydrate toggles from the server once. get-my-profile may include a
-    // `settings` object; if not (current backend shape), we default to false.
+    // Hydrate toggles from the server once. get-my-profile returns `settings`
+    // at the TOP LEVEL of the response (next to `profile`) — the old code read
+    // profile.settings which never exists, so the toggles always rendered the
+    // defaults. twoStepEnabled also falls back to the profiles column.
     LaunchedEffect(Unit) {
         try {
             val result = AppServiceContainer.supabaseClient.invokeFunction("get-my-profile")
             if (result is SupabaseResult.Success) {
+                val settings = result.data.optJSONObject("settings")
                 val profile = result.data.optJSONObject("profile")
-                val settings = profile?.optJSONObject("settings")
                 if (settings != null) {
                     securityNotificationsEnabled = settings.optBoolean("securityNotifications", false)
-                    twoStepEnabled = settings.optBoolean("twoStepEnabled", false)
+                    twoStepEnabled = settings.optBoolean("twoStepEnabled", twoStepEnabled)
+                }
+                if (profile != null && profile.has("two_step_enabled")) {
+                    twoStepEnabled = profile.optBoolean("two_step_enabled", twoStepEnabled)
                 }
             }
         } catch (_: Exception) {

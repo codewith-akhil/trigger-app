@@ -4,6 +4,8 @@ import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
@@ -33,7 +35,6 @@ object TriggerDestinations {
     const val DELETE_ACCOUNT = "delete_account"
     const val SELECT_CONTACT = "select_contact"
     const val NEW_MESSAGE = "new_message"
-    const val HOME = "home"
     const val SETTINGS = "settings"
     const val SETTINGS_ACCOUNT = "settings_account"
     const val SETTINGS_PRIVACY = "settings_privacy"
@@ -48,6 +49,8 @@ object TriggerDestinations {
     const val STREAM_HISTORY = "stream_history"
     const val WALLET = "wallet"
     const val SECRET_VAULT = "secret_vault"
+    // (The dead HOME route + TriggerHomeScreen — with its unreachable camera
+    // icon and restart-onboarding hook — were removed entirely.)
 }
 
 @Composable
@@ -55,6 +58,13 @@ fun TriggerAppNavHost(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController()
 ) {
+    // ---- GLOBAL INCOMING/ACTIVE CALL OVERLAY -------------------------------
+    // Hosted at the navigation ROOT so a call is visible and answerable from
+    // EVERY screen (previously the ring UI existed only inside ChatScreen — a
+    // backgrounded user or a user on any other screen could never see it).
+    val activeCall by AppServiceContainer.callService.currentCall.collectAsState()
+
+    Box(modifier = modifier) {
     var selectedLanguage by remember {
         mutableStateOf(LanguageRepository.languages.first())
     }
@@ -113,7 +123,7 @@ fun TriggerAppNavHost(
         } else {
             TriggerDestinations.LANDING
         },
-        modifier = modifier,
+        modifier = Modifier.fillMaxSize(),
         enterTransition = {
             slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(280)) + fadeIn(tween(280))
         },
@@ -575,17 +585,21 @@ fun TriggerAppNavHost(
                 }
             )
         }
+    } // NavHost
 
-        composable(TriggerDestinations.HOME) {
-            TriggerHomeScreen(
-                verifiedPhoneNumber = currentEmail,
-                onRestartFlow = {
-                    navController.navigate(TriggerDestinations.LANDING) {
-                        popUpTo(0) { inclusive = true }
-                    }
-                }
-            )
-        }
+    // The call overlay renders ABOVE the entire nav graph.
+    activeCall?.let { session ->
+        com.example.ui.screens.ChatCallingOverlay(
+            session = session,
+            onEndCall = { AppServiceContainer.callService.endCall() },
+            onToggleMute = { AppServiceContainer.callService.toggleMute() },
+            onToggleSpeaker = { AppServiceContainer.callService.toggleSpeaker() },
+            onToggleVideo = { AppServiceContainer.callService.toggleVideo() },
+            onSwitchCamera = { AppServiceContainer.callService.switchCamera() },
+            onAcceptCall = { AppServiceContainer.callService.acceptIncomingCall() },
+            onDeclineCall = { AppServiceContainer.callService.declineCall() }
+        )
     }
+    } // Box
 }
 

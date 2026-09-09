@@ -15,7 +15,7 @@ import java.util.Locale
  * Timestamp rendering for the dashboard chat list (WhatsApp-style).
  *
  *  - same calendar day  → "13:23"   (24-hour clock, locale-independent digits)
- *  - yesterday          → "Yesterday"
+ *  - yesterday          → "yesterday"
  *  - older              → "dd/MM/yyyy" (leading zeros)
  *  - future timestamps (clock skew) render as today ("HH:mm")
  *  - unparsable/absent  → ""        (the caller renders an empty right column)
@@ -34,7 +34,7 @@ object ChatTimeFormatter {
 
     /**
      * Formats an epoch-millis activity stamp: same calendar day → "HH:mm",
-     * yesterday → "Yesterday", else "dd/MM/yyyy". Returns "" for stamps <= 0.
+     * yesterday → "yesterday", else "dd/MM/yyyy". Returns "" for stamps <= 0.
      */
     fun formatChatTimestamp(epochMillis: Long, now: Long = System.currentTimeMillis()): String {
         if (epochMillis <= 0L) return ""
@@ -44,7 +44,7 @@ object ChatTimeFormatter {
         return when {
             !thenDate.isBefore(nowDate) ->
                 TIME_FORMAT.format(Instant.ofEpochMilli(epochMillis).atZone(zone))
-            thenDate == nowDate.minusDays(1) -> "Yesterday"
+            thenDate == nowDate.minusDays(1) -> "yesterday"
             else -> DATE_FORMAT.format(thenDate)
         }
     }

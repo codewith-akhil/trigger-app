@@ -16,8 +16,10 @@
 // ----------------------------------------------------------------------------
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { handleOptions, json, errorResponse } from "../_shared/cors.ts";
+import { handleOptions, json, errorResponse, ErrorCode } from "../_shared/cors.ts";
 import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
+import { checkRateLimit } from "../_shared/rate_limit.ts";
+import { hashVaultPin, verifyVaultPin } from "../_shared/vault_pin.ts";
 
 interface Body {
   pin?: string;
@@ -28,12 +30,6 @@ function isValidPin(v: string): boolean {
   return /^\d{6}$/.test(v);
 }
 
-async function hashPin(pin: string, salt: string): Promise<string> {
-  const data = new TextEncoder().encode(`${pin}:${salt}`);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 async function handler(req: Request): Promise<Response> {
   const preflight = handleOptions(req);
   if (preflight) return preflight;
@@ -41,6 +37,13 @@ async function handler(req: Request): Promise<Response> {
 
   const authHeader = req.headers.get("Authorization");
   const userId = await resolveUserId(authHeader);
+  // Rate limit EVERY vault-PIN write — the old-PIN confirmation is a
+  // 6-digit guess surface with no per-day lockout (lockout only protects
+  // verify-vault-pin); without this an attacker could brute-force at
+  // network speed.
+  const rl = checkRateLimit(req, userId, { maxRequests: 10, windowSeconds: 60, name: "upsert_vault_pin" });
+  if (!rl.allowed) return json({ error: rl.message, code: ErrorCode.RATE_LIMITED, retryAfter: rl.retryAfter }, 429);
+
   if (!userId) return errorResponse("Unauthorized", 401);
 
   let body: Body;
@@ -66,16 +69,13 @@ async function handler(req: Request): Promise<Response> {
     if (!body.oldPin || !isValidPin(body.oldPin)) {
       return errorResponse("Current PIN is required to reset the vault PIN", 422);
     }
-    const [oldSalt, oldHash] = existing.pin_hash.split(":");
-    const candidate = await hashPin(body.oldPin, oldSalt);
-    if (candidate !== oldHash) {
+    const verdict = await verifyVaultPin(body.oldPin, existing.pin_hash);
+    if (!verdict.ok) {
       return errorResponse("Current PIN is incorrect", 403);
     }
   }
 
-  const salt = crypto.randomUUID();
-  const hash = await hashPin(pin, salt);
-  const pinHash = `${salt}:${hash}`;
+  const pinHash = await hashVaultPin(pin);
 
   const { error } = await supabase
     .from("vault_pins")

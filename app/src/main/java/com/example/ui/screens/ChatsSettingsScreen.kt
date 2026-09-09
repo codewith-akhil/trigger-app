@@ -43,7 +43,6 @@ fun ChatsSettingsScreen(
     // back via `update-user-settings` on every change. Defaults are conservative
     // so the UI is usable before the network round-trip completes.
     var enterIsSend by remember { mutableStateOf(false) }
-    var mediaVisibility by remember { mutableStateOf(true) }
     var fontSizeChoice by remember { mutableStateOf("Medium") }
     var isBackingUp by remember { mutableStateOf(false) }
     var isClearingChats by remember { mutableStateOf(false) }
@@ -84,10 +83,6 @@ fun ChatsSettingsScreen(
                     enterIsSend = settings.optBoolean("enterIsSend", enterIsSend)
                 } else if (settings.has("enter_is_send")) {
                     enterIsSend = settings.optBoolean("enter_is_send", enterIsSend)
-                }
-                val mediaVis = settings.optString("mediaVisibility", settings.optString("media_visibility", ""))
-                if (mediaVis.isNotEmpty()) {
-                    mediaVisibility = (mediaVis == "on")
                 }
                 val fontRaw = settings.optString("fontSize", settings.optString("font_size", ""))
                 if (fontRaw.isNotEmpty()) {
@@ -263,42 +258,7 @@ fun ChatsSettingsScreen(
                         )
                     }
 
-                    HorizontalDivider(color = DividerColor, modifier = Modifier.padding(start = 16.dp))
 
-                    // Media visibility
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Media visibility",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextPrimary
-                            )
-                            Text(
-                                text = "Show newly downloaded media in your device's gallery",
-                                fontSize = 13.sp,
-                                color = TextSecondary
-                            )
-                        }
-                        Switch(
-                            checked = mediaVisibility,
-                            onCheckedChange = { newValue ->
-                                mediaVisibility = newValue
-                                persistSetting(
-                                    JSONObject().put("mediaVisibility", if (newValue) "on" else "off")
-                                )
-                            },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = SwitchGreen
-                            )
-                        )
-                    }
 
                     HorizontalDivider(color = DividerColor, modifier = Modifier.padding(start = 16.dp))
 

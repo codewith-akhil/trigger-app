@@ -91,44 +91,39 @@ fun UserProfileScreen(
     var showMessageRequestDialog by remember { mutableStateOf(false) }
     var showPhotoViewer by remember { mutableStateOf(false) }
 
-    // Fetch live profile information (about bio, freshest avatar, follow & block status)
+    // Fetch live profile information (about bio, freshest avatar, follow & block status).
+    // The avatar/about/counts come from the get-peer-profile edge function —
+    // the SERVER enforces the peer's profile_photo_visibility/about_visibility
+    // there. Reading the profiles table directly would bypass that privacy.
     LaunchedEffect(user.id) {
         coroutineScope.launch {
-            // 1. Fetch profile bio and freshest details
-            val profileRes = AppServiceContainer.supabaseClient.getTable(
-                "profiles",
-                "id=eq.${user.id}&select=id,full_name,username,avatar_url,about"
+            // 1. Privacy-filtered profile + follow state in one call
+            val peerRes = AppServiceContainer.supabaseClient.invokeFunction(
+                "get-peer-profile",
+                JSONObject().put("peerId", user.id)
             )
-            if (profileRes is SupabaseResult.Success && profileRes.data.length() > 0) {
-                val p = profileRes.data.getJSONObject(0)
-                val bio = p.optString("about", "")
-                if (bio.isNotBlank() && bio != "null") aboutText = bio
-                // optStringOrNull: PostgREST emits explicit JSON null for NULL
-                // columns — raw optString would return the literal "null"
-                // string and pass every isNotBlank() guard below.
-                val av = p.optStringOrNull("avatar_url")
-                if (!av.isNullOrBlank()) currentAvatarUrl = av
-                val un = p.optStringOrNull("username")
-                if (!un.isNullOrBlank()) currentUsername = un
-                val fn = p.optStringOrNull("full_name")
-                if (!fn.isNullOrBlank()) currentName = fn
+            if (peerRes is SupabaseResult.Success) {
+                val p = peerRes.data.optJSONObject("profile")
+                if (p != null) {
+                    val bio = p.optString("about", "")
+                    if (bio.isNotBlank() && bio != "null") aboutText = bio
+                    val av = p.optStringOrNull("avatar_url")
+                    if (!av.isNullOrBlank()) currentAvatarUrl = av
+                    val un = p.optStringOrNull("username")
+                    if (!un.isNullOrBlank()) currentUsername = un
+                    val fn = p.optStringOrNull("full_name")
+                    if (!fn.isNullOrBlank()) currentName = fn
+                }
+                isFollowing = peerRes.data.optBoolean("isFollowing", false)
+                followersCount = peerRes.data.optInt("followersCount", 0)
+                followingCount = peerRes.data.optInt("followingCount", 0)
             }
 
-            // 2. Fetch follow info (isFollowing, followersCount, followingCount)
-            val followRes = AppServiceContainer.supabaseClient.invokeFunction(
-                "get-follow-info",
-                JSONObject().put("targetUserId", user.id)
-            )
-            if (followRes is SupabaseResult.Success) {
-                isFollowing = followRes.data.optBoolean("isFollowing", false)
-                followersCount = followRes.data.optInt("followersCount", 0)
-                followingCount = followRes.data.optInt("followingCount", 0)
-            }
-
-            // 3. Check blocked contacts
+            // 3. Check blocked contacts (keyed on the peer's auth UUID, not a
+            // display name that can collide or change)
             val blockRes = AppServiceContainer.supabaseClient.invokeFunction(
                 "manage-blocked-contacts",
-                JSONObject().put("action", "check").put("blockedIdentifier", user.name)
+                JSONObject().put("action", "check").put("blockedUserId", user.id)
             )
             if (blockRes is SupabaseResult.Success) {
                 isBlocked = blockRes.data.optBoolean("blocked", false)

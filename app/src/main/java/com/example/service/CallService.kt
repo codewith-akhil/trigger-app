@@ -35,4 +35,16 @@ interface CallService {
     fun toggleSpeaker()
     fun toggleVideo()
     fun switchCamera()
+    /**
+     * Silently drop a RINGING incoming session (caller cancelled / timed out)
+     * without writing any status to the backend — used by the call_cancelled
+     * push handler.
+     */
+    fun dismissIncomingRing()
+    /** Accept from the notification action (works after process death —
+     *  re-hydrates the call_sessions row when no ringing session exists). */
+    fun handleNotificationAccept(callId: String)
+    /** Decline from the notification action (persists rejection even without
+     *  joining the channel). */
+    fun handleNotificationDecline(callId: String)
 }

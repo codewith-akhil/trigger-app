@@ -193,7 +193,7 @@ async function handler(req: Request): Promise<Response> {
           sender_avatar_url: senderProfile?.avatar_url ?? null,
           initial_message: (body.text ?? "").slice(0, 200),
           status: "pending",
-          conversation_id: newConv.id,
+          conversation_id: conversationId,
         }, { onConflict: "sender_id,receiver_id" });
       } catch (reqErr) {
         console.warn("send-message: message_requests mirror failed", reqErr);
@@ -318,7 +318,11 @@ async function handler(req: Request): Promise<Response> {
 
   if (conv.request_status === "pending") {
     // ATOMIC path — the RPC locks the conversation row, re-checks the budget
-    // and inserts in one transaction (cannot be raced past 3).
+    // and inserts in one transaction (cannot be raced past 3). The FULL
+    // payload is forwarded (media, reply target, location/contact/call
+    // metadata, idempotency key) — the old RPC hardcoded TEXT and silently
+    // dropped everything else, converting pending media sends into empty
+    // text rows.
     const { data: rpcMsg, error: rpcErr } = await supabase.rpc(
       "try_send_pending_message",
       {
@@ -326,6 +330,26 @@ async function handler(req: Request): Promise<Response> {
         p_sender_id: userId,
         p_text: (body.text ?? "").toString(),
         p_timestamp_millis: body.timestamp_millis ?? null,
+        p_type: body.type ?? "TEXT",
+        p_media_url: body.media_url ?? null,
+        p_media_thumbnail: body.media_thumbnail ?? null,
+        p_media_bucket: body.media_bucket ?? null,
+        p_file_name: body.file_name ?? null,
+        p_file_size: body.file_size ?? null,
+        p_mime_type: body.mime_type ?? null,
+        p_media_duration_sec: body.media_duration_sec ?? 0,
+        p_is_view_once: body.is_view_once ?? false,
+        p_reply_to_id: body.reply_to_id ?? null,
+        p_idempotency_key: body.idempotency_key ?? null,
+        p_location_lat: body.location_lat ?? null,
+        p_location_lng: body.location_lng ?? null,
+        p_location_address: body.location_address ?? null,
+        p_location_live_minutes: body.location_live_minutes ?? null,
+        p_location_comment: body.location_comment ?? null,
+        p_contact_name: body.contact_name ?? null,
+        p_contact_phone: body.contact_phone ?? null,
+        p_call_type: body.call_type ?? null,
+        p_call_duration_sec: body.call_duration_sec ?? 0,
       }
     );
     if (rpcErr) {

@@ -8,6 +8,8 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { handleOptions, json, errorResponse, ErrorCode } from "../_shared/cors.ts";
 import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
+import { checkRateLimit } from "../_shared/rate_limit.ts";
+const REQUESTS_LIMIT = { maxRequests: 60, windowSeconds: 60, name: "get_message_requests" };
 
 // ----------------------------------------------------------------------------
 // Avatar/about visibility — resolves which of `ownerIds` allow `viewerId` to
@@ -71,6 +73,9 @@ async function handler(req: Request): Promise<Response> {
   if (req.method !== "POST") return errorResponse("Method not allowed", 405, ErrorCode.METHOD_NOT_ALLOWED);
 
   const userId = await resolveUserId(req.headers.get("Authorization"));
+  const rl = checkRateLimit(req, userId, REQUESTS_LIMIT);
+  if (!rl.allowed) return json({ error: rl.message, code: ErrorCode.RATE_LIMITED, retryAfter: rl.retryAfter }, 429);
+
   if (!userId) return errorResponse("Unauthorized", 401, ErrorCode.UNAUTHORIZED);
 
   const supabase = createAdminClient();

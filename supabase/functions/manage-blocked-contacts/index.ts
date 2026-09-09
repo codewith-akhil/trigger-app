@@ -146,8 +146,26 @@ async function handler(req: Request): Promise<Response> {
     const rl = checkRateLimit(req, userId, LIST_LIMIT);
     if (!rl.allowed) return json({ error: rl.message, code: ErrorCode.RATE_LIMITED, retryAfter: rl.retryAfter }, 429);
 
+    // Preferred: check by the peer's auth UUID (stable even when a display
+    // name changes or collides). Legacy: check by identifier string.
+    const blockedUserId = (body.blockedUserId ?? "").trim();
+    if (blockedUserId) {
+      if (!isUuid(blockedUserId)) return errorResponse("blockedUserId must be a UUID", 422, ErrorCode.VALIDATION_FAILED);
+      const { data, error } = await adminClient
+        .from("blocked_contacts")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("blocked_user_id", blockedUserId)
+        .maybeSingle();
+      if (error) {
+        console.error("check blocked failed", error);
+        return errorResponse("Failed to check blocked status", 500, ErrorCode.INTERNAL_ERROR);
+      }
+      return json({ blocked: !!data });
+    }
+
     const identifier = (body.blockedIdentifier ?? "").trim();
-    if (!identifier) return errorResponse("blockedIdentifier is required", 422, ErrorCode.VALIDATION_FAILED);
+    if (!identifier) return errorResponse("blockedIdentifier or blockedUserId is required", 422, ErrorCode.VALIDATION_FAILED);
 
     const { data, error } = await adminClient
       .from("blocked_contacts")

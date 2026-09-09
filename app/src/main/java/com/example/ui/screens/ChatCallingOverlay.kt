@@ -139,24 +139,6 @@ fun ChatCallingOverlay(
                 .padding(top = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Lock,
-                    contentDescription = null,
-                    tint = Color(0xFF8696A0),
-                    modifier = Modifier.size(13.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "End-to-end encrypted",
-                    color = Color(0xFF8696A0),
-                    fontSize = 12.sp
-                )
-            }
-
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(

@@ -231,7 +231,7 @@ async function handler(req: Request): Promise<Response> {
       return errorResponse("Failed to sync messages", 500, ErrorCode.INTERNAL_ERROR);
     }
 
-    return json({ synced: rows.length, skipped });
+    return json({ synced: pushRows.length, skipped });
   }
 
   if (action === "pull") {

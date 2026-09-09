@@ -1341,46 +1341,6 @@ fun CallsTabContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        item {
-            // Create call link
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { }
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(50.dp)
-                        .clip(CircleShape)
-                        .background(WhatsAppFabGreen),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Link,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(26.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(14.dp))
-                Column {
-                    Text(
-                        text = "Create call link",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = GeometricTextDark
-                    )
-                    Text(
-                        text = "Share a link for your WhatsApp call",
-                        fontSize = 13.sp,
-                        color = GeometricTextSecondary
-                    )
-                }
-            }
-        }
-
         when {
             isLoadingCalls -> {
                 item {

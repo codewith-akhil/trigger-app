@@ -216,22 +216,46 @@ class ChatRepositoryImpl(
     suspend fun toggleReaction(messageId: String, emoji: String) {
         val msg = messageDao.getMessageById(messageId) ?: return
         val currentReactions = msg.toDomainMessage().reactions.toMutableList()
-        val existingIndex = currentReactions.indexOfFirst { it.emoji == emoji }
 
-        if (existingIndex != -1) {
-            val existing = currentReactions[existingIndex]
-            if (existing.userReacted) {
-                // remove reaction
-                if (existing.count <= 1) {
-                    currentReactions.removeAt(existingIndex)
+        // ONE reaction per user per message (mirrors the server rule —
+        // UNIQUE(message_id, user_id) + the toggle-reaction edge function):
+        //   • same emoji tapped again → remove it
+        //   • a DIFFERENT emoji while one is already mine → SWITCH (remove the
+        //     old pill, add the new one). The old code added a second pill.
+        val myExistingIndex = currentReactions.indexOfFirst { it.userReacted }
+
+        if (myExistingIndex != -1) {
+            val mine = currentReactions[myExistingIndex]
+            if (mine.emoji == emoji) {
+                // Same emoji → remove my reaction.
+                if (mine.count <= 1) {
+                    currentReactions.removeAt(myExistingIndex)
                 } else {
-                    currentReactions[existingIndex] = existing.copy(count = existing.count - 1, userReacted = false)
+                    currentReactions[myExistingIndex] = mine.copy(count = mine.count - 1, userReacted = false)
                 }
             } else {
-                currentReactions[existingIndex] = existing.copy(count = existing.count + 1, userReacted = true)
+                // Different emoji → switch.
+                if (mine.count <= 1) {
+                    currentReactions.removeAt(myExistingIndex)
+                } else {
+                    currentReactions[myExistingIndex] = mine.copy(count = mine.count - 1, userReacted = false)
+                }
+                val targetIndex = currentReactions.indexOfFirst { it.emoji == emoji }
+                if (targetIndex != -1) {
+                    currentReactions[targetIndex] =
+                        currentReactions[targetIndex].copy(count = currentReactions[targetIndex].count + 1, userReacted = true)
+                } else {
+                    currentReactions.add(MessageReaction(emoji = emoji, count = 1, userReacted = true))
+                }
             }
         } else {
-            currentReactions.add(MessageReaction(emoji = emoji, count = 1, userReacted = true))
+            val targetIndex = currentReactions.indexOfFirst { it.emoji == emoji }
+            if (targetIndex != -1) {
+                currentReactions[targetIndex] =
+                    currentReactions[targetIndex].copy(count = currentReactions[targetIndex].count + 1, userReacted = true)
+            } else {
+                currentReactions.add(MessageReaction(emoji = emoji, count = 1, userReacted = true))
+            }
         }
 
         val raw = currentReactions.joinToString(";") { "${it.emoji}:${it.count}:${it.userReacted}" }

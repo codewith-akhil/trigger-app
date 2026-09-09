@@ -21,7 +21,8 @@ class SupabaseEdgeFunctionTokenService(
     override suspend fun getRtcToken(
         channelName: String,
         uid: Long,
-        role: AgoraConfig.AgoraRole
+        role: AgoraConfig.AgoraRole,
+        callId: String?
     ): Result<AgoraTokenResponse> = withContext(Dispatchers.IO) {
         val sanitizedChannel = AgoraConfig.sanitizeChannelName(channelName)
 
@@ -33,6 +34,10 @@ class SupabaseEdgeFunctionTokenService(
                     put("uid", uid)
                     put("role", role.value)
                     put("expirationSeconds", 3600)
+                    // Participant authorization: the backend verifies this user
+                    // belongs to the call and signs the token for the ROW's
+                    // channel (prevents minting tokens for arbitrary channels).
+                    if (!callId.isNullOrBlank()) put("callId", callId)
                 }
 
                 val response = supabaseClient.invokeFunction(FUNCTION_NAME, payload)

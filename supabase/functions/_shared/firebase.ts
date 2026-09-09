@@ -21,6 +21,14 @@ interface FcmPayload {
   imageUrl?: string;
   androidChannelId?: string;
   priority?: "normal" | "high";
+  /**
+   * When true the message carries ONLY the data payload — required for
+   * data-only pushes (e.g. incoming-call rings) so
+   * FirebaseMessagingService.onMessageReceived fires while the app is
+   * BACKGROUND (a `notification` payload would be handled by the system tray
+   * instead and the app code would never run).
+   */
+  dataOnly?: boolean;
 }
 
 interface FcmResult {
@@ -191,18 +199,26 @@ export async function sendFcm(payload: FcmPayload): Promise<FcmResult> {
       token: payload.token,
       android: {
         priority: payload.priority ?? "high",
-        notification: {
-          channel_id: payload.androidChannelId ?? "trigger_stream_notifications",
-          default_sound: true,
-          default_vibrate_timings: true,
-          notification_count: 1,
-        },
+        ...(payload.dataOnly
+          ? {}
+          : {
+              notification: {
+                channel_id: payload.androidChannelId ?? "trigger_stream_notifications",
+                default_sound: true,
+                default_vibrate_timings: true,
+                notification_count: 1,
+              },
+            }),
       },
-      notification: {
-        title: payload.title,
-        body: payload.body,
-        ...(payload.imageUrl ? { image: payload.imageUrl } : {}),
-      },
+      ...(payload.dataOnly
+        ? {}
+        : {
+            notification: {
+              title: payload.title,
+              body: payload.body,
+              ...(payload.imageUrl ? { image: payload.imageUrl } : {}),
+            },
+          }),
       ...(payload.data ? { data: payload.data } : {}),
     },
   };

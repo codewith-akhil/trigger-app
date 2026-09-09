@@ -32,13 +32,17 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { RtcTokenBuilder, RtcRole } from "https://esm.sh/agora-access-token@2.0.4";
 import { corsHeaders, handleOptions, json, errorResponse } from "../_shared/cors.ts";
-import { createUserClient } from "../_shared/supabase.ts";
+import { createAdminClient, createUserClient } from "../_shared/supabase.ts";
 
 interface TokenRequestBody {
   channelName?: string;
   uid?: number | string;
   role?: "publisher" | "subscriber" | "host" | "audience";
   expirationSeconds?: number;
+  /** When present, the token is for a 1:1 call — the caller must be a
+   *  participant of that call_sessions row and the channel is derived from
+   *  the row (client-supplied channelName is ignored for calls). */
+  callId?: string;
 }
 
 function sanitizeChannelName(raw: string): string {
@@ -95,6 +99,59 @@ async function handler(req: Request): Promise<Response> {
     return errorResponse("channelName is required", 400);
   }
 
+  // --- Channel ownership / participant authorization -------------------------
+  // Previously ANY authenticated user could mint a PUBLISHER token for ANY
+  // channel name (call squatting/spoofing). Now:
+  //  • calls  — callId required-ish: participant check against call_sessions,
+  //             channel derived from the row;
+  //  • streams — channelName must be a live_streams channel; PUBLISHER only
+  //             for the stream owner, everyone else gets SUBSCRIBER;
+  //  • anything else — 403 (no tokens for unknown channels).
+  let effectiveChannel = channelName;
+  let effectiveRoleEnum: number;
+  const admin = createAdminClient();
+
+  if (body.callId) {
+    const callId = String(body.callId).trim();
+    const { data: call, error: callError } = await admin
+      .from("call_sessions")
+      .select("id, caller_id, receiver_id, channel_name")
+      .eq("id", callId)
+      .maybeSingle();
+    if (callError) {
+      console.error("call_sessions lookup failed", callError);
+      return errorResponse("Failed to verify call", 500);
+    }
+    if (!call) return errorResponse("Call not found", 404);
+    if (call.caller_id !== userData.user.id && call.receiver_id !== userData.user.id) {
+      return errorResponse("You are not a participant of this call", 403);
+    }
+    effectiveChannel = sanitizeChannelName(call.channel_name ?? "");
+    effectiveRoleEnum = resolveRole(body.role);
+  } else {
+    // Stream path: resolve the channel against live_streams.
+    const { data: stream, error: streamError } = await admin
+      .from("live_streams")
+      .select("id, host_id, channel_name, status")
+      .eq("channel_name", body.channelName.trim())
+      .maybeSingle();
+    if (streamError) {
+      console.error("live_streams lookup failed", streamError);
+      return errorResponse("Failed to verify stream", 500);
+    }
+    if (!stream) {
+      return errorResponse("Unknown channel — tokens are only issued for real calls or streams", 403);
+    }
+    const isHost = stream.host_id === userData.user.id;
+    const wantsPublisher = resolveRole(body.role) === RtcRole.PUBLISHER;
+    if (wantsPublisher && !isHost) {
+      // Viewers may NEVER publish into someone else's stream.
+      effectiveRoleEnum = RtcRole.SUBSCRIBER;
+    } else {
+      effectiveRoleEnum = resolveRole(body.role);
+    }
+  }
+
   let uid: number;
   if (typeof body.uid === "number") {
     uid = Math.floor(body.uid);
@@ -117,7 +174,7 @@ async function handler(req: Request): Promise<Response> {
   if (body.expirationSeconds !== undefined && typeof body.expirationSeconds !== "number") {
     return errorResponse("expirationSeconds must be a number", 422);
   }
-  const roleEnum = resolveRole(body.role);
+  const roleEnum = effectiveRoleEnum;
   const expirationSeconds = Math.min(
     Math.max(body.expirationSeconds ?? 3600, 60),
     86400, // cap at 24h
@@ -140,7 +197,7 @@ async function handler(req: Request): Promise<Response> {
     return json({
       token: "",
       appId,
-      channelName,
+      channelName: effectiveChannel,
       uid,
       role: body.role ?? "publisher",
       expiresAt: Math.floor(Date.now() / 1000) + expirationSeconds,
@@ -156,7 +213,7 @@ async function handler(req: Request): Promise<Response> {
     token = RtcTokenBuilder.buildTokenWithUid(
       appId,
       appCertificate,
-      channelName,
+      effectiveChannel,
       uid,
       roleEnum,
       privilegeExpiredTs,
@@ -169,7 +226,7 @@ async function handler(req: Request): Promise<Response> {
   return json({
     token,
     appId,
-    channelName,
+    channelName: effectiveChannel,
     uid,
     role: body.role ?? "publisher",
     expiresAt: Math.floor(Date.now() / 1000) + expirationSeconds,

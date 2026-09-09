@@ -114,13 +114,21 @@ async function handler(req: Request): Promise<Response> {
     return json({ error: "Failed to upload file", code: ErrorCode.INTERNAL_ERROR }, 500);
   }
 
-  // Get the public URL
-  const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(storagePath);
-  const publicUrl = urlData?.publicUrl ?? `https://uazkcainrajcgxecomly.supabase.co/storage/v1/object/public/${bucket}/${storagePath}`;
+  // chat_media/voice_notes are PRIVATE — return a short-lived signed URL,
+  // never a permanent public URL (which would 403 anyway since the 20260924
+  // privatization). The client sends only the object PATH as media_url and
+  // signs at render time; the signed url here is a convenience for legacy
+  // callers.
+  const { data: signedData } = await supabase.storage.from(bucket).createSignedUrl(storagePath, 3600);
+  const signedUrl = signedData?.signedUrl ?? null;
+  if (!signedUrl) {
+    console.error("upload-chat-media: failed to sign uploaded object", storagePath);
+  }
 
   return json({
     uploaded: true,
-    url: publicUrl,
+    url: signedUrl ?? "",
+    path: storagePath,
     bucket,
     path: storagePath,
     fileName,

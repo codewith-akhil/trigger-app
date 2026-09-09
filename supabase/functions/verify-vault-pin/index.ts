@@ -26,6 +26,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { handleOptions, json, errorResponse } from "../_shared/cors.ts";
 import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
+import { hashVaultPin, verifyVaultPin } from "../_shared/vault_pin.ts";
 
 const MAX_ATTEMPTS_PER_DAY = 3;
 const LOCKOUT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -36,12 +37,6 @@ interface Body {
 
 function isValidPin(v: string): boolean {
   return /^\d{6}$/.test(v);
-}
-
-async function hashPin(pin: string, salt: string): Promise<string> {
-  const data = new TextEncoder().encode(`${pin}:${salt}`);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function handler(req: Request): Promise<Response> {
@@ -108,10 +103,9 @@ async function handler(req: Request): Promise<Response> {
       .eq("user_id", userId);
   }
 
-  const [salt, storedHash] = row.pin_hash.split(":");
-  const candidate = await hashPin(pin, salt);
+  const verdict = await verifyVaultPin(pin, row.pin_hash);
 
-  if (candidate !== storedHash) {
+  if (!verdict.ok) {
     // Atomic increment — concurrent guesses both wrote the same +1. The RPC
     // also stamps first_fail_at on the 0 -> 1 transition (start of the 24h
     // window). See 20260922_vault_lockout.sql.
@@ -124,11 +118,19 @@ async function handler(req: Request): Promise<Response> {
     );
   }
 
-  // Reset attempts + window on success.
-  await supabase
-    .from("vault_pins")
-    .update({ attempts: 0, first_fail_at: null })
-    .eq("user_id", userId);
+  // Reset attempts + window on success. Transparently upgrade a legacy
+  // single-iteration SHA-256 hash to PBKDF2 on the first successful verify.
+  if (verdict.needsUpgrade) {
+    await supabase
+      .from("vault_pins")
+      .update({ attempts: 0, first_fail_at: null, pin_hash: await hashVaultPin(pin) })
+      .eq("user_id", userId);
+  } else {
+    await supabase
+      .from("vault_pins")
+      .update({ attempts: 0, first_fail_at: null })
+      .eq("user_id", userId);
+  }
 
   // Mint a short-lived opaque unlock token (not a JWT — just a random id; the
   // client keeps it in memory for the session and discards on lock).

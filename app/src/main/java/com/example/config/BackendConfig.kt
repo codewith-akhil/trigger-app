@@ -47,3 +47,20 @@ object BackendConfig {
                 !AGORA_APP_ID.contains("your-agora-app-id") &&
                 !AGORA_APP_ID.equals("placeholder", ignoreCase = true)
 }
+
+object GiphyConfig {
+    /**
+     * GIPHY API key (https://developers.giphy.com). Set GIPHY_API_KEY in the
+     * .env file before building. The GIF button is hidden when no key is
+     * configured — the picker never ships a fake/stub grid.
+     */
+    val API_KEY: String = run {
+        val raw = try { BuildConfig.GIPHY_API_KEY } catch (_: Exception) { "" }
+        raw.trim()
+    }
+
+    val isConfigured: Boolean
+        get() = API_KEY.isNotBlank() &&
+                !API_KEY.contains("placeholder", ignoreCase = true) &&
+                !API_KEY.contains("your-giphy", ignoreCase = true)
+}

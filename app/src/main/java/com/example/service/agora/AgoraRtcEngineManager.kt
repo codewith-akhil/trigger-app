@@ -33,6 +33,12 @@ class AgoraRtcEngineManager(
 
     private var rtcEngine: RtcEngine? = null
 
+    /** The call_sessions id of the 1:1 call currently joined (null for streams).
+     *  Passed to the token service so the backend can enforce participant
+     *  authorization on every join AND on every mid-call token renewal. */
+    @Volatile
+    var activeCallId: String? = null
+
     // Engine connection state
     private val _engineState = MutableStateFlow(EngineStatus())
     val engineState: StateFlow<EngineStatus> = _engineState.asStateFlow()
@@ -49,7 +55,12 @@ class AgoraRtcEngineManager(
         val isSpeakerphoneOn: Boolean = true,
         val isFrontCamera: Boolean = true,
         val isPoorConnection: Boolean = false,
-        val lastError: String? = null
+        val lastError: String? = null,
+        /** Raw Agora CONNECTION_STATE_* constant the engine last reported. */
+        val connectionState: Int = Constants.CONNECTION_STATE_DISCONNECTED,
+        /** Reason the remote user left: USER_OFFLINE_QUIT(0) = hung up,
+         *  DROPPED(1) = network loss (recoverable → RECONNECTING). */
+        val remoteLeftReason: Int? = null
     )
 
     private val rtcEventHandler = object : IRtcEngineEventHandler() {
@@ -67,13 +78,14 @@ class AgoraRtcEngineManager(
 
         override fun onUserJoined(uid: Int, elapsed: Int) {
             Log.i(TAG, "onUserJoined: remote uid=$uid")
-            _engineState.update { it.copy(remoteUid = uid) }
+            // Remote is here/back — clear any recorded offline reason.
+            _engineState.update { it.copy(remoteUid = uid, remoteLeftReason = null) }
         }
 
         override fun onUserOffline(uid: Int, reason: Int) {
             Log.i(TAG, "onUserOffline: remote uid=$uid, reason=$reason")
             _engineState.update {
-                if (it.remoteUid == uid) it.copy(remoteUid = null) else it
+                if (it.remoteUid == uid) it.copy(remoteUid = null, remoteLeftReason = reason) else it
             }
         }
 
@@ -84,18 +96,19 @@ class AgoraRtcEngineManager(
                     _engineState.update {
                         it.copy(
                             isJoined = false,
+                            connectionState = state,
                             lastError = "Connection failed (reason=$reason)"
                         )
                     }
                 }
                 Constants.CONNECTION_STATE_DISCONNECTED -> {
-                    _engineState.update { it.copy(isJoined = false) }
+                    _engineState.update { it.copy(isJoined = false, connectionState = state) }
                 }
                 Constants.CONNECTION_STATE_RECONNECTING -> {
-                    _engineState.update { it.copy(isPoorConnection = true) }
+                    _engineState.update { it.copy(isPoorConnection = true, connectionState = state) }
                 }
                 Constants.CONNECTION_STATE_CONNECTED -> {
-                    _engineState.update { it.copy(isPoorConnection = false) }
+                    _engineState.update { it.copy(isPoorConnection = false, connectionState = state) }
                 }
             }
         }
@@ -170,9 +183,10 @@ class AgoraRtcEngineManager(
     ): Boolean {
         val engine = ensureEngine(channelProfile) ?: return false
 
-        // Fetch short-lived token from backend
+        // Fetch short-lived token from backend. activeCallId (set by
+        // AgoraCallService for 1:1 calls) lets the backend verify participants.
         val role = if (isBroadcaster) AgoraConfig.AgoraRole.PUBLISHER else AgoraConfig.AgoraRole.AUDIENCE
-        val tokenResult = tokenService.getRtcToken(channelName, uid, role)
+        val tokenResult = tokenService.getRtcToken(channelName, uid, role, activeCallId)
         val token = tokenResult.getOrNull()?.token ?: AgoraConfig.STATIC_FALLBACK_TOKEN
 
         val options = ChannelMediaOptions().apply {
@@ -272,7 +286,9 @@ class AgoraRtcEngineManager(
             it.copy(
                 isJoined = false,
                 remoteUid = null,
-                channelName = null
+                channelName = null,
+                connectionState = Constants.CONNECTION_STATE_DISCONNECTED,
+                remoteLeftReason = null
             )
         }
     }
@@ -289,6 +305,7 @@ class AgoraRtcEngineManager(
             Log.w(TAG, "Error destroying RtcEngine", e)
         }
         rtcEngine = null
+        activeCallId = null
         _engineState.value = EngineStatus()
     }
 
@@ -299,7 +316,7 @@ class AgoraRtcEngineManager(
         val role = if (isBroadcaster) AgoraConfig.AgoraRole.PUBLISHER else AgoraConfig.AgoraRole.AUDIENCE
 
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            val res = tokenService.getRtcToken(currentChannel, currentUid, role)
+            val res = tokenService.getRtcToken(currentChannel, currentUid, role, activeCallId)
             val newToken = res.getOrNull()?.token
             if (!newToken.isNullOrBlank()) {
                 rtcEngine?.renewToken(newToken)

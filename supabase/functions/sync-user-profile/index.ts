@@ -17,8 +17,9 @@
 // ----------------------------------------------------------------------------
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { handleOptions, json, errorResponse } from "../_shared/cors.ts";
+import { handleOptions, json, errorResponse, ErrorCode } from "../_shared/cors.ts";
 import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
+import { checkRateLimit, RATE_LIMITS } from "../_shared/rate_limit.ts";
 
 interface Body {
   fullName?: string;
@@ -49,6 +50,9 @@ async function handler(req: Request): Promise<Response> {
 
   const authHeader = req.headers.get("Authorization");
   const userId = await resolveUserId(authHeader);
+  const rl = checkRateLimit(req, userId, RATE_LIMITS.PROFILE_SYNC);
+  if (!rl.allowed) return json({ error: rl.message, code: ErrorCode.RATE_LIMITED, retryAfter: rl.retryAfter }, 429);
+
   if (!userId) return errorResponse("Unauthorized", 401);
 
   let body: Body;

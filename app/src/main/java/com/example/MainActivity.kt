@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -19,9 +20,29 @@ import com.example.ui.theme.TriggerHeaderGreen
 
 class MainActivity : androidx.fragment.app.FragmentActivity() {
 
+    companion object {
+        private const val TAG = "MainActivity"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.example.di.AppServiceContainer.initialize(this)
+
+        // Lock-screen call UX: a ringing call can present over the keyguard
+        // (paired with USE_FULL_SCREEN_INTENT + setFullScreenIntent).
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
+
+        handleCallIntent(intent)
 
         // osmdroid configuration — MUST run before the first MapView is created.
         // A per-app User-Agent is REQUIRED by the OpenStreetMap tile usage policy,
@@ -76,6 +97,43 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 ) {
                     TriggerAppNavHost()
                 }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // singleTop: notification Accept/Decline taps while the activity is
+        // already running arrive here (previously NOTHING inspected intents —
+        // the notification buttons were dead).
+        setIntent(intent)
+        handleCallIntent(intent)
+    }
+
+    /**
+     * Routes the incoming-call notification actions to the AgoraCallService.
+     * Actions: ACTION_ACCEPT_CALL / ACTION_DECLINE_CALL + a "callId" extra;
+     * the full-screen intent (no action) just opens the app — the global call
+     * overlay renders itself because currentCall != null.
+     */
+    private fun handleCallIntent(intent: Intent?) {
+        if (intent == null) return
+        val action = intent.action ?: return
+        val callId = intent.getStringExtra("callId") ?: return
+        val callService = try {
+            com.example.di.AppServiceContainer.callService
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "Call service not ready for intent $action")
+            return
+        }
+        when (action) {
+            com.example.service.IncomingCallNotificationHelper.ACTION_ACCEPT_CALL -> {
+                android.util.Log.i(TAG, "Notification ACCEPT for call $callId")
+                callService.handleNotificationAccept(callId)
+            }
+            com.example.service.IncomingCallNotificationHelper.ACTION_DECLINE_CALL -> {
+                android.util.Log.i(TAG, "Notification DECLINE for call $callId")
+                callService.handleNotificationDecline(callId)
             }
         }
     }

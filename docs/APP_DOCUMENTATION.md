@@ -296,6 +296,70 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-09 (FINAL E2E fix wave — real two-device calling, privacy
+  enforcement, hardening; NO AAB/APK rebuild):** End-to-end audit against the
+  full requirement list; 39 changed files, 2 migrations, 16 edge functions
+  deployed. Highlights:
+  - **Calls (Agora):** new `send-call-invite` edge function wakes the receiver
+    with a **data-only FCM push** (works when the app is backgrounded/killed);
+    the heads-up notification's Accept/Decline actions are now LIVE —
+    `MainActivity` (singleTop + showWhenLocked/turnScreenOn +
+    USE_FULL_SCREEN_INTENT) routes `ACTION_ACCEPT_CALL`/`ACTION_DECLINE_CALL`
+    to `AgoraCallService.handleNotificationAccept/Decline`, which re-hydrate
+    the session from `call_sessions` after process death. The call overlay
+    moved to the NAV ROOT (answerable from any screen). The caller now sees
+    **Call declined** immediately (outgoing status poll) instead of ringing
+    45 s into a false MISSED; callee writes `ringing`, both sides write
+    `started_at` (Calls-tab ordering fixed); CONNECTED remains strictly
+    Agora-driven; `RECONNECTING` state + remote-drop grace window added;
+    `OngoingCallService` (microphone|camera FGS) keeps backgrounded calls
+    alive on Android 12+/14+. `generate-agora-token` now **authorizes**: call
+    tokens require `callId` participant match (channel derived from the row);
+    stream tokens require a real `live_streams` channel and viewers can never
+    mint PUBLISHER tokens. Dead/simulated call code removed (timer-driven
+    `CallServiceImpl`, fake channel display, fake "End-to-end encrypted"
+    badge, no-op "Create call link").
+  - **Privacy:** new `get-peer-profile` function enforces the peer's
+    `profile_photo_visibility`/`about_visibility` server-side (UserProfileScreen
+    no longer reads `profiles` directly — the old path leaked avatar/About);
+    presence privacy verified server-side (hidden = blank).
+  - **Pending message-request sends** now carry the FULL payload (media,
+    reply, idempotency) through the atomic `try_send_pending_message` RPC
+    (was: hardcoded TEXT, media dropped, retries could duplicate).
+  - **Vault:** PIN hashes upgraded from single-iteration salted SHA-256 to
+    **PBKDF2-SHA256 (120k iterations)** with transparent legacy upgrade on
+    successful verify; upsert/reset/verify rate-limited; live-verified
+    3-strikes/24h lockout + hashed OTP reset mechanics.
+  - **GIF picker** is now a real GIPHY integration (trending + search);
+    GIFs download to cache and send through the media pipeline as animated
+    `image/gif` (compression skipped). The button hides when no API key is
+    configured — no fake grids.
+  - **Client UX:** reactions switch instead of stacking (one per user,
+    client + DB); DELETE/CANCEL + UPDATE/CANCEL dialog labels and the
+    auto-delete copy match the spec exactly; chat list "yesterday" lowercase;
+    three-dot menu: View contact (→ profile) / Auto delete / Contact info;
+    Account settings toggles hydrate from the real `settings` payload;
+    fake "Media visibility" gallery toggle removed; dead code removed
+    (AppLockScreen, TriggerHomeScreen+HOME route, links plumbing).
+  - **Ops:** committed cron secret rotated into a deny-all `app_secrets`
+    table (value lives only on the server; fx-rates cron jobs fixed — they
+    were sending a NULL secret and 401ing forever); `upload-chat-media`
+    returns short-lived signed URLs; `sync-messages` reports accurate push
+    counts; rate limits added to respond-message-request / toggle-reaction /
+    delete-message / search-messages / get-message-requests / sync-user-profile
+    / vault writes; blocked-status check by auth UUID; avatars delete policy
+    restored to dual-column; redundant messages UPDATE policy dropped.
+  - **Verification:** `:app:compileDebugKotlin` + KSP/Room green;
+    13/13 JVM unit tests; new 71-check live E2E (messaging matrix incl.
+    pending-budget + full-payload + block/unblock, reactions switch/remove,
+    sender-only delete-for-everyone, private-bucket participant isolation for
+    chat_media/voice_notes/vault_media with User C, vault lockout + OTP,
+    call signaling authorization + token authorization, follow/accept
+    notifications, privacy=nobody enforcement, 1000-message pagination with
+    zero dupes/gaps, auto-delete mechanics, cron housekeeping) — 71/71 PASS;
+    Task-25 pagination suite re-run 16/16 PASS; FCM probe: OAuth mint + FCM
+    HTTP v1 reached (fake token correctly rejected + deactivated).
+
 - **2026-09-09 (Task 25 — chat message pagination: WhatsApp-style bounded
   window; NO AAB/APK rebuild per user instruction — artifacts remain
   versionCode 4):** Initial chat open now renders **only the latest 50

@@ -88,6 +88,8 @@ import com.example.ui.viewmodel.SearchFilter
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
@@ -185,7 +187,6 @@ fun ChatScreen(
     val conversationMeta by viewModel.conversationMeta.collectAsState()
     val requestNotice by viewModel.requestNotice.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
-    val activeCall by viewModel.activeCall.collectAsState()
     val activeUploads by viewModel.activeUploads.collectAsState()
     val conversationInfo by viewModel.conversationInfo.collectAsState()
     // C7: live-location status (mine + the peer's realtime coordinates)
@@ -740,6 +741,10 @@ fun ChatScreen(
                             onDismissMenu = { showOptionsMenu = false },
                             onViewContact = {
                                 showOptionsMenu = false
+                                onOpenProfile()
+                            },
+                            onContactInfoClick = {
+                                showOptionsMenu = false
                                 viewModel.refreshChatInfo()
                                 showContactInfoSheet = true
                             },
@@ -908,6 +913,7 @@ fun ChatScreen(
                             },
                             isEmojiPickerOpen = isEmojiPickerOpen,
                             isGifPickerOpen = isGifPickerOpen,
+                            isGifConfigured = com.example.config.GiphyConfig.isConfigured,
                             focusRequester = focusRequester,
                             onInputFocus = {
                                 isEmojiPickerOpen = false
@@ -963,15 +969,41 @@ fun ChatScreen(
                             )
                         }
 
-                        // GIF picker
+                        // GIF picker (real GIPHY grid — send via the media pipeline)
                         if (isGifPickerOpen) {
                             ChatGifPicker(
                                 onGifSelected = { gif ->
-                                    // GIF/sticker taps send the emoji immediately as a TEXT message.
-                                    // Blocked while a send is already in flight.
+                                    isGifPickerOpen = false
                                     if (!isSending) {
-                                        viewModel.onInputTextChanged(gif)
-                                        viewModel.sendTextMessage()
+                                        coroutineScope.launch {
+                                            // Download the real animated .gif into
+                                            // app cache, then stage it as an IMAGE
+                                            // message (mime image/gif skips JPEG
+                                            // compression so animation survives).
+                                            val file = withContext(Dispatchers.IO) {
+                                                runCatching {
+                                                    val conn = java.net.URL(gif.fullUrl).openConnection() as java.net.HttpURLConnection
+                                                    conn.connectTimeout = 10_000
+                                                    conn.readTimeout = 20_000
+                                                    val bytes = conn.inputStream.use { it.readBytes() }
+                                                    conn.disconnect()
+                                                    val f = java.io.File(
+                                                        context.cacheDir,
+                                                        "gif_${System.currentTimeMillis()}.gif"
+                                                    )
+                                                    f.writeBytes(bytes)
+                                                    f
+                                                }.getOrNull()
+                                            } ?: return@launch
+                                            viewModel.selectMediaForPreview(
+                                                type = MessageType.IMAGE,
+                                                fileName = "giphy_${gif.id}.gif",
+                                                fileSize = file.length(),
+                                                previewUrl = android.net.Uri.fromFile(file).toString(),
+                                                filePath = file.absolutePath,
+                                                mimeType = "image/gif"
+                                            )
+                                        }
                                     }
                                 }
                             )
@@ -1279,20 +1311,8 @@ fun ChatScreen(
         )
     }
 
-    // Full screen Calling overlay
-    val activeCallValue = activeCall
-    if (activeCallValue != null) {
-        ChatCallingOverlay(
-            session = activeCallValue,
-            onEndCall = { AppServiceContainer.callService.endCall() },
-            onToggleMute = { AppServiceContainer.callService.toggleMute() },
-            onToggleSpeaker = { AppServiceContainer.callService.toggleSpeaker() },
-            onToggleVideo = { AppServiceContainer.callService.toggleVideo() },
-            onSwitchCamera = { AppServiceContainer.callService.switchCamera() },
-            onAcceptCall = { AppServiceContainer.callService.acceptIncomingCall() },
-            onDeclineCall = { AppServiceContainer.callService.declineCall() }
-        )
-    }
+    // (The call overlay now lives at the NAV ROOT — TriggerAppNavHost — so a
+    // call is visible and answerable from every screen, not just this chat.)
 
     // Full screen Media Viewer
     val activeViewerMessageValue = activeViewerMessage
@@ -1624,12 +1644,12 @@ fun ChatScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEA4335))
                 ) {
-                    Text("Delete", color = Color.White)
+                    Text("DELETE", color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("Cancel", color = Color(0xFF008069))
+                    Text("CANCEL", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
                 }
             }
         )
@@ -1712,6 +1732,7 @@ fun ChatMainTopBar(
     showMenu: Boolean,
     onDismissMenu: () -> Unit,
     onViewContact: () -> Unit,
+    onContactInfoClick: () -> Unit = {},
     onClearChat: () -> Unit,
     onDisappearingClick: () -> Unit = {},
     onBlockToggleClick: () -> Unit = {},
@@ -1850,7 +1871,7 @@ fun ChatMainTopBar(
                         modifier = Modifier.background(Color.White)
                     ) {
                         DropdownMenuItem(
-                            text = { Text("View profile", color = GeometricTextDark) },
+                            text = { Text("View contact", color = GeometricTextDark) },
                             onClick = onViewContact
                         )
                         DropdownMenuItem(
@@ -1859,6 +1880,10 @@ fun ChatMainTopBar(
                                 onDismissMenu()
                                 onDisappearingClick()
                             }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Contact info", color = GeometricTextDark) },
+                            onClick = onContactInfoClick
                         )
                         DropdownMenuItem(
                             text = {
@@ -2201,6 +2226,7 @@ fun ChatComposerBar(
     onStartVoiceRecording: () -> Unit,
     isEmojiPickerOpen: Boolean = false,
     isGifPickerOpen: Boolean = false,
+    isGifConfigured: Boolean = true,
     focusRequester: FocusRequester? = null,
     onInputFocus: () -> Unit = {},
     onEmojiClick: () -> Unit = {},
@@ -2273,14 +2299,17 @@ fun ChatComposerBar(
                     )
                 }
 
-                // GIF picker button
-                IconButton(onClick = onGifClick, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                        imageVector = Icons.Filled.Gif,
-                        contentDescription = "GIF",
-                        tint = if (isGifPickerOpen) WhatsAppFabGreen else Color(0xFF8696A0),
-                        modifier = Modifier.size(24.dp)
-                    )
+                // GIF picker button — hidden entirely when no GIPHY API key
+                // is configured (the picker never renders a fake grid).
+                if (isGifConfigured) {
+                    IconButton(onClick = onGifClick, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            imageVector = Icons.Filled.Gif,
+                            contentDescription = "GIF",
+                            tint = if (isGifPickerOpen) WhatsAppFabGreen else Color(0xFF8696A0),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
 
                 IconButton(onClick = onAttachClick, modifier = Modifier.size(36.dp)) {
@@ -3046,7 +3075,7 @@ private fun ChatAutoDeleteNotice(
                     Text(
                         text = if (duration != DisappearingDuration.OFF) {
                             "You turned on auto delete. New messages will automatically " +
-                                "delete from both ends ${duration.displayName.lowercase()} after they're sent."
+                                "delete from both end ${duration.displayName.lowercase()} after they're sent."
                         } else {
                             "Auto delete is off in this chat."
                         },
@@ -3106,7 +3135,7 @@ private fun AutoDeleteDialog(
             Column {
                 Text(
                     text = "For more privacy, new messages will automatically delete " +
-                        "from both ends after the selected duration.",
+                        "from both end after the selected duration",
                     color = Color(0xFF667781),
                     fontSize = 13.5.sp,
                     lineHeight = 18.sp
@@ -3145,12 +3174,12 @@ private fun AutoDeleteDialog(
                     disabledContentColor = Color.White
                 )
             ) {
-                Text("Update", color = Color.White)
+                Text("UPDATE", color = Color.White, fontWeight = FontWeight.SemiBold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = WhatsAppDeepGreen)
+                Text("CANCEL", color = WhatsAppDeepGreen, fontWeight = FontWeight.SemiBold)
             }
         }
     )

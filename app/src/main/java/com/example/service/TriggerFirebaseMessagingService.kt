@@ -167,6 +167,18 @@ class TriggerFirebaseMessagingService : FirebaseMessagingService() {
         createNotificationChannels(this)
 
         val type = remoteMessage.data["type"] ?: "default"
+
+        // REAL incoming-call signaling (send-call-invite edge function →
+        // data-only FCM). Fires even when the app is BACKGROUND/KILLED.
+        if (type == "incoming_call") {
+            handleIncomingCallPush(remoteMessage.data)
+            return
+        }
+        if (type == "call_cancelled") {
+            handleCallCancelledPush(remoteMessage.data)
+            return
+        }
+
         val isChatMessage = type.contains("chat") || type.contains("message")
 
         // For chat messages, prefer the structured payload sent by
@@ -197,6 +209,49 @@ class TriggerFirebaseMessagingService : FirebaseMessagingService() {
         val notifId = NOTIF_ID_BASE + (title + body).hashCode().and(0xFFF)
 
         postNotification(this, channelId, notifId, title, body, remoteMessage.data, isChatMessage)
+    }
+
+    /**
+     * Real incoming-call ring: post the full-screen/heads-up call notification
+     * with Accept + Decline actions. The in-app call overlay is driven by the
+     * AgoraCallService monitor (which also hydrates the session from
+     * call_sessions); this notification is what wakes a BACKGROUND/KILLED app.
+     */
+    private fun handleIncomingCallPush(data: Map<String, String>) {
+        val callId = data["callId"] ?: return
+        val callerName = data["callerName"] ?: "Incoming call"
+        val isVideo = data["callType"] == "video"
+        try {
+            com.example.service.IncomingCallNotificationHelper(this).apply {
+                showIncomingCallNotification(callId, callerName, isVideo)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "Failed to post incoming-call notification: ${e.message}")
+        }
+    }
+
+    /**
+     * The caller gave up / declined / timed out before we answered — remove
+     * the ring notification and any ringing session for that call.
+     */
+    private fun handleCallCancelledPush(data: Map<String, String>) {
+        val callId = data["callId"] ?: return
+        try {
+            com.example.service.IncomingCallNotificationHelper(this).cancelCallNotification()
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "Failed to cancel call notification: ${e.message}")
+        }
+        try {
+            val callService = com.example.di.AppServiceContainer.callService
+            val current = callService.currentCall.value
+            if (current?.callId == callId && current.isIncoming &&
+                current.state == com.example.model.CallState.RINGING
+            ) {
+                callService.dismissIncomingRing()
+            }
+        } catch (e: Exception) {
+            // App not initialized (cold start) — nothing to dismiss.
+        }
     }
 
     /**

@@ -18,8 +18,9 @@
 // ----------------------------------------------------------------------------
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { handleOptions, json, errorResponse } from "../_shared/cors.ts";
+import { handleOptions, json, errorResponse, ErrorCode } from "../_shared/cors.ts";
 import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
+import { checkRateLimit, RATE_LIMITS } from "../_shared/rate_limit.ts";
 import { sendEmail, renderOtpEmail } from "../_shared/resend.ts";
 
 const OTP_PURPOSE = "vault_reset";
@@ -90,6 +91,9 @@ async function handler(req: Request): Promise<Response> {
 
   const authHeader = req.headers.get("Authorization");
   const userId = await resolveUserId(authHeader);
+  const rl = checkRateLimit(req, userId, RATE_LIMITS.RESET_VAULT_PIN);
+  if (!rl.allowed) return json({ error: rl.message, code: ErrorCode.RATE_LIMITED, retryAfter: rl.retryAfter }, 429);
+
   if (!userId) return errorResponse("Unauthorized", 401);
 
   let body: Body = {};
@@ -162,9 +166,7 @@ async function handler(req: Request): Promise<Response> {
     if (!verify.ok) return json({ reset: false, error: verify.error }, 400);
 
     // --- Reset PIN + clear lockout ------------------------------------------
-    const salt = crypto.randomUUID();
-    const hash = await sha256Hex(`${newPin}:${salt}`);
-    const pinHash = `${salt}:${hash}`;
+    const pinHash = await hashVaultPin(newPin);
     // attempts + first_fail_at are cleared together so the 3-strikes/24h
     // window (20260922_vault_lockout.sql) fully restarts after a reset.
     const { error: pinError } = await supabase

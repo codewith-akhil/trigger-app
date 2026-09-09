@@ -98,7 +98,7 @@ class AgoraWebRtcService(
                         _agoraState.update {
                             it.copy(
                                 status = status,
-                                channelName = "call_" + session.callId.take(8),
+                                channelName = session.channelName.ifBlank { "call_" + session.callId.take(8) },
                                 mode = if (session.type == CallType.VIDEO) AgoraCallMode.VIDEO_CALL else AgoraCallMode.AUDIO_CALL,
                                 role = AgoraUserRole.BROADCASTER,
                                 remoteUserName = session.contactName,
