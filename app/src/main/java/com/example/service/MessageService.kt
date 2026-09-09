@@ -124,6 +124,15 @@ interface MessageService {
     suspend fun syncMessages(conversationId: String? = null, sinceTs: Long = 0L): Long
 
     /**
+     * WhatsApp-model background catch-up (NOT chat-open): pulls, per recent
+     * conversation, only the messages newer than that conversation's local
+     * watermark into Room. Called on app start and on connectivity regain —
+     * never while opening a chat (the chat renders Room directly, offline
+     * included). Failures are non-fatal; watermarks are never reset.
+     */
+    suspend fun backgroundCatchUpSync()
+
+    /**
      * Marks a conversation as read on the server via mark-conversation-read.
      */
     suspend fun markConversationRead(conversationId: String)

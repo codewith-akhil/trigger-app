@@ -108,25 +108,15 @@ class AgoraCallService(
         // Clean up any ongoing session
         endCallInternal(saveRecord = false)
 
-        // Camera / mic runtime permission gate — previously a first-time video
-        // call silently rendered black with no prompt.
+        // Camera / mic runtime permission backstop. The UI layer (ChatScreen
+        // startAudioCallWithPermission/startVideoCallWithPermission) requests
+        // the permissions BEFORE calling this, so a missing permission here is
+        // a routing bug, not a user-facing state: we refuse to start a call
+        // with a dead microphone but NEVER fake a FAILED call session — the
+        // user's next tap re-opens the Android permission dialog instead.
         val missingPermission = missingCallPermissions(type)
         if (missingPermission != null) {
-            _currentCall.value = CallSession(
-                callId = "",
-                contactId = contactId,
-                contactName = contactName,
-                avatarRes = avatarRes,
-                type = type,
-                state = CallState.FAILED,
-                errorMessage = missingPermission
-            )
-            scope.launch {
-                delay(3000)
-                if (_currentCall.value?.state == CallState.FAILED) {
-                    _currentCall.value = null
-                }
-            }
+            Log.w(TAG, "startCall refused (UI gate missed): $missingPermission")
             return
         }
 
@@ -223,26 +213,21 @@ class AgoraCallService(
     override fun acceptIncomingCall() {
         val session = _currentCall.value ?: return
         if (!session.isIncoming) return
-        // Callee-side permission gate — previously the accept path never checked
-        // RECORD_AUDIO/CAMERA: a fresh callee who answered first joined the
-        // channel with a dead microphone (one-way audio, no prompt), and on
+        // Callee-side permission backstop — previously the accept path never
+        // checked RECORD_AUDIO/CAMERA: a fresh callee who answered first joined
+        // the channel with a dead microphone (one-way audio, no prompt), and on
         // Android 14+ starting the microphone|camera FGS without the permission
         // threw SecurityException.
+        // The UI layer (ChatCallingOverlay Accept, gated in TriggerAppNavHost)
+        // requests the permissions BEFORE calling accept, so a miss here means
+        // the accept came through the notification path without a grant: keep
+        // the session RINGING (never mark missed, never fake a FAILED state)
+        // — the overlay stays up, its Accept re-opens the Android permission
+        // dialog, and a granted retry lands here with the permissions held.
+        // The ring timeout still ends the call honestly if nobody answers.
         val missingPermission = missingCallPermissions(session.type)
         if (missingPermission != null) {
-            Log.w(TAG, "Accept rejected: $missingPermission")
-            ringTimeoutJob?.cancel()
-            incomingCallNotificationHelper.cancelCallNotification()
-            _currentCall.update {
-                it?.copy(state = CallState.FAILED, errorMessage = "$missingPermission. Open Trigger, grant it, then call back.")
-            }
-            updateSupabaseCallStatus(session.callId, "missed")
-            scope.launch {
-                delay(4000)
-                if (_currentCall.value?.state == CallState.FAILED) {
-                    endCallInternal(saveRecord = false)
-                }
-            }
+            Log.w(TAG, "Accept deferred (permissions not granted yet): $missingPermission")
             return
         }
         ringTimeoutJob?.cancel()

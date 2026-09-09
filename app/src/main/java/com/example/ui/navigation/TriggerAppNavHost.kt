@@ -588,7 +588,42 @@ fun TriggerAppNavHost(
     } // NavHost
 
     // The call overlay renders ABOVE the entire nav graph.
+    // Accept is permission-gated (UI-driven, WhatsApp-style): RECORD_AUDIO —
+    // plus CAMERA for video — are requested BEFORE acceptIncomingCall joins
+    // the Agora channel. A plain denial does nothing (the next Accept tap
+    // re-requests); a permanent denial opens the app's Settings page. The
+    // service-side backstop keeps the session RINGING meanwhile, never
+    // faking a failed call.
+    val callContext = androidx.compose.ui.platform.LocalContext.current
+    var pendingCallAccept by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val callPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val action = pendingCallAccept
+        pendingCallAccept = null
+        if (action == null) return@rememberLauncherForActivityResult
+        if (result.values.all { it }) {
+            action()
+        } else {
+            val activity = callContext as? android.app.Activity
+            val permanentlyDenied = result.filterValues { !it }.keys.all { perm ->
+                activity == null || !androidx.core.app.ActivityCompat
+                    .shouldShowRequestPermissionRationale(activity, perm)
+            }
+            if (permanentlyDenied) com.example.util.openAppSettings(callContext)
+        }
+    }
     activeCall?.let { session ->
+        val neededPerms = buildList {
+            add(android.Manifest.permission.RECORD_AUDIO)
+            if (session.type == com.example.model.CallType.VIDEO) {
+                add(android.Manifest.permission.CAMERA)
+            }
+        }
+        val missingPerms = neededPerms.filter {
+            androidx.core.content.ContextCompat.checkSelfPermission(callContext, it) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
         com.example.ui.screens.ChatCallingOverlay(
             session = session,
             onEndCall = { AppServiceContainer.callService.endCall() },
@@ -596,7 +631,14 @@ fun TriggerAppNavHost(
             onToggleSpeaker = { AppServiceContainer.callService.toggleSpeaker() },
             onToggleVideo = { AppServiceContainer.callService.toggleVideo() },
             onSwitchCamera = { AppServiceContainer.callService.switchCamera() },
-            onAcceptCall = { AppServiceContainer.callService.acceptIncomingCall() },
+            onAcceptCall = {
+                if (missingPerms.isEmpty()) {
+                    AppServiceContainer.callService.acceptIncomingCall()
+                } else {
+                    pendingCallAccept = { AppServiceContainer.callService.acceptIncomingCall() }
+                    callPermissionLauncher.launch(missingPerms.toTypedArray())
+                }
+            },
             onDeclineCall = { AppServiceContainer.callService.declineCall() }
         )
     }

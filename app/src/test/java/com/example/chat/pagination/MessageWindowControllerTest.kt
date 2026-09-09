@@ -30,6 +30,22 @@ class MessageWindowControllerTest {
 
     private val convId = "conv-1"
 
+    @Test
+    fun `default initial window is the latest 30 messages (WhatsApp local-first spec)`() = runTest(UnconfinedTestDispatcher()) {
+        // Production default: chat open renders the LATEST 30 immediately from
+        // the local cache — never a bigger blast radius, never a server wait.
+        val store = FakeStore(serverTotal = 1000, initialLocalLimit = 1000)
+        val controller = MessageWindowController(convId, backgroundScope, store.dataSource)
+        controller.awaitWindow(backgroundScope)
+        advanceUntilIdle()
+
+        val window = controller.messages.value
+        assertEquals(30, window.size)
+        assertEquals("msg-0970", window.first().id)
+        assertEquals("msg-0999", window.last().id)
+        assertTrue(controller.hasMoreOlder.value)
+    }
+
     /** Fake Room cache + fake server history for one conversation. */
     private class FakeStore(serverTotal: Int, initialLocalLimit: Int) {
         private fun makeMessage(i: Int): DomainMessage = DomainMessage(
@@ -124,7 +140,8 @@ class MessageWindowControllerTest {
     @Test
     fun `initial window loads only the latest 50 of 1000 cached messages`() = runTest(UnconfinedTestDispatcher()) {
         val store = FakeStore(serverTotal = 1000, initialLocalLimit = 1000)
-        val controller = MessageWindowController(convId, backgroundScope, store.dataSource)
+        val controller = MessageWindowController(convId, backgroundScope, store.dataSource,
+            initialWindowSize = 50)
         controller.awaitWindow(backgroundScope)
         advanceUntilIdle()
 
@@ -139,7 +156,8 @@ class MessageWindowControllerTest {
     @Test
     fun `loadOlderMessages grows the window by 50 from cache without duplicates`() = runTest(UnconfinedTestDispatcher()) {
         val store = FakeStore(serverTotal = 1000, initialLocalLimit = 1000)
-        val controller = MessageWindowController(convId, backgroundScope, store.dataSource)
+        val controller = MessageWindowController(convId, backgroundScope, store.dataSource,
+            initialWindowSize = 50)
         controller.awaitWindow(backgroundScope)
         advanceUntilIdle()
 
@@ -160,7 +178,8 @@ class MessageWindowControllerTest {
     @Test
     fun `loadOlderMessages exhausts history and flips hasMoreOlder`() = runTest(UnconfinedTestDispatcher()) {
         val store = FakeStore(serverTotal = 1000, initialLocalLimit = 1000)
-        val controller = MessageWindowController(convId, backgroundScope, store.dataSource)
+        val controller = MessageWindowController(convId, backgroundScope, store.dataSource,
+            initialWindowSize = 50)
         controller.awaitWindow(backgroundScope)
         advanceUntilIdle()
 
@@ -183,7 +202,8 @@ class MessageWindowControllerTest {
     fun `cold cache fetches server pages progressively and never duplicates`() = runTest(UnconfinedTestDispatcher()) {
         // Fresh install: Room holds only the newest 50 of a 1000-message thread.
         val store = FakeStore(serverTotal = 1000, initialLocalLimit = 50)
-        val controller = MessageWindowController(convId, backgroundScope, store.dataSource)
+        val controller = MessageWindowController(convId, backgroundScope, store.dataSource,
+            initialWindowSize = 50)
         controller.awaitWindow(backgroundScope)
         advanceUntilIdle()
         assertEquals(50, controller.messages.value.size)
@@ -216,7 +236,8 @@ class MessageWindowControllerTest {
     @Test
     fun `jumpToMessage pins a bounded window around the target`() = runTest(UnconfinedTestDispatcher()) {
         val store = FakeStore(serverTotal = 1000, initialLocalLimit = 1000)
-        val controller = MessageWindowController(convId, backgroundScope, store.dataSource)
+        val controller = MessageWindowController(convId, backgroundScope, store.dataSource,
+            initialWindowSize = 50)
         controller.awaitWindow(backgroundScope)
         advanceUntilIdle()
 
@@ -237,7 +258,8 @@ class MessageWindowControllerTest {
     @Test
     fun `jumpToMessage deep-fetches a target that was never cached`() = runTest(UnconfinedTestDispatcher()) {
         val store = FakeStore(serverTotal = 1000, initialLocalLimit = 50)
-        val controller = MessageWindowController(convId, backgroundScope, store.dataSource)
+        val controller = MessageWindowController(convId, backgroundScope, store.dataSource,
+            initialWindowSize = 50)
         controller.awaitWindow(backgroundScope)
         advanceUntilIdle()
 
@@ -253,7 +275,8 @@ class MessageWindowControllerTest {
     @Test
     fun `jumpToMessage returns false for an unknown id`() = runTest(UnconfinedTestDispatcher()) {
         val store = FakeStore(serverTotal = 1000, initialLocalLimit = 1000)
-        val controller = MessageWindowController(convId, backgroundScope, store.dataSource)
+        val controller = MessageWindowController(convId, backgroundScope, store.dataSource,
+            initialWindowSize = 50)
         controller.awaitWindow(backgroundScope)
         advanceUntilIdle()
 
@@ -264,7 +287,8 @@ class MessageWindowControllerTest {
     @Test
     fun `loadNewerMessages extends a pinned bottom to the live edge`() = runTest(UnconfinedTestDispatcher()) {
         val store = FakeStore(serverTotal = 1000, initialLocalLimit = 1000)
-        val controller = MessageWindowController(convId, backgroundScope, store.dataSource)
+        val controller = MessageWindowController(convId, backgroundScope, store.dataSource,
+            initialWindowSize = 50)
         controller.awaitWindow(backgroundScope)
         advanceUntilIdle()
 
@@ -285,7 +309,8 @@ class MessageWindowControllerTest {
     @Test
     fun `releaseBottom re-attaches the live edge so new messages appear`() = runTest(UnconfinedTestDispatcher()) {
         val store = FakeStore(serverTotal = 1000, initialLocalLimit = 1000)
-        val controller = MessageWindowController(convId, backgroundScope, store.dataSource)
+        val controller = MessageWindowController(convId, backgroundScope, store.dataSource,
+            initialWindowSize = 50)
         controller.awaitWindow(backgroundScope)
         advanceUntilIdle()
 
@@ -320,7 +345,8 @@ class MessageWindowControllerTest {
     @Test
     fun `window stays sorted by the canonical cursor`() = runTest(UnconfinedTestDispatcher()) {
         val store = FakeStore(serverTotal = 1000, initialLocalLimit = 50)
-        val controller = MessageWindowController(convId, backgroundScope, store.dataSource)
+        val controller = MessageWindowController(convId, backgroundScope, store.dataSource,
+            initialWindowSize = 50)
         controller.awaitWindow(backgroundScope)
         advanceUntilIdle()
 

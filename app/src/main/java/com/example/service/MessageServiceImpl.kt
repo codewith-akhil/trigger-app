@@ -1301,6 +1301,40 @@ class MessageServiceImpl(
         }
     }
 
+    /**
+     * WhatsApp-model background catch-up. Runs on app start + connectivity
+     * regain (DashboardViewModel) — NEVER on chat open. For every recent
+     * conversation, pulls only the rows newer than that conversation's local
+     * watermark (syncMessages stamps it after each successful pull, so an
+     * offline gap is healed exactly once and already-cached rows are never
+     * re-downloaded). Room stays the single source of truth; the chat UI
+     * renders whatever is in Room with zero network dependency.
+     */
+    override suspend fun backgroundCatchUpSync() {
+        try {
+            val conversations = try {
+                repository.getAllConversations().first()
+            } catch (_: Exception) {
+                emptyList()
+            }
+            // Bounded: sequential, watermark-scoped pulls for the most recent
+            // threads only (Room's chat-list order: pinned first, then most
+            // recent activity). Each pull either advances its watermark or
+            // fails harmlessly (offline → retried on the next regain).
+            conversations.take(25)
+                .forEach { conv ->
+                    try {
+                        val sinceTs = prefs?.getLong(lastSyncKey(conv.id), 0L) ?: 0L
+                        syncMessages(conversationId = conv.id, sinceTs = sinceTs)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "background catch-up failed for ${conv.id}: ${e.message}")
+                    }
+                }
+        } catch (e: Exception) {
+            Log.w(TAG, "backgroundCatchUpSync aborted: ${e.message}")
+        }
+    }
+
     override suspend fun markConversationRead(conversationId: String) {
         // Mark locally (Room) for instant UI
         repository.markConversationRead(conversationId)

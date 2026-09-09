@@ -286,9 +286,17 @@ class ChatViewModel(
     var editingMessage = MutableStateFlow<DomainMessage?>(null)
     var editingText = MutableStateFlow("")
 
-    // Multi-device sync state
-    private val prefs = AppServiceContainer.context.getSharedPreferences("trigger_chat_prefs", android.content.Context.MODE_PRIVATE)
-    private val KEY_LAST_SYNC_TS = "last_sync_ts"
+    // Initial chat positioning (WhatsApp local-first): the chat must open at
+    // the NEWEST message exactly ONCE per ViewModel lifetime — the flag lives
+    // here so it (a) survives navigation to other screens (returning
+    // mid-history must NOT yank the user back to the bottom), (b) resets on
+    // process recreation (a fresh open always lands on the newest message,
+    // offline included), and (c) gates the load-older trigger so a prepend
+    // can never outrun/override the initial scroll (the "opens at the top"
+    // bug was exactly this race).
+    var initialPositionDone = false
+        private set
+    fun markInitialPositionDone() { initialPositionDone = true }
 
     // Voice recording state
     var isRecordingVoice = MutableStateFlow(false)
@@ -406,18 +414,12 @@ class ChatViewModel(
                 repository.markConversationRead(conversationId)
             }
         }
-        // Multi-device sync: pull any messages we missed since the last sync.
-        viewModelScope.launch {
-            try {
-                // Per-conversation watermark — the global key made "open A,
-                // then B" pull B only for messages newer than A's last pull,
-                // so B's older history never reached Room.
-                val sinceTs = prefs.getLong("last_sync_ts_$conversationId", 0L)
-                messageService.syncMessages(conversationId = conversationId, sinceTs = sinceTs)
-            } catch (e: Exception) {
-                // Non-fatal — Room is the local cache.
-            }
-        }
+        // NOTE (WhatsApp local-first model): there is deliberately NO
+        // syncMessages() call here. Opening a chat renders Room directly —
+        // zero network, zero sync, zero waiting. Multi-device catch-up runs
+        // in the BACKGROUND (app start + connectivity regain via
+        // MessageService.backgroundCatchUpSync, watermark-scoped so cached
+        // rows are never re-downloaded).
         // Retry any failed messages (offline queue)
         viewModelScope.launch {
             try {
@@ -534,6 +536,17 @@ class ChatViewModel(
 
     // Voice recording methods
     fun startVoiceRecording() {
+        // Hard backstop (spec: never touch MediaRecorder without the grant):
+        // the UI permission gate calls this only after RECORD_AUDIO is held.
+        // If a future call path skips the gate, refuse silently here — the
+        // user's next tap on the mic button re-opens the permission dialog.
+        val ctx = AppServiceContainer.context
+        if (ctx.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            android.util.Log.w("ChatViewModel", "startVoiceRecording refused: RECORD_AUDIO not granted (UI gate missed)")
+            return
+        }
         isRecordingVoice.value = true
         isRecordingLocked.value = false
         recordingDurationSec.value = 0f

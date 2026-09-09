@@ -65,11 +65,26 @@ class DashboardViewModel : ViewModel() {
         // duplicates). Also flush once on app start — anything that expired
         // while the app was closed gets a chance now.
         ConnectivityObserver.start(AppServiceContainer.context)
+        // Background multi-device message catch-up (WhatsApp model): runs
+        // HERE — app start and every connectivity regain — pulling only the
+        // rows newer than each conversation's local watermark into Room.
+        // Opening a chat NEVER syncs: the chat screen renders Room directly,
+        // offline included. Failures are non-fatal (retried on next regain).
+        viewModelScope.launch {
+            try {
+                AppServiceContainer.messageService.backgroundCatchUpSync()
+            } catch (_: Exception) {
+            }
+        }
         viewModelScope.launch {
             ConnectivityObserver.isOnline.collect { online ->
                 if (online) {
                     try {
                         AppServiceContainer.messageService.retryPendingOutbox()
+                    } catch (_: Exception) {
+                    }
+                    try {
+                        AppServiceContainer.messageService.backgroundCatchUpSync()
                     } catch (_: Exception) {
                     }
                 }

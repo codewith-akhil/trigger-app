@@ -45,7 +45,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -316,11 +315,74 @@ fun ChatScreen(
         }
     }
 
+    // ---- Unified runtime-permission gate (UI-driven; WhatsApp-style) ----
+    // Every RECORD_AUDIO / CAMERA feature (voice messages, audio calls, video
+    // calls, camera capture) flows through ONE RequestMultiplePermissions
+    // launcher: the feature's action is parked in pendingPermissionAction and
+    // executed ONLY on grant. A plain denial does nothing scary — the next
+    // attempt re-requests the dialog. A permanent denial (Android will no
+    // longer show the dialog) routes to the app's Settings page. There is no
+    // dead-end error path and no fake failed call/recording state.
+    var pendingPermissionAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val action = pendingPermissionAction
+        pendingPermissionAction = null
+        if (action == null) return@rememberLauncherForActivityResult
+        if (result.values.all { it }) {
+            action()
+        } else {
+            // Denied: re-ask on the NEXT attempt, unless Android has stopped
+            // showing the dialog for every denied permission (permanent) —
+            // then the only path left is the system Settings page.
+            val activity = context as? android.app.Activity
+            val permanentlyDenied = result.filterValues { !it }.keys.all { perm ->
+                activity == null || !androidx.core.app.ActivityCompat
+                    .shouldShowRequestPermissionRationale(activity, perm)
+            }
+            if (permanentlyDenied) {
+                com.example.util.openAppSettings(context)
+            }
+        }
+    }
+
+    fun withPermissions(vararg permissions: String, action: () -> Unit) {
+        val missing = permissions.filter {
+            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            action()
+        } else {
+            pendingPermissionAction = action
+            permissionLauncher.launch(missing.toTypedArray())
+        }
+    }
+
+    /** Voice message: RECORD_AUDIO, then record. */
+    fun startVoiceRecordingWithPermission() =
+        withPermissions(Manifest.permission.RECORD_AUDIO) { viewModel.startVoiceRecording() }
+
+    /** Audio call: RECORD_AUDIO before the Agora channel is ever joined. */
+    fun startAudioCallWithPermission() =
+        withPermissions(Manifest.permission.RECORD_AUDIO) { viewModel.startAudioCall() }
+
+    /** Video call: RECORD_AUDIO + CAMERA — both granted before the call starts. */
+    fun startVideoCallWithPermission() =
+        withPermissions(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA) { viewModel.startVideoCall() }
+
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
             launchCameraCapture()
+        } else {
+            val activity = context as? android.app.Activity
+            if (activity == null || !androidx.core.app.ActivityCompat
+                    .shouldShowRequestPermissionRationale(activity, Manifest.permission.CAMERA)) {
+                com.example.util.openAppSettings(context)
+            }
+            // Otherwise: silent — the next capture attempt re-requests.
         }
     }
 
@@ -387,22 +449,9 @@ fun ChatScreen(
         }
     }
 
-    // Real Audio record permission
-    val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            viewModel.startVoiceRecording()
-        }
-    }
-
-    fun startVoiceRecordingWithPermission() {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            viewModel.startVoiceRecording()
-        } else {
-            recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
+    // Voice-message recording goes through the unified gate above
+    // (startVoiceRecordingWithPermission): granted → record immediately,
+    // denied → re-request on the next attempt, permanent → App Settings.
 
     // ---- Contact picker (for sharing a contact in chat) ----
     // Reads Android's contact picker — requires READ_CONTACTS permission on
@@ -484,10 +533,15 @@ fun ChatScreen(
     var pendingScrollAnchor by remember { mutableStateOf<Pair<String, Int>?>(null) }
 
     // Load-older trigger: user scrolls near the top of the window.
+    // Gated on viewModel.initialPositionDone: on chat open the list starts
+    // at index 0 for one frame BEFORE the initial scroll lands — without the
+    // gate the trigger fired immediately, prepended an older page and its
+    // re-anchor SideEffect pinned the viewport to the OLD top item, leaving
+    // the user staring at history instead of the newest message.
     LaunchedEffect(listState, topItemCount) {
         snapshotFlow { listState.firstVisibleItemIndex }
             .collect { firstIdx ->
-                if (messages.isNotEmpty() && firstIdx <= topItemCount + 2) {
+                if (messages.isNotEmpty() && viewModel.initialPositionDone && firstIdx <= topItemCount + 2) {
                     if (pendingScrollAnchor == null) {
                         val msgIdx = firstIdx - topItemCount
                         val anchorId = messages.getOrNull(msgIdx)?.id
@@ -597,17 +651,26 @@ fun ChatScreen(
         }
     }
 
-    // Open the chat at the NEWEST message on initial launch / conversation switch
-    var didInitialScroll by rememberSaveable(readyConvId) { mutableStateOf(false) }
+    // Open the chat at the NEWEST message — exactly once per ViewModel
+    // lifetime, from the Room window alone (local-first: no loading, no
+    // sync, no network). The flag lives on the ViewModel so that:
+    //  - a fresh open (any network state) always lands on the newest message
+    //    (a stale saved scroll position can never leave the user at the top);
+    //  - returning from another screen does NOT yank a user reading history
+    //    back to the bottom (the flag is already set, listState restores);
+    //  - the load-older trigger (gated on the same flag) can never race the
+    //    initial scroll and re-anchor the viewport to an older page.
     LaunchedEffect(readyConvId) {
-        didInitialScroll = false
+        // Conversation switch (mirror→canonical heal reuses this composable):
+        // forget the previous thread's last message so the auto-scroll logic
+        // treats the new window's first emission as initial, not "new".
         previousLastMessageId = null
     }
     LaunchedEffect(messages.size, readyConvId) {
-        if (!didInitialScroll && messages.isNotEmpty()) {
+        if (!viewModel.initialPositionDone && messages.isNotEmpty()) {
             listState.scrollToItem(latestItemIndex)
-            didInitialScroll = true
             previousLastMessageId = messages.lastOrNull()?.id
+            viewModel.markInitialPositionDone()
         }
     }
 
@@ -730,11 +793,11 @@ fun ChatScreen(
                             onOpenProfile = onOpenProfile,
                             onVideoCall = {
                                 if (isBlocked) showUnblockDialog = true
-                                else viewModel.startVideoCall()
+                                else startVideoCallWithPermission()
                             },
                             onVoiceCall = {
                                 if (isBlocked) showUnblockDialog = true
-                                else viewModel.startAudioCall()
+                                else startAudioCallWithPermission()
                             },
                             onMenuClick = { showOptionsMenu = true },
                             showMenu = showOptionsMenu,
@@ -1426,11 +1489,11 @@ fun ChatScreen(
             onClose = { showContactInfoSheet = false },
             onVoiceCall = {
                 showContactInfoSheet = false
-                viewModel.startAudioCall()
+                startAudioCallWithPermission()
             },
             onVideoCall = {
                 showContactInfoSheet = false
-                viewModel.startVideoCall()
+                startVideoCallWithPermission()
             },
             onOpenAutoDelete = {
                 // Single source of truth: the shared AutoDeleteDialog on the

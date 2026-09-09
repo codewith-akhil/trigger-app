@@ -44,7 +44,7 @@ class MessageWindowController(
     private val conversationId: String,
     private val scope: CoroutineScope,
     private val dataSource: DataSource,
-    private val initialWindowSize: Int = 50,
+    private val initialWindowSize: Int = 30,
     private val pageSize: Int = 50
 ) {
 
