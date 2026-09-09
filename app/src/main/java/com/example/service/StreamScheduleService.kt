@@ -120,7 +120,10 @@ class StreamScheduleService(
         val hostId = userProfile.id
 
         val streamId = "sch_${System.currentTimeMillis()}"
-        val shareLink = "https://triggerapp.com/stream/$streamId"
+        // Real, user-owned domain. Deep link: App Links intent-filter in the
+        // manifest routes https://triggerappltd.cyou/stream/<id> into the app,
+        // where the dashboard Stream tab fetches the stream and opens booking.
+        val shareLink = "https://triggerappltd.cyou/stream/$streamId"
 
         val newStream = ScheduledStream(
             id = streamId,
@@ -364,6 +367,59 @@ class StreamScheduleService(
             }
             is SupabaseResult.Error -> Log.w(TAG, "refreshScheduledStreams failed: ${res.message}")
         }
+    }
+
+    /**
+     * Fetches ONE scheduled stream by id — used by the App Links deep link
+     * (https://triggerappltd.cyou/stream/<id>) so ANY signed-in viewer can
+     * resolve and book a shared stream, not just the host. `ss_select` RLS
+     * allows every authenticated user to read scheduled_streams rows.
+     * Null when the id does not exist or the caller is signed out.
+     */
+    suspend fun fetchStreamById(streamId: String): ScheduledStream? {
+        if (streamId.isBlank()) return null
+        if (UserRepository.profile.value.id.isBlank()) return null
+        return when (val res = client.getTable("scheduled_streams", "select=*&id=eq.$streamId&limit=1")) {
+            is SupabaseResult.Success -> {
+                if (res.data.length() == 0) null else parseScheduledStreamRow(res.data.getJSONObject(0))
+            }
+            is SupabaseResult.Error -> {
+                Log.w(TAG, "fetchStreamById($streamId) failed: ${res.message}")
+                null
+            }
+        }
+    }
+
+    /** Maps one scheduled_streams row (ISO UTC scheduled_at → device zone). */
+    private fun parseScheduledStreamRow(row: org.json.JSONObject): ScheduledStream {
+        val scheduledAt = row.optString("scheduled_at", "")
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = parseIsoToMillis(scheduledAt) }
+        val slotLimit = row.optString("slot_limit", "50")
+        val pricingType = if (row.optString("pricing_type", "FREE").equals("PAID", true))
+            StreamPricingType.PAID else StreamPricingType.FREE
+        return ScheduledStream(
+            id = row.optString("id"),
+            title = row.optString("title", "Untitled Stream"),
+            category = row.optString("category", "Tech & Talk"),
+            hostName = row.optString("host_name", ""),
+            hostEmail = row.optString("host_email", ""),
+            date = String.format(java.util.Locale.US, "%04d-%02d-%02d",
+                cal.get(java.util.Calendar.YEAR),
+                cal.get(java.util.Calendar.MONTH) + 1,
+                cal.get(java.util.Calendar.DAY_OF_MONTH)),
+            time = String.format(java.util.Locale.US, "%02d:%02d",
+                cal.get(java.util.Calendar.HOUR_OF_DAY),
+                cal.get(java.util.Calendar.MINUTE)),
+            timestampMillis = parseIsoToMillis(scheduledAt),
+            slotLimit = slotLimit,
+            slotsBooked = row.optInt("slots_booked", 0),
+            type = pricingType,
+            amount = row.optDouble("amount", 0.0),
+            currency = row.optString("currency", "USD ($)"),
+            shareLink = row.optString("share_link", ""),
+            isHost = row.optString("host_id") == UserRepository.profile.value.id,
+            isJoined = false
+        )
     }
 
     /** Build an ISO-8601 timestamp from the user-selected date + time strings. */

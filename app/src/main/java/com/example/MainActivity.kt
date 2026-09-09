@@ -7,6 +7,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.core.view.WindowCompat
@@ -28,6 +31,8 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         super.onCreate(savedInstanceState)
         com.example.di.AppServiceContainer.initialize(this)
 
+        handleCallIntent(intent)
+        StreamDeepLink.setFromIntent(intent)
         // Lock-screen call UX: a ringing call can present over the keyguard
         // (paired with USE_FULL_SCREEN_INTENT + setFullScreenIntent).
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -43,6 +48,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         }
 
         handleCallIntent(intent)
+        StreamDeepLink.setFromIntent(intent)
 
         // osmdroid configuration — MUST run before the first MapView is created.
         // A per-app User-Agent is REQUIRED by the OpenStreetMap tile usage policy,
@@ -108,6 +114,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         // the notification buttons were dead).
         setIntent(intent)
         handleCallIntent(intent)
+        StreamDeepLink.setFromIntent(intent)
     }
 
     /**
@@ -136,5 +143,35 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 callService.handleNotificationDecline(callId)
             }
         }
+    }
+}
+
+/**
+ * Holds a pending https://triggerappltd.cyou/stream/<id> App Link.
+ * MainActivity writes it on cold start (onCreate) and warm delivery
+ * (onNewIntent); the dashboard reads it to preselect the Stream tab and
+ * StreamTabContent consumes it once to fetch + open the booking dialog.
+ * Survives until the dashboard is reachable (e.g. link tapped before login).
+ */
+object StreamDeepLink {
+    var pendingStreamId by mutableStateOf<String?>(null)
+        private set
+
+    fun setFromIntent(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme == "https" && data.host == "triggerappltd.cyou") {
+            val segments = data.pathSegments
+            if (segments.size >= 2 && segments[0] == "stream" && segments[1].isNotBlank()) {
+                pendingStreamId = segments[1]
+                android.util.Log.i("StreamDeepLink", "Captured stream deep link id=${segments[1]}")
+            }
+        }
+    }
+
+    /** Reads and clears the pending id (consume-once). */
+    fun consume(): String? {
+        val id = pendingStreamId
+        pendingStreamId = null
+        return id
     }
 }

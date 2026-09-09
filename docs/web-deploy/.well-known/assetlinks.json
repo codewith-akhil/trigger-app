@@ -1,0 +1,10 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.trigger.app",
+    "sha256_cert_fingerprints": [
+      "ebfe33de6d3c9511022d8c8974c6862b18542210f642a64710012e1bb2a4e20b"
+    ]
+  }
+}]

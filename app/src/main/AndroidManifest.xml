@@ -54,6 +54,21 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- App Links: shared stream links (https://triggerappltd.cyou/stream/<id>)
+                 open the app directly. Requires /.well-known/assetlinks.json on the
+                 domain (see docs/web-deploy/); without it Android shows the
+                 disambiguation chooser but the app is still selectable. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:host="triggerappltd.cyou"
+                    android:pathPrefix="/stream"
+                    android:scheme="https" />
+            </intent-filter>
         </activity>
 
         <!-- Firebase Cloud Messaging service — receives push notifications + auto-registers the FCM token -->

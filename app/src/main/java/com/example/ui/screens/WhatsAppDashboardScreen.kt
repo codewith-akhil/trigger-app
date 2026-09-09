@@ -69,7 +69,17 @@ fun WhatsAppDashboardScreen(
     val agoraCallState by com.example.di.AppServiceContainer.agoraService.callState.collectAsState()
     val agoraState by com.example.di.AppServiceContainer.agoraService.agoraState.collectAsState()
 
-    var selectedTab by remember { mutableStateOf(DashboardTab.CHATS) }
+    // App Link (https://triggerappltd.cyou/stream/<id>) preselects the Stream
+    // tab so the linked stream is immediately visible; StreamTabContent then
+    // consumes the id and opens the booking dialog.
+    var selectedTab by remember {
+        mutableStateOf(if (com.example.StreamDeepLink.pendingStreamId != null) DashboardTab.STREAM else DashboardTab.CHATS)
+    }
+    // Reactive flip: a stream link delivered while the app was already open
+    // (onNewIntent) jumps to the Stream tab even if the dashboard was on Chats.
+    LaunchedEffect(com.example.StreamDeepLink.pendingStreamId) {
+        if (com.example.StreamDeepLink.pendingStreamId != null) selectedTab = DashboardTab.STREAM
+    }
     var showTopMenu by remember { mutableStateOf(false) }
     var showNewChatDialog by remember { mutableStateOf(false) }
     var showStatusStoryDialog by remember { mutableStateOf<String?>(null) }
@@ -293,7 +303,9 @@ fun WhatsAppDashboardScreen(
                     StreamTabContent(
                         onGoLive = { showGoLiveDialog = true },
                         onNavigateToScheduleStream = onNavigateToScheduleStream,
-                        onNavigateToStreamHistory = onNavigateToStreamHistory
+                        onNavigateToStreamHistory = onNavigateToStreamHistory,
+                        focusStreamId = com.example.StreamDeepLink.pendingStreamId,
+                        onFocusStreamConsumed = { com.example.StreamDeepLink.consume() }
                     )
                 }
 
@@ -1499,7 +1511,9 @@ fun CallLogItem(
 fun StreamTabContent(
     onGoLive: () -> Unit = {},
     onNavigateToScheduleStream: () -> Unit = {},
-    onNavigateToStreamHistory: () -> Unit = {}
+    onNavigateToStreamHistory: () -> Unit = {},
+    focusStreamId: String? = null,
+    onFocusStreamConsumed: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val agoraState by com.example.di.AppServiceContainer.agoraService.agoraState.collectAsState()
@@ -1509,6 +1523,27 @@ fun StreamTabContent(
     var selectedSection by remember { mutableStateOf("My Stream") }
     var selectedStreamForBooking by remember { mutableStateOf<com.example.service.ScheduledStream?>(null) }
     var actionToastMessage by remember { mutableStateOf<String?>(null) }
+
+    // App Link deep link: fetch the shared stream by id (any signed-in user
+    // may read scheduled_streams via the ss_select RLS policy) and open the
+    // booking dialog directly. The id is consumed once; if the stream cannot
+    // be resolved (deleted / not scheduled yet / network) the user simply
+    // lands on the Stream tab.
+    LaunchedEffect(focusStreamId) {
+        val id = focusStreamId ?: return@LaunchedEffect
+        onFocusStreamConsumed()
+        val fetched = com.example.di.AppServiceContainer.streamScheduleService.fetchStreamById(id)
+        if (fetched != null) {
+            selectedSection = "Upcoming"
+            selectedStreamForBooking = fetched
+        } else {
+            android.widget.Toast.makeText(
+                context,
+                "Stream not found — it may have been removed.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
+    }
 
     LazyColumn(
         modifier = Modifier
