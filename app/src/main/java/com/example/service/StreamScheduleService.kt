@@ -94,11 +94,13 @@ class StreamScheduleService(
     private val client get() = AppServiceContainer.supabaseClient
 
     /**
-     * Schedules a new stream: updates the in-memory list, dispatches the
-     * `send-stream-scheduled-email` edge function to email the host, and
-     * inserts a row into the `scheduled_streams` Supabase table so the
-     * `cron-auto-start-streams` edge function can auto-promote it to live at
-     * the scheduled time.
+     * Schedules a new stream: updates the in-memory list, fires a local push
+     * notification on this device, and inserts a row into the
+     * `scheduled_streams` Supabase table so the `cron-auto-start-streams`
+     * edge function can auto-promote it to live at the scheduled time.
+     * (Email notification channel was removed — creation no longer emails
+     * anyone. The returned ScheduledStream carries the real share link,
+     * which the UI reveals only after creation.)
      */
     fun scheduleStream(
         context: Context,
@@ -110,7 +112,6 @@ class StreamScheduleService(
         type: StreamPricingType,
         amount: Double,
         currency: String,
-        sendEmail: Boolean = true,
         sendPush: Boolean = true
     ): ScheduledStream {
         val userProfile = UserRepository.profile.value
@@ -179,24 +180,6 @@ class StreamScheduleService(
             when (val res = client.upsertRecord("scheduled_streams", row, onConflict = "id")) {
                 is SupabaseResult.Success -> Log.i(TAG, "scheduled_streams row inserted: $streamId")
                 is SupabaseResult.Error -> Log.e(TAG, "scheduled_streams insert failed: ${res.message}")
-            }
-
-            // 3. Email notification via edge function (was previously
-            // constructed but never actually sent).
-            if (sendEmail) {
-                val emailPayload = JSONObject()
-                    .put("hostEmail", hostEmail)
-                    .put("hostName", hostName)
-                    .put("streamTitle", title)
-                    .put("category", category)
-                    .put("scheduledDateTime", "$date at $time")
-                    .put("slotInfo", if (slotLimit.equals("ANY", ignoreCase = true)) "Unlimited" else "$slotLimit attendees")
-                    .put("pricingBadge", newStream.priceDisplay)
-                    .put("shareLink", shareLink)
-                when (val res = client.invokeFunction("send-stream-scheduled-email", emailPayload)) {
-                    is SupabaseResult.Success -> Log.i(TAG, "send-stream-scheduled-email dispatched to $hostEmail")
-                    is SupabaseResult.Error -> Log.e(TAG, "send-stream-scheduled-email failed: ${res.message}")
-                }
             }
         }
 

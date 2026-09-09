@@ -6,6 +6,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,10 +31,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.di.AppServiceContainer
-import com.example.model.UserRepository
+import com.example.service.ScheduledStream
 import com.example.service.StreamPricingType
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -55,7 +57,6 @@ fun ScheduleStreamScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val userProfile by UserRepository.profile.collectAsState()
     val coroutineScope = rememberCoroutineScope()
 
     var streamName by remember { mutableStateOf("") }
@@ -89,22 +90,18 @@ fun ScheduleStreamScreen(
     var selectedCurrency by remember { mutableStateOf("USD ($)") }
     var currencyDropdownExpanded by remember { mutableStateOf(false) }
 
-    // Link preview is a placeholder until the stream is actually scheduled —
-    // the real stream id (`sch_${System.currentTimeMillis()}`, no modulo) is
-    // generated inside StreamScheduleService.scheduleStream on submit. The
-    // success dialog already shows the correct shareLink from the returned
-    // ScheduledStream, so we just use a static placeholder here.
-    val shareLink = "https://triggerapp.com/stream/(generated on submit)"
-
     // Notifications configuration
     var sendPushNotification by remember { mutableStateOf(true) }
-    var sendEmailNotification by remember { mutableStateOf(true) }
 
     var showSuccessDialog by remember { mutableStateOf(false) }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
     var isSubmitting by remember { mutableStateOf(false) }
 
-    val registeredEmail = userProfile.email
+    // Populated ONLY on successful scheduling. Carries the real ScheduledStream
+    // (with the share link generated inside StreamScheduleService.scheduleStream)
+    // into the success dialog — the link is never displayed or shared before
+    // the stream actually exists.
+    var createdStream by remember { mutableStateOf<ScheduledStream?>(null) }
 
     Scaffold(
         modifier = modifier
@@ -589,82 +586,10 @@ fun ScheduleStreamScreen(
                 }
             }
 
-            // Section 5: Link Sharing Option
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = CardBackground),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Share, contentDescription = null, tint = HeaderGreen, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "5. Link Sharing Option",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = HeaderGreen
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Share with followers or external groups. Users can verify slot availability and book tickets directly.",
-                        fontSize = 12.sp,
-                        color = TextSub
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color(0xFFF1F5F9),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = shareLink,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF0F172A),
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText("Stream Link", shareLink)
-                                    clipboard.setPrimaryClip(clip)
-                                    snackbarMessage = "Stream invite link copied to clipboard!"
-                                }
-                            ) {
-                                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy Link", tint = HeaderGreen)
-                            }
-                            IconButton(
-                                onClick = {
-                                    val sendIntent = Intent().apply {
-                                        action = Intent.ACTION_SEND
-                                        putExtra(
-                                            Intent.EXTRA_TEXT,
-                                            "Join my live stream on Trigger App!\n📌 Title: ${streamName.ifEmpty { "Live Talk" }}\n📅 Date: $selectedDate at $selectedTime\n🔗 Join Link: $shareLink"
-                                        )
-                                        type = "text/plain"
-                                    }
-                                    val shareIntent = Intent.createChooser(sendIntent, "Share Stream Invite")
-                                    context.startActivity(shareIntent)
-                                }
-                            ) {
-                                Icon(Icons.Filled.Share, contentDescription = "Share", tint = HeaderGreen)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Section 6: End-to-End Production Notifications
+            // Section 5: Push Notification
+            // (Email notification channel removed — creation no longer sends any
+            // email; the share link is only revealed after creation, in the
+            // success dialog.)
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = CardBackground),
@@ -673,14 +598,14 @@ fun ScheduleStreamScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "6. Notification Channels",
+                        text = "5. Push Notification",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = HeaderGreen
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Dispatches push alerts and email notifications to registered emails.",
+                        text = "Shows a high-priority alert on this device when the stream is scheduled.",
                         fontSize = 12.sp,
                         color = TextSub
                     )
@@ -697,35 +622,12 @@ fun ScheduleStreamScreen(
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
                                 Text("Push Notifications", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                Text("High-priority alert to your device and attendees", fontSize = 12.sp, color = TextSub)
+                                Text("High-priority alert on this device", fontSize = 12.sp, color = TextSub)
                             }
                         }
                         Switch(
                             checked = sendPushNotification,
                             onCheckedChange = { sendPushNotification = it },
-                            colors = SwitchDefaults.colors(checkedThumbColor = HeaderGreen, checkedTrackColor = Color(0xFFC8E6C9))
-                        )
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = BorderGrey)
-
-                    // Email Notification Switch
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Filled.Email, null, tint = AccentGreen, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Text("Email Notification", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                Text("To: $registeredEmail", fontSize = 12.sp, color = TextSub)
-                            }
-                        }
-                        Switch(
-                            checked = sendEmailNotification,
-                            onCheckedChange = { sendEmailNotification = it },
                             colors = SwitchDefaults.colors(checkedThumbColor = HeaderGreen, checkedTrackColor = Color(0xFFC8E6C9))
                         )
                     }
@@ -791,7 +693,7 @@ fun ScheduleStreamScreen(
                         isSubmitting = true
                         coroutineScope.launch {
                             try {
-                                AppServiceContainer.streamScheduleService.scheduleStream(
+                                val scheduled = AppServiceContainer.streamScheduleService.scheduleStream(
                                     context = context,
                                     title = streamName.trim(),
                                     category = selectedCategory,
@@ -801,10 +703,10 @@ fun ScheduleStreamScreen(
                                     type = streamType,
                                     amount = if (isPaid) amount else 0.0,
                                     currency = selectedCurrency,
-                                    sendEmail = sendEmailNotification,
                                     sendPush = sendPushNotification
                                 )
                                 isSubmitting = false
+                                createdStream = scheduled
                                 showSuccessDialog = true
                             } catch (e: Exception) {
                                 isSubmitting = false
@@ -880,7 +782,66 @@ fun ScheduleStreamScreen(
                                 fontWeight = FontWeight.SemiBold,
                                 color = HeaderGreen
                             )
-                            Text("📧 Sent to: $registeredEmail", fontSize = 12.sp, color = TextSub)
+                        }
+                    }
+
+                    // Share link — only exists now that the stream was actually
+                    // created. Copy / share the REAL link generated by the
+                    // StreamScheduleService (never a pre-creation placeholder).
+                    createdStream?.let { created ->
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Share Link",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextMain
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFFF1F5F9),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = created.shareLink,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF0F172A),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Stream Link", created.shareLink))
+                                        Toast.makeText(context, "Stream invite link copied to clipboard!", Toast.LENGTH_SHORT).show()
+                                    }
+                                ) {
+                                    Icon(Icons.Filled.ContentCopy, contentDescription = "Copy Link", tint = HeaderGreen)
+                                }
+                                IconButton(
+                                    onClick = {
+                                        val sendIntent = Intent().apply {
+                                            action = Intent.ACTION_SEND
+                                            putExtra(
+                                                Intent.EXTRA_TEXT,
+                                                "Join my live stream on Trigger App!\n📌 Title: ${created.title}\n📅 Date: ${created.date} at ${created.time}\n🔗 Join Link: ${created.shareLink}"
+                                            )
+                                            type = "text/plain"
+                                        }
+                                        context.startActivity(Intent.createChooser(sendIntent, "Share Stream Invite"))
+                                    }
+                                ) {
+                                    Icon(Icons.Filled.Share, contentDescription = "Share", tint = HeaderGreen)
+                                }
+                            }
                         }
                     }
                 }
