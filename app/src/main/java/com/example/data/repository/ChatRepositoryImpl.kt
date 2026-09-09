@@ -104,6 +104,45 @@ class ChatRepositoryImpl(
             .map { it.toDomainMessage().withSignedMedia() }
     }
 
+    // ------------------------------------------------------------------
+    // Task 25 — bounded message window (cursor pagination)
+    // ------------------------------------------------------------------
+
+    /** Latest [limit] messages, NEWEST first — the initial window anchor. */
+    suspend fun getLatestMessages(conversationId: String, limit: Int): List<DomainMessage> {
+        return messageDao.getLatestMessages(conversationId, limit)
+            .map { it.toDomainMessage().withSignedMedia() }
+    }
+
+    /** Page STRICTLY older than [before], NEWEST first (local cache only). */
+    suspend fun getMessagesBeforeCursor(conversationId: String, before: MessageCursor, limit: Int): List<DomainMessage> {
+        return messageDao.getMessagesBeforeCursor(conversationId, before.timestampMillis, before.seq, before.messageId, limit)
+            .map { it.toDomainMessage().withSignedMedia() }
+    }
+
+    /** Page STRICTLY newer than [after], OLDEST first (local cache only). */
+    suspend fun getMessagesAfterCursor(conversationId: String, after: MessageCursor, limit: Int): List<DomainMessage> {
+        return messageDao.getMessagesAfterCursor(conversationId, after.timestampMillis, after.seq, after.messageId, limit)
+            .map { it.toDomainMessage().withSignedMedia() }
+    }
+
+    /** Live Room flow over the INCLUSIVE [top..bottom] window. Null bounds
+     *  are unbounded. The open chat's ONLY list source — bounded memory,
+     *  bounded re-mapping, every row change inside the window re-emits. */
+    fun observeMessageWindow(conversationId: String, top: MessageCursor?, bottom: MessageCursor?): Flow<List<DomainMessage>> {
+        return messageDao.observeMessageWindow(
+            conversationId = conversationId,
+            hasTop = if (top != null) 1 else 0,
+            topTs = top?.timestampMillis ?: 0L,
+            topSeq = top?.seq ?: 0L,
+            topId = top?.messageId ?: "",
+            hasBottom = if (bottom != null) 1 else 0,
+            bottomTs = bottom?.timestampMillis ?: Long.MAX_VALUE,
+            bottomSeq = bottom?.seq ?: Long.MAX_VALUE,
+            bottomId = bottom?.messageId ?: ""
+        ).map { list -> list.map { it.toDomainMessage().withSignedMedia() } }
+    }
+
     /**
      * Returns all messages with status FAILED (across all conversations) so the
      * offline queue can retry them.

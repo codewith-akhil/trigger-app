@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [MessageEntity::class, ConversationEntity::class],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -36,12 +36,24 @@ abstract class ChatDatabase : RoomDatabase() {
                         ADD_CALL_LOG_FIELDS,
                         ADD_CONVERSATION_LAST_ACTIVITY,
                         ADD_CONVERSATION_DISAPPEARING_TIMESTAMP,
-                        ADD_CONVERSATION_REQUEST_STATUS_AND_AVATAR
+                        ADD_CONVERSATION_REQUEST_STATUS_AND_AVATAR,
+                        ADD_MESSAGES_PAGINATION_INDEX
                     )
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        // Migration 10 → 11 (Task 25): composite pagination index on messages.
+        // Serves the newest-first window/page cursor queries — without it the
+        // whole conversation is fetched + sorted on every window emission.
+        // The name MUST match the @Entity Index declaration (Room validates
+        // the expected schema on every open).
+        private val ADD_MESSAGES_PAGINATION_INDEX = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_messages_conv_ts_seq ON messages(conversationId, timestampMillis, seq)")
             }
         }
 

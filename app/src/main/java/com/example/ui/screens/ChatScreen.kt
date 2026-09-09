@@ -85,7 +85,10 @@ import com.example.service.VaultMediaItem
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.ChatViewModel
 import com.example.ui.viewmodel.SearchFilter
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
 /** WhatsApp-style day separator label: Today / Yesterday / "7 September 2026". */
@@ -171,6 +174,9 @@ fun ChatScreen(
     )
 
     val messages by viewModel.messages.collectAsState()
+    // Task 25 pagination state (bounded window)
+    val isLoadingOlder by viewModel.isLoadingOlder.collectAsState()
+    val hasMoreOlder by viewModel.hasMoreOlder.collectAsState()
     // Single-flight text-send guard: send buttons disable while a send is running.
     val isSending by viewModel.isSending.collectAsState()
     // Peer avatar URL (profiles fetch) for the top bar; null/blank → drawable fallback.
@@ -457,30 +463,96 @@ fun ChatScreen(
         }
     }
 
-    // ---- Pagination: load more when user scrolls to the top ----
-    LaunchedEffect(listState) {
+    // ------------------------------------------------------------------
+    // Task 25 — pagination & scroll management (bounded message window)
+    // ------------------------------------------------------------------
+
+    // The auto-delete notice is ALWAYS list item 0 whenever an auto-delete
+    // choice was ever made (duration != OFF, or OFF after a previous choice).
+    // Task 25 adds ONE more stable top slot ("pagination_top": loading
+    // spinner, beginning-of-history caption, or an invisible spacer). Every
+    // message index in scroll math therefore shifts by topItemCount.
+    val hasSystemHeader = conversationInfo?.disappearingUpdatedAtMillis != null
+    val topItemCount = (if (hasSystemHeader) 1 else 0) + (if (messages.isNotEmpty()) 1 else 0)
+    val latestItemIndex = if (messages.isEmpty()) 0 else messages.size - 1 + topItemCount
+
+    // Scroll-position preservation: prepending an older page keeps Compose's
+    // NUMERIC firstVisibleItemIndex, which visually jumps the content. We
+    // capture the first visible message id + pixel offset when a load starts
+    // and re-request that exact content before the new layout is committed.
+    var pendingScrollAnchor by remember { mutableStateOf<Pair<String, Int>?>(null) }
+
+    // Load-older trigger: user scrolls near the top of the window.
+    LaunchedEffect(listState, topItemCount) {
         snapshotFlow { listState.firstVisibleItemIndex }
             .collect { firstIdx ->
-                if (firstIdx <= 2 && messages.isNotEmpty()) {
-                    viewModel.loadMoreMessages()
+                if (messages.isNotEmpty() && firstIdx <= topItemCount + 2) {
+                    if (pendingScrollAnchor == null) {
+                        val msgIdx = firstIdx - topItemCount
+                        val anchorId = messages.getOrNull(msgIdx)?.id
+                            ?: messages.firstOrNull()?.id
+                        if (anchorId != null) {
+                            pendingScrollAnchor = anchorId to listState.firstVisibleItemScrollOffset
+                        }
+                    }
+                    viewModel.loadOlderMessages()
                 }
             }
     }
 
-    // ---- Scroll-to-message: jump to a specific message id (used by search & reply) ----
-    // The auto-delete notice is ALWAYS list item 0 whenever an auto-delete
-    // choice was ever made (duration != OFF, or OFF after a previous choice).
-    // All message indices are therefore shifted by +1 in scroll math below.
-    val hasSystemHeader = conversationInfo?.disappearingUpdatedAtMillis != null
-    val latestItemIndex = if (messages.isEmpty()) 0 else if (hasSystemHeader) messages.size else messages.size - 1
+    // Load-newer trigger: after a history jump the bottom is pinned away from
+    // the live edge; reaching the slice's end grows it toward the present.
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+            .collect { lastIdx ->
+                if (messages.isNotEmpty() && lastIdx >= messages.size - 1 + topItemCount - 2) {
+                    viewModel.loadNewerMessages()
+                }
+            }
+    }
 
+    // Re-anchor BEFORE the prepended page's first frame is committed.
+    SideEffect {
+        val anchor = pendingScrollAnchor ?: return@SideEffect
+        val idx = messages.indexOfFirst { it.id == anchor.first }
+        if (idx >= 0) {
+            listState.requestScrollToItem(idx + topItemCount, anchor.second)
+        }
+        // Clear either way (vanishing anchor rows are not retried).
+        pendingScrollAnchor = null
+    }
+
+    // ---- Scroll-to-message: jump to a specific message id (used by search & reply) ----
     fun scrollToMessageId(messageId: String) {
         val idx = messages.indexOfFirst { it.id == messageId }
         if (idx >= 0) {
             coroutineScope.launch {
-                val target = if (hasSystemHeader) idx + 1 else idx
-                listState.animateScrollToItem(target)
+                listState.animateScrollToItem(idx + topItemCount)
             }
+        } else {
+            // Not inside the loaded window (Task 25): deep-fetch the page
+            // containing it from Room/server, then scroll once it renders.
+            viewModel.jumpToMessage(messageId)
+        }
+    }
+
+    // Deep-jump scroll: waits (bounded) for the window to re-emit with the
+    // requested message inside, then scrolls to it. Covers reply-quote taps
+    // targeting history that was never loaded.
+    LaunchedEffect(Unit) {
+        viewModel.pendingJumpTo.collect { id ->
+            if (id == null) return@collect
+            val appeared = withTimeoutOrNull(5_000) {
+                snapshotFlow { messages.any { it.id == id } }
+                    .filter { it }
+                    .first()
+                true
+            } ?: false
+            if (appeared) {
+                val idx = messages.indexOfFirst { it.id == id }
+                if (idx >= 0) listState.animateScrollToItem(idx + topItemCount)
+            }
+            viewModel.clearPendingJump()
         }
     }
 
@@ -498,22 +570,27 @@ fun ChatScreen(
     LaunchedEffect(currentMatchIndex, matchingIndices) {
         if (currentMatchIndex in matchingIndices.indices) {
             coroutineScope.launch {
-                val target = if (hasSystemHeader) matchingIndices[currentMatchIndex] + 1 else matchingIndices[currentMatchIndex]
-                listState.animateScrollToItem(target)
+                listState.animateScrollToItem(matchingIndices[currentMatchIndex] + topItemCount)
             }
         }
     }
 
     // Auto-scroll on new messages:
-    // Moves the viewport to the latest messages upon receiving a new message in the chat.
+    // Follows the newest message ONLY when the user is already at (or near)
+    // the bottom — WhatsApp never yanks the viewport out of history while
+    // the user is reading older pages.
     val lastMessageId = messages.lastOrNull()?.id
     var previousLastMessageId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(lastMessageId) {
         if (lastMessageId != null && messages.isNotEmpty()) {
             if (previousLastMessageId != null && previousLastMessageId != lastMessageId) {
-                // A new message arrived in the chat (sent or received) — auto-scroll to the latest message!
-                listState.animateScrollToItem(latestItemIndex)
+                val lastVisibleIdx = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                val nearBottom = !listState.canScrollForward ||
+                        lastVisibleIdx >= messages.size - 3 + topItemCount
+                if (nearBottom) {
+                    listState.animateScrollToItem(latestItemIndex)
+                }
             }
             previousLastMessageId = lastMessageId
         }
@@ -965,13 +1042,49 @@ fun ChatScreen(
                 ) {
 
                     if (hasSystemHeader) {
-                        // Auto-delete notice — always list item 0 (the +1 scroll
+                        // Auto-delete notice — always list item 0 (the +topItemCount scroll
                         // offsets above depend on this placement).
                         item(key = "auto_delete_notice") {
                             ChatAutoDeleteNotice(
                                 duration = conversationInfo?.disappearingDuration ?: DisappearingDuration.OFF,
                                 onChangeClick = { showAutoDeleteDialog = true }
                             )
+                        }
+                    }
+
+                    // Task 25 — stable top pagination slot. Present whenever the
+                    // window holds messages (keeps topItemCount consistent): a
+                    // spinner while the previous page loads, a caption once
+                    // history is exhausted, an invisible spacer otherwise.
+                    if (messages.isNotEmpty()) {
+                        item(key = "pagination_top") {
+                            when {
+                                isLoadingOlder -> Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 12.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(22.dp),
+                                        strokeWidth = 2.5.dp,
+                                        color = Color(0xFF008069)
+                                    )
+                                }
+                                !hasMoreOlder -> Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 12.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "Beginning of conversation",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = Color(0xFF667781)
+                                    )
+                                }
+                                else -> Spacer(Modifier.height(0.dp))
+                            }
                         }
                     }
 

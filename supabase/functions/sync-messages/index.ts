@@ -7,9 +7,20 @@
 //   action="push"  — the client sends a batch of messages (originating from
 //                    Room) to be upserted into the cloud `messages` table.
 //                    Used after the client sends/edits a message.
-//   action="pull"  — the client requests all messages newer than `sinceTs`
+//   action="pull"  — the client requests messages newer than `sinceTs`
 //                    (epoch millis) for a conversation (or all conversations).
-//                    Used on app startup / periodic refresh.
+//                    When sinceTs <= 0 (fresh install / cleared cache) the
+//                    function returns the NEWEST `initialLimit` (default 50)
+//                    rows instead — Task 25: the old ascending+limit(500)
+//                    returned the OLDEST 500 rows of a >500-message thread
+//                    and stamped the watermark done, so the newest messages
+//                    of long threads never reached the device. Older history
+//                    is loaded lazily via action="history".
+//   action="history" — Task 25 backward pagination page: up to `limit`
+//                    (default 50, max 200) messages STRICTLY older than the
+//                    composite cursor (beforeTs, beforeSeq, beforeId),
+//                    newest first. RLS (participant select) applies, same
+//                    as pull.
 //
 // Auth: requires a valid Supabase JWT. All writes are scoped to the caller
 // (sender_id = auth.uid()) via RLS; reads are scoped to conversations where
@@ -36,7 +47,16 @@
 // Request body for "pull":
 //   { "action": "pull",
 //     "conversationId"?: string (uuid),   // omit for all conversations
-//     "sinceTs"?: number }                // epoch millis; omit for full sync
+//     "sinceTs"?: number,                 // epoch millis; <=0 = initial (newest page)
+//     "initialLimit"?: number }           // newest-page size, default 50
+//
+// Request body for "history" (Task 25 backward pagination):
+//   { "action": "history",
+//     "conversationId": string (uuid),
+//     "beforeTs": number,                 // epoch millis (required, > 0)
+//     "beforeSeq": number,                // conversation seq tiebreak
+//     "beforeId": string (uuid),          // final deterministic tiebreak
+//     "limit"?: number }                  // default 50, max 200
 //
 // Response 200:
 //   push → { "synced": number, "skipped": number }
@@ -83,6 +103,11 @@ interface Body {
   messages?: PushMessage[];
   conversationId?: string;
   sinceTs?: number;
+  initialLimit?: number;
+  beforeTs?: number;
+  beforeSeq?: number;
+  beforeId?: string;
+  limit?: number;
 }
 
 const VALID_TYPES = ["TEXT", "IMAGE", "VIDEO", "AUDIO", "VOICE_NOTE", "DOCUMENT", "LOCATION", "CONTACT", "CALL_LOG", "SYSTEM"];
@@ -169,8 +194,13 @@ async function handler(req: Request): Promise<Response> {
     // local mirror could rewrite the PEER's messages (text/media/status) and
     // bypass the 15-minute edit window. Now a pushed row updates only rows
     // the caller itself sent; foreign ids are counted as skipped.
+    // (Bug fix while in-file: this existence pre-check referenced an
+    // undefined `supabase` client — a ReferenceError that broke every push.
+    // The ADMIN client is used read-only here so foreign existing rows are
+    // correctly SKIPPED; RLS on the user client below stays the final gate.)
+    const adminClient = createAdminClient();
     const rowIds = rows.map((r) => r.id as string);
-    const { data: existingMsgs } = await supabase
+    const { data: existingMsgs } = await adminClient
       .from("messages")
       .select("id, sender_id")
       .in("id", rowIds);
@@ -206,18 +236,37 @@ async function handler(req: Request): Promise<Response> {
 
   if (action === "pull") {
     const sinceTs = typeof body.sinceTs === "number" ? body.sinceTs : 0;
+    const initialLimit = Math.min(Math.max(Number(body.initialLimit ?? 50), 1), 200);
+
     let query = userClient
       .from("messages")
-      .select("*")
-      .gt("timestamp_millis", sinceTs)
-      .order("timestamp_millis", { ascending: true })
-      .limit(500);
+      .select("*");
 
     if (body.conversationId) {
       if (!isUuid(body.conversationId)) {
         return errorResponse("conversationId must be a UUID", 422, ErrorCode.VALIDATION_FAILED);
       }
       query = query.eq("conversation_id", body.conversationId);
+    }
+
+    if (sinceTs <= 0) {
+      // Task 25 — INITIAL sync: fetch the NEWEST page (WhatsApp-style chat
+      // open). The old `gt(0).order(asc).limit(500)` returned the OLDEST 500
+      // rows of a long thread and marked the watermark done, so the newest
+      // messages never loaded on fresh installs. Older history is fetched
+      // page-by-page via action="history" when the user scrolls up.
+      query = query
+        .order("timestamp_millis", { ascending: false })
+        .order("seq", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(initialLimit);
+    } else {
+      // Incremental catch-up: everything the device missed while offline.
+      query = query
+        .gt("timestamp_millis", sinceTs)
+        .order("timestamp_millis", { ascending: true })
+        .order("seq", { ascending: true })
+        .limit(500);
     }
 
     const { data, error: fetchError } = await query;
@@ -232,7 +281,51 @@ async function handler(req: Request): Promise<Response> {
     });
   }
 
-  return errorResponse(`Unknown action: ${action}. Use "push" or "pull".`, 422, ErrorCode.VALIDATION_FAILED);
+  if (action === "history") {
+    // Task 25 — backward pagination page for scroll-to-top history loading.
+    if (!isUuid(body.conversationId)) {
+      return errorResponse("conversationId must be a UUID", 422, ErrorCode.VALIDATION_FAILED);
+    }
+    const limit = Math.min(Math.max(Number(body.limit ?? 50), 1), 200);
+    const beforeTs = Number(body.beforeTs ?? 0);
+    const beforeSeq = Number(body.beforeSeq ?? 0);
+    const beforeId = typeof body.beforeId === "string" ? body.beforeId : "";
+    if (!(beforeTs > 0) || !isUuid(beforeId)) {
+      return errorResponse("beforeTs (>0) and beforeId (uuid) are required", 422, ErrorCode.VALIDATION_FAILED);
+    }
+
+    // Composite cursor identical to the client's Room queries:
+    // (timestamp_millis, seq, id) strictly less than the anchor — rows that
+    // share a timestamp or seq can never be skipped or duplicated across
+    // page boundaries.
+    const orFilter = [
+      `timestamp_millis.lt.${beforeTs}`,
+      `and(timestamp_millis.eq.${beforeTs},seq.lt.${beforeSeq})`,
+      `and(timestamp_millis.eq.${beforeTs},seq.eq.${beforeSeq},id.lt.${beforeId})`,
+    ].join(",");
+
+    const { data, error: historyError } = await userClient
+      .from("messages")
+      .select("*")
+      .eq("conversation_id", body.conversationId)
+      .or(orFilter)
+      .order("timestamp_millis", { ascending: false })
+      .order("seq", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(limit);
+
+    if (historyError) {
+      console.error("sync-messages history failed", historyError);
+      return errorResponse("Failed to fetch history", 500, ErrorCode.INTERNAL_ERROR);
+    }
+
+    return json({
+      messages: data ?? [],
+      untilTs: Date.now(),
+    });
+  }
+
+  return errorResponse(`Unknown action: ${action}. Use "push", "pull" or "history".`, 422, ErrorCode.VALIDATION_FAILED);
 }
 
 serve(handler, { port: 9019 });

@@ -9,6 +9,50 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestampMillis ASC, seq ASC")
     fun getMessagesForConversation(conversationId: String): Flow<List<MessageEntity>>
 
+    // ------------------------------------------------------------------
+    // Task 25 — cursor pagination (canonical order: timestampMillis, seq, id)
+    // ------------------------------------------------------------------
+
+    /** The latest [limit] messages, NEWEST first (initial chat window). */
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestampMillis DESC, seq DESC, id DESC LIMIT :limit")
+    suspend fun getLatestMessages(conversationId: String, limit: Int): List<MessageEntity>
+
+    /** Page STRICTLY older than the (ts, seq, id) cursor, NEWEST first.
+     *  The three-branch comparison makes same-millisecond / same-seq groups
+     *  impossible to skip or duplicate across page boundaries. */
+    @Query(
+        "SELECT * FROM messages WHERE conversationId = :conversationId AND " +
+        "(timestampMillis < :ts OR (timestampMillis = :ts AND seq < :seq) OR (timestampMillis = :ts AND seq = :seq AND id < :id)) " +
+        "ORDER BY timestampMillis DESC, seq DESC, id DESC LIMIT :limit"
+    )
+    suspend fun getMessagesBeforeCursor(conversationId: String, ts: Long, seq: Long, id: String, limit: Int): List<MessageEntity>
+
+    /** Page STRICTLY newer than the (ts, seq, id) cursor, OLDEST first. */
+    @Query(
+        "SELECT * FROM messages WHERE conversationId = :conversationId AND " +
+        "(timestampMillis > :ts OR (timestampMillis = :ts AND seq > :seq) OR (timestampMillis = :ts AND seq = :seq AND id > :id)) " +
+        "ORDER BY timestampMillis ASC, seq ASC, id ASC LIMIT :limit"
+    )
+    suspend fun getMessagesAfterCursor(conversationId: String, ts: Long, seq: Long, id: String, limit: Int): List<MessageEntity>
+
+    /** Live flow over the INCLUSIVE [top..bottom] window, ascending. Null
+     *  bounds are disabled with the hasTop/hasBottom flags (0 = unbounded on
+     *  that side). This is the ONLY list query the open chat subscribes to —
+     *  it re-emits on every row change inside the window and never loads
+     *  more than the window itself. */
+    @Query(
+        "SELECT * FROM messages WHERE conversationId = :conversationId " +
+        "AND (:hasTop = 0 OR (timestampMillis > :topTs OR (timestampMillis = :topTs AND seq > :topSeq) OR (timestampMillis = :topTs AND seq = :topSeq AND id >= :topId))) " +
+        "AND (:hasBottom = 0 OR (timestampMillis < :bottomTs OR (timestampMillis = :bottomTs AND seq < :bottomSeq) OR (timestampMillis = :bottomTs AND seq = :bottomSeq AND id <= :bottomId))) " +
+        "ORDER BY timestampMillis ASC, seq ASC, id ASC"
+    )
+    fun observeMessageWindow(
+        conversationId: String,
+        hasTop: Int, topTs: Long, topSeq: Long, topId: String,
+        hasBottom: Int, bottomTs: Long, bottomSeq: Long, bottomId: String
+    ): Flow<List<MessageEntity>>
+
+    /** Legacy page query kept for compatibility. */
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND timestampMillis < :beforeTimestamp ORDER BY timestampMillis DESC LIMIT :limit")
     suspend fun getMessagesPage(conversationId: String, beforeTimestamp: Long, limit: Int): List<MessageEntity>
 

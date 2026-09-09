@@ -162,7 +162,10 @@ request cap, REQUEST_NOT_ACCEPTED / REQUEST_DECLINED gates, mirror-row sync,
 push) · `send-chat-notification` (FCM, skip-if-online) · `edit-message`
 (15-min window) · `delete-message` · `forward-message` · `pin-message` ·
 `toggle-star-message` · `toggle-reaction` · `search-messages` ·
-`sync-messages` / `sync-conversations` (cross-device) · `mark-conversation-read` ·
+`sync-messages` / `sync-conversations` (cross-device; sync-messages actions:
+`push` (sender-only upsert) · `pull` — sinceTs>0 forward catch-up, sinceTs=0
+**newest 50** initial page (Task 25 fresh-install fix) · `history` — backward
+composite-cursor (ts, seq, id) page of ≤200 for scroll-to-top pagination) · `mark-conversation-read` ·
 `mark-view-once-opened` · `upload-chat-media` (raw binary, server-validated
 sizes: image 50 MB / video 250 MB / audio+doc 55 MB) · `backup-messages`
 
@@ -292,6 +295,70 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 8. **Per-screen colour dupes** → consolidate to `ui/theme` palette.
 
 ## 10. Version history (documentation updates)
+
+- **2026-09-09 (Task 25 — chat message pagination: WhatsApp-style bounded
+  window; NO AAB/APK rebuild per user instruction — artifacts remain
+  versionCode 4):** Initial chat open now renders **only the latest 50
+  messages** from Room (local-first: a cached chat opens instantly, never
+  waiting on Supabase); scrolling near the top loads the previous 50 —
+  **Room cache first, server only when the cache is exhausted** — until no
+  older messages remain. Verified on the live deployment with a synthetic
+  **1000-message thread** (16/16 live checks) + 10 JVM unit tests. Client
+  changes:
+  - `MessageWindowController` (new, pure Kotlin, JVM-tested): bounded window
+    state machine with inclusive `top`/`bottom` cursors on the canonical
+    total order **(timestampMillis, seq, id)** — Room observe/query + server
+    history + reply-jump all share one cursor semantics, so pages can never
+    skip or duplicate rows that share a millisecond or a seq. In-flight +
+    exhausted guards (`isLoadingOlder`/`hasMoreOlder`); server short-read =
+    history-end detection (no Content-Range needed). Post-jump the bottom
+    stays pinned ~1 page past the target (`loadNewerMessages` grows it
+    toward the live edge; any send calls `releaseBottom`).
+  - `MessageCursor` (new, `model/`): composite comparable cursor.
+  - Room: `getLatestMessages`, `getMessagesBeforeCursor`,
+    `getMessagesAfterCursor`, `observeMessageWindow` DAO queries;
+    migration **10→11** adds composite index
+    `index_messages_conv_ts_seq(conversationId, timestampMillis, seq)`
+    (entity annotation + migration kept name-identical for Room's schema
+    validation).
+  - `ChatRepositoryImpl`: cursor/window query wrappers (withSignedMedia
+    applied on all of them).
+  - `MessageService(+Impl)`: `fetchHistoryPage` (sync-messages action=history;
+    rows REPLACE-upserted into Room → re-fetches are impossible),
+    `fetchMessageById` (participant-RLS single-row read for reply deep-jump),
+    and `ensureRealtimeSubscription` split out of `observeMessages` (the
+    windowed chat no longer collects the full Room flow).
+  - `ChatViewModel`: full-list `_liveMessages`/`_extraMessages` merge and the
+    old cursorless `loadMoreMessages` removed; window controller wired in;
+    `pendingJumpTo` + `jumpToMessage`; every send entry point re-attaches the
+    live edge.
+  - `ChatScreen`: load-older trigger near the top **captures the first
+    visible message id + pixel offset and re-anchors via
+    `LazyListState.requestScrollToItem` before the prepended page commits**
+    (scroll position preserved, no jump); stable `pagination_top` slot
+    (spinner → "Beginning of conversation" caption); reply-quote tap on an
+    off-window message deep-fetches its page then scrolls (bounded 5 s);
+    auto-scroll on new messages is now gated to when the user is already at
+    the bottom (WhatsApp behavior — reading history is never interrupted);
+    all scroll math unified on `topItemCount`.
+  - **Server:** `sync-messages` redeployed with (a) action=**history**
+    (backward composite-cursor page, participant RLS), (b) pull with
+    `sinceTs=0` returns the **newest 50** instead of the oldest 500 — the
+    old behavior permanently hid the newest messages of >500-message threads
+    on fresh installs, (c) bug fix: the push path's existence pre-check
+    referenced an undefined `supabase` client (ReferenceError broke every
+    push); now uses the admin client read-only, RLS stays the final gate.
+  - **Verified:** `:app:compileDebugKotlin` green; 10/10 pagination JVM
+    tests (initial 50 of 1000, incremental growth, exhaustion, dedupe,
+    cold-cache server fallback, jump bounding, live-edge re-attach,
+    ordering); live E2E `scripts/task25_pagination_e2e.py` **16/16 PASS** on
+    a real 1000-message conversation (newest-50 initial pull; 19×50 history
+    pages + exhaustion probe; 50 same-millisecond tie groups fully
+    retrieved; non-participant sees zero rows; by-id fetch participant-gated;
+    forward catch-up unchanged; full cleanup, DB back to 44 messages).
+    Not verifiable in this sandbox: on-device UI scroll feel (emulator-less);
+    the re-anchor mechanism is the standard Compose `requestScrollToItem`
+    pattern and covered by review.
 
 - **2026-09-09 (Task 24 — 5 priority fixes: private media, canonical
   conversation hardening, DB security audit, local-first messaging;

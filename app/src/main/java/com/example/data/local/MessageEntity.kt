@@ -18,7 +18,12 @@ import com.example.model.DomainMessage
         // open — an actual index the entity doesn't declare crashes
         // checkIdentity ("Migration didn't properly handle messages") for
         // every device that ever migrated 3→4.
-        Index(value = ["seq"])
+        Index(value = ["seq"]),
+        // Task 25: composite pagination index — serves the newest-first
+        // window/page queries (conversationId equality + timestampMillis/seq
+        // ordering) without loading the whole conversation. Created by the
+        // 10→11 migration; the name must stay in sync with it.
+        Index(value = ["conversationId", "timestampMillis", "seq"], name = "index_messages_conv_ts_seq")
     ]
 )
 data class MessageEntity(

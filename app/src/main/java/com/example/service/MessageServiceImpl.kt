@@ -206,7 +206,7 @@ class MessageServiceImpl(
         return repository.getMessages(conversationId)
     }
 
-    private fun ensureRealtimeSubscription(conversationId: String) {
+    override fun ensureRealtimeSubscription(conversationId: String) {
         activeConversationId = conversationId
         val filter = "conversation_id=eq.$conversationId"
 
@@ -1144,6 +1144,73 @@ class MessageServiceImpl(
         when (result) {
             is SupabaseResult.Success -> Log.i(TAG, "reportUser: success")
             is SupabaseResult.Error -> Log.w(TAG, "reportUser failed: ${result.message}")
+        }
+    }
+
+    /**
+     * Task 25 — backward history page via sync-messages action="history".
+     * Server-side equivalent of the Room cursor queries: strictly older than
+     * the (timestampMillis, seq, id) cursor, newest first, participant RLS.
+     * Rows are upserted into Room so the window flow picks them up and a
+     * repeated request can never duplicate anything.
+     */
+    override suspend fun fetchHistoryPage(
+        conversationId: String,
+        beforeTimestampMillis: Long,
+        beforeSeq: Long,
+        beforeMessageId: String,
+        limit: Int
+    ): List<DomainMessage> {
+        if (beforeTimestampMillis <= 0L || beforeMessageId.isBlank()) return emptyList()
+        val supabaseClient = AppServiceContainer.supabaseClient
+        val payload = JSONObject().apply {
+            put("action", "history")
+            put("conversationId", conversationId)
+            put("beforeTs", beforeTimestampMillis)
+            put("beforeSeq", beforeSeq)
+            put("beforeId", beforeMessageId)
+            put("limit", limit)
+        }
+        return when (val result = supabaseClient.invokeFunction("sync-messages", payload)) {
+            is SupabaseResult.Success -> {
+                val arr = result.data.optJSONArray("messages") ?: JSONArray()
+                val myId = supabaseClient.currentUser?.id ?: ""
+                val out = mutableListOf<DomainMessage>()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    if (obj.optString("id", "").isBlank()) continue
+                    val domain = mapSupabaseToDomain(
+                        obj,
+                        isOutgoing = obj.optString("sender_id", "") == myId
+                    )
+                    repository.insertMessage(domain)
+                    out += domain
+                }
+                out
+            }
+            is SupabaseResult.Error -> {
+                Log.w(TAG, "fetchHistoryPage failed: ${result.message}")
+                emptyList()
+            }
+        }
+    }
+
+    /** Task 25 — single-row deep fetch for reply navigation (participant RLS). */
+    override suspend fun fetchMessageById(conversationId: String, messageId: String): DomainMessage? {
+        if (messageId.isBlank()) return null
+        val supabaseClient = AppServiceContainer.supabaseClient
+        return when (val res = supabaseClient.getTable("messages", "id=eq.$messageId&limit=1")) {
+            is SupabaseResult.Success -> {
+                val obj = res.data.optJSONObject(0) ?: return null
+                val myId = supabaseClient.currentUser?.id ?: ""
+                val domain = mapSupabaseToDomain(obj, isOutgoing = obj.optString("sender_id", "") == myId)
+                repository.insertMessage(domain)
+                domain
+            }
+            is SupabaseResult.Error -> {
+                Log.w(TAG, "fetchMessageById failed: ${res.message}")
+                null
+            }
         }
     }
 

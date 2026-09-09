@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import android.util.Log
 import com.example.config.ChatConfig
+import com.example.chat.pagination.MessageWindowController
 import com.example.di.AppServiceContainer
 import com.example.model.*
 import com.example.service.CallSession
@@ -49,26 +50,59 @@ class ChatViewModel(
     private val repository = AppServiceContainer.chatRepository
     private val supabaseClient = AppServiceContainer.supabaseClient
 
-    // Live messages from Room (the local cache, kept in sync with Supabase
-    // Realtime by MessageServiceImpl).
-    private val _liveMessages: StateFlow<List<DomainMessage>> = messageService
-        .observeMessages(conversationId)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    // ---------- Message window (Task 25 pagination) ----------
+    // WhatsApp-style bounded window backed by Room: the chat renders the
+    // latest 50 messages instantly (local-first, no Supabase wait), older
+    // history loads page-by-page on scroll-to-top (Room cache first, the
+    // sync-messages history endpoint only when the cache is exhausted), and
+    // a reply-navigation jump pins a ~2-page window around the target so a
+    // 1000-message thread never enters memory at once.
+    private val messageWindow = MessageWindowController(
+        conversationId = conversationId,
+        scope = viewModelScope,
+        dataSource = object : MessageWindowController.DataSource {
+            override suspend fun latest(conversationId: String, limit: Int) =
+                repository.getLatestMessages(conversationId, limit)
 
-    // Pagination cursor — the oldest timestamp currently loaded. Null means
-    // no pagination has happened yet.
-    private val paginationCursor = MutableStateFlow<Long?>(null)
-    private val _extraMessages = MutableStateFlow<List<DomainMessage>>(emptyList())
+            override suspend fun olderFromLocal(conversationId: String, before: MessageCursor, limit: Int) =
+                repository.getMessagesBeforeCursor(conversationId, before, limit)
 
-    // Combined messages: extras (older page) + main flow (latest)
-    val messages: StateFlow<List<DomainMessage>> = combine(_liveMessages, _extraMessages) { main, extras ->
-        // Merge by id, then sort chronologically by timestampMillis + seq
-        val map = LinkedHashMap<String, DomainMessage>()
-        // Insert extras first (older), then main (newer will overwrite duplicates)
-        extras.sortedBy { it.timestampMillis }.forEach { map[it.id] = it }
-        main.forEach { map[it.id] = it }
-        map.values.sortedWith(compareBy({ it.timestampMillis }, { it.seq }))
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+            override suspend fun newerFromLocal(conversationId: String, after: MessageCursor, limit: Int) =
+                repository.getMessagesAfterCursor(conversationId, after, limit)
+
+            override suspend fun olderFromServer(conversationId: String, before: MessageCursor, limit: Int) =
+                messageService.fetchHistoryPage(
+                    conversationId = conversationId,
+                    beforeTimestampMillis = before.timestampMillis,
+                    beforeSeq = before.seq,
+                    beforeMessageId = before.messageId,
+                    limit = limit
+                )
+
+            override suspend fun messageFromServerById(conversationId: String, messageId: String) =
+                messageService.fetchMessageById(conversationId, messageId)
+
+            override suspend fun messageById(conversationId: String, messageId: String) =
+                repository.getMessageById(messageId)
+
+            override fun observeWindow(conversationId: String, top: MessageCursor?, bottom: MessageCursor?) =
+                repository.observeMessageWindow(conversationId, top, bottom)
+        }
+    )
+
+    /** The bounded, chronologically-sorted window the chat renders. */
+    val messages: StateFlow<List<DomainMessage>> = messageWindow.messages
+    val isLoadingOlder: StateFlow<Boolean> = messageWindow.isLoadingOlder
+    val hasMoreOlder: StateFlow<Boolean> = messageWindow.hasMoreOlder
+    val isLoadingNewer: StateFlow<Boolean> = messageWindow.isLoadingNewer
+
+    /** True when the window bottom is pinned away from the live edge (post-jump). */
+    val isWindowed: StateFlow<Boolean> = messageWindow.isWindowed
+
+    /** Reply deep-jump: id of the message the UI should scroll to once the
+     *  window re-emits with it inside. Null = nothing pending. */
+    val pendingJumpTo = MutableStateFlow<String?>(null)
+    fun clearPendingJump() { pendingJumpTo.value = null }
 
     val contactPresence: StateFlow<Pair<PresenceStatus, String>> = presenceService
         .observeContactPresence(peerId)
@@ -292,6 +326,10 @@ class ChatViewModel(
     private var peerLiveExpiryJob: Job? = null
 
     init {
+        // Task 25: the windowed chat no longer collects the full Room message
+        // flow, so the per-conversation Realtime subscription (and its
+        // reconnect re-pull) must be established explicitly. Idempotent.
+        messageService.ensureRealtimeSubscription(conversationId)
         // Message-request meta: pending/accepted/declined + my message budget
         refreshConversationMeta()
         // Header presence: privacy-aware fetch (get-peer-presence honors the
@@ -409,6 +447,7 @@ class ChatViewModel(
      * typed reply entirely (send button just closed the viewer).
      */
     fun sendReplyFromViewer(text: String) {
+        notifyOutgoingStarted()
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         inputText.value = trimmed
@@ -416,6 +455,7 @@ class ChatViewModel(
     }
 
     fun sendTextMessage() {
+        notifyOutgoingStarted()
         // Double-send guard: a second tap while a send is in flight is dropped
         // here AND the UI disables the entry points (WhatsApp-style).
         if (_isSending.value) return
@@ -555,6 +595,7 @@ class ChatViewModel(
     }
 
     fun sendVoiceMessage() {
+        notifyOutgoingStarted()
         val duration = recordingDurationSec.value
         val voiceFile = currentVoiceFile
         // Stop recording but DON'T delete the file — we need it for upload
@@ -666,6 +707,7 @@ class ChatViewModel(
     }
 
     fun sendPendingAttachment() {
+        notifyOutgoingStarted()
         val pending = pendingAttachment.value ?: return
         pendingAttachment.value = null
 
@@ -741,6 +783,7 @@ class ChatViewModel(
 
     // Location & Contact sharing
     fun shareLocation(latitude: Double, longitude: Double, placeName: String, address: String) {
+        notifyOutgoingStarted()
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
         val locText = if (placeName.isNotBlank() && placeName != "Current Location") "$placeName\n$address" else address
         val msg = DomainMessage(
@@ -775,6 +818,7 @@ class ChatViewModel(
      * @param comment   optional user comment attached to the share
      */
     fun shareLiveLocation(latitude: Double, longitude: Double, durationText: String, comment: String = "") {
+        notifyOutgoingStarted()
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
         val baseText = "Live Location shared ($durationText)"
         val msg = DomainMessage(
@@ -967,6 +1011,7 @@ class ChatViewModel(
     }
 
     fun shareContact(name: String, phone: String) {
+        notifyOutgoingStarted()
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date())
         val msg = DomainMessage(
             id = java.util.UUID.randomUUID().toString(),
@@ -1170,27 +1215,39 @@ class ChatViewModel(
         }
     }
 
-    // ---------- Pagination ----------
-    fun loadMoreMessages() {
-        val currentList = messages.value
-        if (currentList.isEmpty()) return
-        // Already loading more? skip
-        if (paginationCursor.value != null &&
-            paginationCursor.value == currentList.first().timestampMillis) {
+    // ---------- Pagination (Task 25 — bounded window) ----------
+
+    /** Scroll-to-top trigger: grows the window by one page of older messages
+     *  (Room cache first; the server only when the cache is exhausted). */
+    fun loadOlderMessages() = messageWindow.loadOlderMessages()
+
+    /** Post-jump downward growth toward the live edge. */
+    fun loadNewerMessages() = messageWindow.loadNewerMessages()
+
+    /** Reply navigation: guarantees the target is inside the window (deep-
+     *  fetching the containing page from Room/server when necessary), then
+     *  hands the id to the UI via [pendingJumpTo] for the scroll. */
+    fun jumpToMessage(messageId: String) {
+        if (messages.value.any { it.id == messageId }) {
+            pendingJumpTo.value = messageId
             return
         }
-        val oldestTs = currentList.first().timestampMillis
         viewModelScope.launch {
-            try {
-                val page = repository.getMessagesPage(conversationId, oldestTs, limit = 50)
-                if (page.isNotEmpty()) {
-                    _extraMessages.value = (_extraMessages.value + page).distinctBy { it.id }
-                    paginationCursor.value = oldestTs
-                }
-            } catch (e: Exception) {
-                // Non-fatal
+            val ok = try {
+                messageWindow.jumpToMessage(messageId)
+            } catch (_: Exception) {
+                false
             }
+            if (ok) pendingJumpTo.value = messageId
+            // else: the quote preview still shows the denormalized snapshot —
+            // a silent no-op matches the old behavior.
         }
+    }
+
+    /** Every optimistic send re-attaches the live edge so the user's own
+     *  message always lands in view, even after a history jump. */
+    private fun notifyOutgoingStarted() {
+        messageWindow.releaseBottom()
     }
 
     // ---------- Server-side search via search-messages ----------

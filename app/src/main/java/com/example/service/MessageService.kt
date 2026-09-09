@@ -6,6 +6,34 @@ import kotlinx.coroutines.flow.Flow
 
 interface MessageService {
     fun observeMessages(conversationId: String): Flow<List<DomainMessage>>
+
+    /** Task 25: ensures the per-conversation Realtime subscription is active.
+     *  The windowed chat no longer collects the full Room message flow (the
+     *  old observeMessages() side effect), so the open chat now calls this
+     *  explicitly. Idempotent. */
+    fun ensureRealtimeSubscription(conversationId: String)
+
+    /**
+     * Task 25 — server-side backward pagination (sync-messages action=history).
+     * Fetches up to [limit] messages STRICTLY older than the (ts, seq, id)
+     * cursor, NEWEST first, for a conversation the caller participates in.
+     * Every returned row is upserted into Room (REPLACE by id, so re-fetches
+     * are impossible to duplicate). Returns the mapped messages.
+     */
+    suspend fun fetchHistoryPage(
+        conversationId: String,
+        beforeTimestampMillis: Long,
+        beforeSeq: Long,
+        beforeMessageId: String,
+        limit: Int
+    ): List<DomainMessage>
+
+    /**
+     * Task 25 — reply-navigation deep fetch: single message by id straight
+     * from the server (participant RLS applies), upserted into Room.
+     * Returns null when the row does not exist or the fetch fails.
+     */
+    suspend fun fetchMessageById(conversationId: String, messageId: String): DomainMessage?
     suspend fun sendMessage(message: DomainMessage, peerId: String? = null, peerName: String? = null)
 
     /**
