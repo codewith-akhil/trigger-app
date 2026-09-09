@@ -1432,8 +1432,12 @@ fun ChatScreen(
                 showContactInfoSheet = false
                 viewModel.startVideoCall()
             },
-            onSetDisappearingMessages = { duration ->
-                viewModel.setDisappearingMessages(duration)
+            onOpenAutoDelete = {
+                // Single source of truth: the shared AutoDeleteDialog on the
+                // chat screen (same dialog the ⋮ menu and the in-chat notice
+                // use) — the sheet no longer carries its own divergent picker.
+                showContactInfoSheet = false
+                showAutoDeleteDialog = true
             },
             onClearChat = {
                 viewModel.clearEntireChat()

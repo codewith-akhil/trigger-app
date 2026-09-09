@@ -155,12 +155,15 @@ channel_name unique, status, answered_at, ended_at, ended_reason,
 - Unique index `conversations(owner_id, peer_id)` prevents duplicate mirror
   rows; unique `(follower_id, following_id)` prevents double-follows.
 
-### 5.3 Edge functions (51 deployed, `supabase/functions/`)
+### 5.3 Edge functions (59 deployed, `supabase/functions/`)
 
 **Chat core:** `send-message` (get-or-create canonical conversation, 3-message
 request cap, REQUEST_NOT_ACCEPTED / REQUEST_DECLINED gates, mirror-row sync,
 push) · `send-chat-notification` (FCM, skip-if-online) · `edit-message`
-(15-min window) · `delete-message` · `forward-message` · `pin-message` ·
+(15-min window) · `delete-message` (delete-for-everyone also purges the chat_media /
+voice_notes storage objects, not just the tombstone) · `forward-message`
+(request-gate + 3-message budget enforced race-free via the
+`try_forward_budget` advisory-lock RPC) · `pin-message` ·
 `toggle-star-message` · `toggle-reaction` · `search-messages` ·
 `sync-messages` / `sync-conversations` (cross-device; sync-messages actions:
 `push` (sender-only upsert) · `pull` — sinceTs>0 forward catch-up, sinceTs=0
@@ -181,17 +184,26 @@ conversation unlocked + receiver mirror row + contacts; **decline**; block) ·
 `check-username-availability` · `report-user` · `manage-blocked-contacts`
 
 **Presence & calls:** `update-presence` (heartbeat / typing / recording via
-`upsert_presence` RPC) · `generate-agora-token` (AccessToken2, 1 h)
+`upsert_presence` RPC) · `get-peer-presence` (online / last-seen behind the
+4-level privacy gate) · `generate-agora-token` (AccessToken2, 1 h,
+participant-authorized)
 
-**Profile & auth:** `get-my-profile` · `sync-user-profile` ·
+**Profile & auth:** `get-my-profile` · `get-peer-profile` (server-gated
+photo/about visibility vs follows) · `sync-user-profile` ·
 `update-user-settings` · `check-email` · `send-email-otp` · `verify-email-otp`
 · `reset-password` · `delete-account-otp` · `delete-user-account`
 
 **Push & email:** `register-push-token` · `send-push-notification` ·
 `send-stream-scheduled-email` · `send-booking-confirmation-email` (Resend)
 
-**Streams / wallet / vault:** `cron-auto-start-streams` (pg_cron) ·
-`create-razorpay-order` · `verify-razorpay-payment` · `razorpay-webhook` ·
+**Cron & housekeeping:** `cleanup-disappearing-messages` (every-15-min pg_cron
+http call, x-cron-secret gated — deletes expired auto-delete messages AND
+purges their chat_media/voice_notes storage objects, plus expired
+live_location_shares) · `cron-auto-start-streams` (pg_cron)
+
+**Streams / wallet / vault:** `create-razorpay-order` ·
+`verify-razorpay-payment` (payer-only stream_booking verification) ·
+`razorpay-webhook` ·
 `wallet-withdraw` · `update-bank-details` · `update-payout-details` ·
 `update-fx-rates` · `upsert-vault-pin` · `verify-vault-pin` · `reset-vault-pin`
 
@@ -295,6 +307,48 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 8. **Per-screen colour dupes** → consolidate to `ui/theme` palette.
 
 ## 10. Version history (documentation updates)
+
+- **2026-09-09 (post-Task-26 security audit hardening wave — migration
+  `20260928_final_hardening.sql` + `cleanup-disappearing-messages`; NO
+  AAB/APK rebuild):** Follow-up audit fixes (F-numbered in the migration
+  header). **Backend:** `otp_codes` purpose extended with `account_delete`
+  (F1 — delete-account-otp inserts were failing 23514); BEFORE-UPDATE trigger
+  locks `request_status`/`peer_id`/`disappearing_*`/`owner_id` to the service
+  role (F2 — owners could self-accept pending requests via direct PostgREST
+  and skip the 3-message budget); messages/conversations INSERT refuse
+  blocked pairs at RLS level and `try_send_pending_message` re-created with
+  the same guard (F3); `is_online`/`last_seen_at` removed from the
+  authenticated column grant — presence only via `get-peer-presence` (F4);
+  the auto-delete plpgsql sweep was replaced by the cron-driven
+  `cleanup-disappearing-messages` edge function which ALSO purges the
+  storage objects and expired `live_location_shares` (F5 — the old cron
+  deleted DB rows and left playable media in the buckets forever);
+  `process_withdrawal` explicit service_role EXECUTE (F7); storage policies
+  for documents/vault_media/backups/stream_thumbnails accept both owner
+  columns + folder-scoped chat_media DELETE policy (F8); `follows` SELECT
+  scoped to your own social edges (F9 — graph dump closed);
+  `live_stream_comments` author-only DELETE + no spoofed usernames on INSERT
+  (F10); `try_forward_budget` advisory-lock RPC makes the forward
+  request-gate/budget race-free (F11). `delete-message` (delete-for-everyone)
+  now purges the actual media objects; `delete-account-otp` enforces a
+  server-side attempt cap; `verify-razorpay-payment` refuses non-payer
+  stream_booking verifications. **App (call hardening):** callee-side
+  RECORD_AUDIO/CAMERA permission gate on accept (fresh callees previously
+  joined with a dead mic / SecurityException on Android 14+); speaker parity
+  (voice=earpiece, video=loudspeaker — audio calls used to play on the
+  loudspeaker while the UI claimed earpiece); CONNECTING-timeout ends an
+  abandoned join honestly as MISSED (was sitting forever); ring re-hydration
+  only re-rings for `calling`/`ringing` rows (no re-ring after cancel);
+  `OngoingCallService` FGS start/stop is media-state-gated and
+  exception-guarded (ForegroundServiceStartNotAllowedException crash on
+  Android 12+); tapping the ongoing-call notification returns to the call;
+  busy-second-call persists MISSED via an IO coroutine (suspend call was
+  off-context — compile fix) and never replaces the live session.
+  **Verified:** `:app:compileDebugKotlin` green, 13/13 JVM unit tests,
+  72/72 live E2E (`final_e2e.py` incl. new cron-gate + auto-delete checks),
+  plus a dedicated live probe proving delete-for-everyone purges the storage
+  object (upload → delete → object gone, row tombstoned). 59 edge functions
+  deployed; live DB restored to baseline after all E2E/probe runs.
 
 - **2026-09-09 (FINAL E2E fix wave — real two-device calling, privacy
   enforcement, hardening; NO AAB/APK rebuild):** End-to-end audit against the

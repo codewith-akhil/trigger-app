@@ -66,6 +66,10 @@ class AgoraWebRtcService(
     private val callService: CallService? = null,
     private val liveStreamService: LiveStreamService? = null
 ) {
+    companion object {
+        private const val TAG = "AgoraWebRtcService"
+    }
+
     private val _agoraState = MutableStateFlow(AgoraState())
     val agoraState: StateFlow<AgoraState> = _agoraState.asStateFlow()
     val callState: StateFlow<AgoraState> = _agoraState.asStateFlow()
@@ -170,15 +174,9 @@ class AgoraWebRtcService(
                 type = type
             )
         } else {
-            _agoraState.update {
-                it.copy(
-                    status = AgoraCallStatus.DIALING,
-                    channelName = channelName,
-                    mode = if (isVideo) AgoraCallMode.VIDEO_CALL else AgoraCallMode.AUDIO_CALL,
-                    remoteUserName = contactName,
-                    isVideoEnabled = isVideo
-                )
-            }
+            // callService is always injected in-app; no simulated DIALING state
+            // here — a missing service is an error, not something to fake.
+            android.util.Log.w(TAG, "startCall ignored: callService not initialized")
         }
     }
 
@@ -191,15 +189,9 @@ class AgoraWebRtcService(
                 liveStreamService.startLiveStream(title = streamTitle)
             }
         } else {
-            _agoraState.update {
-                it.copy(
-                    status = AgoraCallStatus.CONNECTED,
-                    channelName = channelName,
-                    mode = AgoraCallMode.LIVE_STREAM,
-                    role = AgoraUserRole.BROADCASTER,
-                    remoteUserName = streamTitle
-                )
-            }
+            // No simulated CONNECTED state — live-stream state is owned by
+            // liveStreamService (always injected in-app).
+            android.util.Log.w(TAG, "startLiveStream ignored: liveStreamService not initialized")
         }
     }
 
@@ -218,15 +210,9 @@ class AgoraWebRtcService(
                 liveStreamService.joinLiveStream(item)
             }
         } else {
-            _agoraState.update {
-                it.copy(
-                    status = AgoraCallStatus.CONNECTED,
-                    channelName = stream.channelName,
-                    mode = AgoraCallMode.LIVE_STREAM,
-                    role = AgoraUserRole.AUDIENCE,
-                    remoteUserName = stream.title
-                )
-            }
+            // No simulated CONNECTED state — liveStreamService is always
+            // injected in-app; a missing service must fail loudly, not fake it.
+            android.util.Log.w(TAG, "joinLiveStream ignored: liveStreamService not initialized")
         }
     }
 

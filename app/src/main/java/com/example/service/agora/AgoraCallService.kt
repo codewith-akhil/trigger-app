@@ -39,6 +39,9 @@ class AgoraCallService(
         /** Grace period before ending a call whose remote DROPPED (network loss
          *  can recover — Agora auto-rejoins). */
         private const val RECONNECT_GRACE_MS = 20_000L
+        /** Callee joined the channel but the caller never appeared — end honestly
+         *  as MISSED instead of sitting in CONNECTING forever. */
+        private const val CONNECTING_TIMEOUT_MS = 15_000L
     }
 
     private val _currentCall = MutableStateFlow<CallSession?>(null)
@@ -50,6 +53,7 @@ class AgoraCallService(
     private var incomingMonitorJob: Job? = null
     private var outgoingStatusPollJob: Job? = null
     private var reconnectGraceJob: Job? = null
+    private var connectingTimeoutJob: Job? = null
 
     private val incomingCallNotificationHelper by lazy {
         IncomingCallNotificationHelper(com.example.di.AppServiceContainer.context)
@@ -62,14 +66,27 @@ class AgoraCallService(
         // Ongoing-call foreground service: keeps mic/camera access alive while
         // an active call is backgrounded (Android 12+/14+ would otherwise cut
         // off the audio/video). Bound to the session lifecycle.
+        // Hardened: only starts for a session that actually carries media
+        // (CONNECTED / RECONNECTING) — never for a mere RINGING session, and
+        // every start/stop is exception-guarded. An unguarded background start
+        // from the 4 s poll path crashed on Android 12+ (ForegroundService-
+        // StartNotAllowedException) because appScope had no exception handler.
         scope.launch {
             _currentCall.collect { session ->
                 val ctx = try { com.example.di.AppServiceContainer.context } catch (_: Exception) { null }
                 if (ctx == null) return@collect
-                if (session != null) {
-                    com.example.service.OngoingCallService.start(ctx)
-                } else {
-                    com.example.service.OngoingCallService.stop(ctx)
+                try {
+                    when {
+                        session == null ->
+                            com.example.service.OngoingCallService.stop(ctx)
+                        session.state == CallState.CONNECTED ||
+                            session.state == CallState.RECONNECTING ->
+                            com.example.service.OngoingCallService.start(ctx)
+                        // RINGING/CONNECTING/FAILED sessions: leave the FGS as-is
+                        // (it is stopped when the session ends).
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "OngoingCallService toggle failed (state=${session?.state}): ${e.message}")
                 }
             }
         }
@@ -195,6 +212,8 @@ class AgoraCallService(
                 delay(2000)
                 endCallInternal(saveRecord = true, isMissed = true)
             } else {
+                // Same speaker parity as the callee path (voice=earpiece, video=speaker).
+                rtcManager.setSpeakerphoneOn(isVideo)
                 _currentCall.update { it?.copy(state = CallState.RINGING) }
                 startRingTimeout()
             }
@@ -204,6 +223,28 @@ class AgoraCallService(
     override fun acceptIncomingCall() {
         val session = _currentCall.value ?: return
         if (!session.isIncoming) return
+        // Callee-side permission gate — previously the accept path never checked
+        // RECORD_AUDIO/CAMERA: a fresh callee who answered first joined the
+        // channel with a dead microphone (one-way audio, no prompt), and on
+        // Android 14+ starting the microphone|camera FGS without the permission
+        // threw SecurityException.
+        val missingPermission = missingCallPermissions(session.type)
+        if (missingPermission != null) {
+            Log.w(TAG, "Accept rejected: $missingPermission")
+            ringTimeoutJob?.cancel()
+            incomingCallNotificationHelper.cancelCallNotification()
+            _currentCall.update {
+                it?.copy(state = CallState.FAILED, errorMessage = "$missingPermission. Open Trigger, grant it, then call back.")
+            }
+            updateSupabaseCallStatus(session.callId, "missed")
+            scope.launch {
+                delay(4000)
+                if (_currentCall.value?.state == CallState.FAILED) {
+                    endCallInternal(saveRecord = false)
+                }
+            }
+            return
+        }
         ringTimeoutJob?.cancel()
         listenToEngineState()
 
@@ -229,8 +270,14 @@ class AgoraCallService(
             )
 
             if (joined) {
+                // Speaker parity with the UI default: voice calls start on the
+                // earpiece, video calls on the loudspeaker (the engine enabled
+                // speakerphone unconditionally at init, so an audio call actually
+                // played on the loudspeaker while the UI claimed earpiece).
+                rtcManager.setSpeakerphoneOn(isVideo)
                 // engineState collector flips to CONNECTED when the remote user joins
                 updateSupabaseCallStatus(session.callId, "connected")
+                startConnectingTimeout()
             } else {
                 _currentCall.update { it?.copy(state = CallState.FAILED, errorMessage = "Couldn't connect the call") }
                 delay(2000)
@@ -385,7 +432,7 @@ class AgoraCallService(
             val myId = supabaseClient.currentUser?.id ?: return null
             val res = supabaseClient.getTable(
                 "call_sessions",
-                "select=*&id=eq.$callId&receiver_id=eq.$myId&limit=1"
+                "select=*&id=eq.$callId&receiver_id=eq.$myId&status=in.(calling,ringing)&limit=1"
             )
             if (res is SupabaseResult.Success && res.data.length() > 0) {
                 val row = res.data.getJSONObject(0)
@@ -445,6 +492,9 @@ class AgoraCallService(
                     status.remoteUid != null
                 ) {
                     _currentCall.update { it?.copy(state = CallState.CONNECTED) }
+                    // The duration loop exits while not CONNECTED — restart it so
+                    // duration_seconds keeps counting after a reconnect.
+                    startDurationTimer()
                     reconnectGraceJob?.cancel()
                 }
 
@@ -579,6 +629,8 @@ class AgoraCallService(
         outgoingStatusPollJob = null
         reconnectGraceJob?.cancel()
         reconnectGraceJob = null
+        connectingTimeoutJob?.cancel()
+        connectingTimeoutJob = null
 
         rtcManager.activeCallId = null
         rtcManager.leaveChannel()
@@ -759,6 +811,40 @@ class AgoraCallService(
                 Log.i(TAG, "Incoming call timed out unanswered — marking missed")
                 updateSupabaseCallStatus(current.callId, "missed")
                 incomingCallNotificationHelper.cancelCallNotification()
+                endCallInternal(saveRecord = false)
+            }
+        }
+    }
+
+    /**
+     * Callee accepted + joined but the caller never appeared within 15 s
+     * (caller crashed / network died mid-ring) — end honestly as MISSED
+     * instead of parking the callee in CONNECTING forever. The caller's
+     * status poll sees "missed" and tears down on its side too.
+     */
+    private fun startConnectingTimeout() {
+        connectingTimeoutJob?.cancel()
+        connectingTimeoutJob = scope.launch {
+            delay(CONNECTING_TIMEOUT_MS)
+            val current = _currentCall.value
+            if (current != null && current.state == CallState.CONNECTING) {
+                Log.i(TAG, "CONNECTING timed out — marking missed")
+                updateSupabaseCallStatus(current.callId, "missed")
+                _currentCall.update { it?.copy(state = CallState.MISSED, errorMessage = "Couldn't connect the call") }
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        supabaseClient.invokeFunction(
+                            "send-call-invite",
+                            JSONObject().apply {
+                                put("callId", current.callId)
+                                put("action", "cancel")
+                            }
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to send call-cancel push", e)
+                    }
+                }
+                delay(1500)
                 endCallInternal(saveRecord = false)
             }
         }

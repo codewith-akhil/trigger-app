@@ -330,6 +330,23 @@ class ChatViewModel(
         // flow, so the per-conversation Realtime subscription (and its
         // reconnect re-pull) must be established explicitly. Idempotent.
         messageService.ensureRealtimeSubscription(conversationId)
+        // Reply-hygiene watcher: whenever the chat's message window changes,
+        // re-validate the active reply target. If the quoted message was
+        // deleted (for me → row gone, or for everyone → tombstone), drop the
+        // reply state — previously a stale reply preview kept quoting a
+        // message that no longer existed and the send carried a dead replyToId.
+        viewModelScope.launch {
+            messages.collect {
+                val reply = replyingTo.value ?: return@collect
+                try {
+                    val fresh = repository.getMessageById(reply.id)
+                    if (fresh == null || fresh.isDeletedForEveryone) {
+                        replyingTo.value = null
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }
         // Message-request meta: pending/accepted/declined + my message budget
         refreshConversationMeta()
         // Header presence: privacy-aware fetch (get-peer-presence honors the

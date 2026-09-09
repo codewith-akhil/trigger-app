@@ -846,18 +846,30 @@ class MessageServiceImpl(
             // already known, skip the re-upload and go straight to re-send
             // (the idempotency key prevents a duplicate server row).
             val rawMediaUrl = msg.mediaUrl?.takeIf { it.isNotBlank() && !it.startsWith("http") }
-            val isLocalFile = rawMediaUrl != null && java.io.File(rawMediaUrl).exists()
+            // content:// previews are transient URI grants, not files —
+            // File("content://…").exists() is always false, which previously
+            // let the row fall through to the re-send path and publish a dead
+            // content:// URL on the server. A real local re-upload source is
+            // either a plain file path in mediaUrl or a surviving mediaPath.
+            val fileSource = when {
+                rawMediaUrl != null && !rawMediaUrl.startsWith("content://") &&
+                    java.io.File(rawMediaUrl).exists() -> rawMediaUrl
+                !msg.mediaPath.isNullOrBlank() && !msg.mediaPath.startsWith("http") &&
+                    !msg.mediaPath.startsWith("content://") &&
+                    java.io.File(msg.mediaPath).exists() -> msg.mediaPath
+                else -> null
+            }
+            val isLocalFile = fileSource != null
             val alreadyUploaded = !isLocalFile &&
                 !msg.mediaPath.isNullOrBlank() && !msg.mediaBucket.isNullOrBlank()
             if (!isLocalFile && !alreadyUploaded) {
                 // Nothing local to re-upload and no upload ever completed:
-                // either the source file is gone (re-send would store a dead
-                // URL) or the row never had media.
-                if (msg.mediaUrl.isNullOrBlank()) {
-                    Log.w(TAG, "retryFailedMessage: media message $messageId has no local source — cannot re-upload")
-                    repository.updateMessageStatus(messageId, MessageStatus.FAILED)
-                    return
-                }
+                // the source file/URI is gone (revoked grant, cleared cache,
+                // process death) — re-sending would store a dead URL. Fail
+                // honestly instead.
+                Log.w(TAG, "retryFailedMessage: media message $messageId has no local source — cannot re-upload")
+                repository.updateMessageStatus(messageId, MessageStatus.FAILED)
+                return
             } else if (isLocalFile) {
                 repository.updateMessageStatus(messageId, MessageStatus.SENDING)
                 val (realConvId, realPeerId) = resolveConversationForRetry(msg.conversationId)
@@ -869,10 +881,10 @@ class MessageServiceImpl(
                     fileName = msg.fileName ?: "media_${System.currentTimeMillis()}",
                     fileType = msg.type,
                     totalBytes = msg.fileSize,
-                    filePath = rawMediaUrl!!, // verified above
+                    filePath = fileSource!!, // verified above
                     mimeType = null, // resolved from the extension at upload time
                     thumbnailPath = msg.mediaThumbnail?.takeIf {
-                        !it.startsWith("http") && java.io.File(it).exists()
+                        !it.startsWith("http") && !it.startsWith("content://") && java.io.File(it).exists()
                     },
                     peerId = realPeerId,
                     peerName = conv?.name
@@ -1228,6 +1240,7 @@ class MessageServiceImpl(
                 val untilTs = result.data.optLong("untilTs", System.currentTimeMillis())
                 // Insert any messages we don't already have locally
                 val currentUserId = supabaseClient.currentUser?.id ?: ""
+                val incomingConvs = mutableSetOf<String>()
                 (0 until messages.length()).forEach { i ->
                     val obj = messages.getJSONObject(i)
                     val id = obj.optString("id", "")
@@ -1236,6 +1249,17 @@ class MessageServiceImpl(
                         if (existing == null) {
                             val isOutgoing = obj.optString("sender_id", "") == currentUserId
                             repository.insertMessage(mapSupabaseToDomain(obj, isOutgoing = isOutgoing))
+                            if (!isOutgoing) {
+                                // A message the peer sent and this device pulled
+                                // via history/background sync HAS been delivered —
+                                // flip the sender's tick to ✓✓. Previously the
+                                // DELIVERED receipt only fired on realtime INSERT
+                                // or chat open, so background-synced messages
+                                // kept a single tick forever.
+                                obj.optString("conversation_id", "").takeIf { it.isNotBlank() }
+                                    ?.let { incomingConvs.add(it) }
+                                repository.updateMessageStatus(id, MessageStatus.DELIVERED)
+                            }
                         } else {
                             // Update fields that may have changed on the server (edit, status, pin)
                             val text = obj.optString("text", "")
@@ -1265,6 +1289,9 @@ class MessageServiceImpl(
                     if (conversationId != null) putLong(lastSyncKey(conversationId), untilTs)
                     putLong(KEY_LAST_SYNC_TS, untilTs)
                 }?.apply()
+                // Fire the debounced DELIVERED receipts for every conversation
+                // that gained incoming messages in this pull.
+                incomingConvs.forEach { scheduleDeliveredReceipt(it) }
                 untilTs
             }
             is SupabaseResult.Error -> {

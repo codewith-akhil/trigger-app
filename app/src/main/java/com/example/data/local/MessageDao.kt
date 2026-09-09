@@ -92,7 +92,10 @@ interface MessageDao {
     @Query("UPDATE messages SET isViewed = 1 WHERE id = :messageId")
     suspend fun markViewOnceAsViewed(messageId: String)
 
-    @Query("UPDATE messages SET isDeletedForEveryone = 1, text = 'This message was deleted' WHERE id = :messageId")
+    // Tombstone also NULLs the local media columns — the server strips them
+    // on delete-for-everyone, so the deleter's own Room row should not keep a
+    // still-openable copy of the "deleted" media either.
+    @Query("UPDATE messages SET isDeletedForEveryone = 1, text = 'This message was deleted', mediaUrl = NULL, mediaPath = NULL, mediaThumbnail = NULL, mediaBucket = NULL WHERE id = :messageId")
     suspend fun markDeletedForEveryone(messageId: String)
 
     @Query("DELETE FROM messages WHERE id = :messageId")

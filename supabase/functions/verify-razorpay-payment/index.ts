@@ -20,7 +20,7 @@
 // ----------------------------------------------------------------------------
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { handleOptions, json, errorResponse } from "../_shared/cors.ts";
+import { handleOptions, json, errorResponse, ErrorCode } from "../_shared/cors.ts";
 import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
 
 interface Body {
@@ -117,6 +117,11 @@ async function handler(req: Request): Promise<Response> {
   const referenceId = `RZP-${body.razorpayPaymentId}`;
 
   if (purpose === "stream_booking" && streamId) {
+    // Same payer rule as wallet_topup — a non-payer holding a valid
+    // signature could otherwise book a stream on someone else's payment.
+    if (userId !== payerUserId) {
+      return errorResponse("Only the payer can verify this payment", 403, ErrorCode.FORBIDDEN);
+    }
     // Insert a stream_booking row + a wallet credit to the host.
     const { error: bookingError } = await supabase.from("stream_bookings").upsert(
       {

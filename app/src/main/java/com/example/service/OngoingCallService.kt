@@ -57,12 +57,26 @@ class OngoingCallService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Tapping the notification returns to the in-app call overlay.
+        val contentIntent = Intent(this, com.example.MainActivity::class.java).apply {
+            // setFlags(): the onStartCommand parameter `flags` (val) shadows
+            // Intent.flags inside the apply block — assigning `flags =` here
+            // would try to reassign the parameter.
+            setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.sym_call_outgoing)
             .setContentTitle("Trigger call in progress")
             .setContentText("Tap to return to the call")
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setContentIntent(
+                android.app.PendingIntent.getActivity(
+                    this, 0, contentIntent,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                        android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+            )
             .build()
 
         // Typed foreground start: microphone|camera — required on API 29+ for

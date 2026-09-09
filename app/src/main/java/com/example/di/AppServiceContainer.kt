@@ -17,7 +17,13 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 object AppServiceContainer {
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    // Exception handler: an uncaught throw on this scope (e.g. a background
+    // FGS start rejected on Android 12+) previously killed the whole process.
+    private val appScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main + kotlinx.coroutines.CoroutineExceptionHandler { _, e ->
+            android.util.Log.w("AppServiceContainer", "Uncaught appScope exception", e)
+        }
+    )
 
     private var initialized = false
 

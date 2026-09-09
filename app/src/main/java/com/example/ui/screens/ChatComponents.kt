@@ -455,6 +455,14 @@ fun UploadProgressBanner(
 private fun uploadEtaSuffix(remainingSeconds: Int): String =
     if (remainingSeconds > 0) " (${remainingSeconds}s left)" else ""
 
+/** Real upload throughput (byte-counted), shown where the speed is known. */
+private fun uploadSpeedSuffix(speedBytesPerSec: Double): String =
+    if (speedBytesPerSec > 0.0) {
+        val mbps = speedBytesPerSec / (1024.0 * 1024.0)
+        if (mbps >= 1.0) " • ${"%.1f".format(mbps)} MB/s"
+        else " • ${"%.0f".format(speedBytesPerSec / 1024.0)} KB/s"
+    } else ""
+
 /**
  * IMAGE overlay: dark scrim + centered 44dp translucent cancel button with a
  * thin green progress ring around it.
@@ -539,7 +547,8 @@ private fun VideoUploadStrip(
     message: DomainMessage,
     isOutgoing: Boolean,
     onRetryUpload: () -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    speedBytesPerSec: Double = 0.0
 ) {
     Row(
         modifier = Modifier
@@ -560,7 +569,7 @@ private fun VideoUploadStrip(
         )
         Spacer(modifier = Modifier.width(4.dp))
         Text(
-            text = "Uploading $percent%${uploadEtaSuffix(remainingSeconds)}",
+            text = "Uploading $percent%${uploadSpeedSuffix(speedBytesPerSec)}${uploadEtaSuffix(remainingSeconds)}",
             color = Color.White,
             fontSize = 13.sp,
             maxLines = 1,
@@ -597,7 +606,8 @@ private fun VideoUploadStrip(
 private fun LinearUploadRow(
     percent: Int,
     remainingSeconds: Int,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    speedBytesPerSec: Double = 0.0
 ) {
     Row(
         modifier = Modifier
@@ -616,7 +626,7 @@ private fun LinearUploadRow(
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = "$percent%${uploadEtaSuffix(remainingSeconds)}",
+            text = "$percent%${uploadSpeedSuffix(speedBytesPerSec)}${uploadEtaSuffix(remainingSeconds)}",
             color = Color(0xFF667781),
             fontSize = 11.sp
         )
@@ -1092,7 +1102,8 @@ fun DomainChatBubble(
                                             message = message,
                                             isOutgoing = isOutgoing,
                                             onRetryUpload = onRetryUpload,
-                                            onCancel = onCancelUpload
+                                            onCancel = onCancelUpload,
+                                            speedBytesPerSec = uploadTask?.speedBytesPerSec ?: 0.0
                                         )
                                     }
                                 } else {
@@ -1193,7 +1204,8 @@ fun DomainChatBubble(
                                                 message = message,
                                                 isOutgoing = isOutgoing,
                                                 onRetryUpload = onRetryUpload,
-                                                onCancel = onCancelUpload
+                                                onCancel = onCancelUpload,
+                                                speedBytesPerSec = uploadTask?.speedBytesPerSec ?: 0.0
                                             )
                                         }
                                     } else {
@@ -1257,7 +1269,8 @@ fun DomainChatBubble(
                                 LinearUploadRow(
                                     percent = uploadPercent,
                                     remainingSeconds = uploadRemaining,
-                                    onCancel = onCancelUpload
+                                    onCancel = onCancelUpload,
+                                    speedBytesPerSec = uploadTask?.speedBytesPerSec ?: 0.0
                                 )
                             }
                             if (uploadFailed) {
@@ -1336,7 +1349,8 @@ fun DomainChatBubble(
                                 LinearUploadRow(
                                     percent = uploadPercent,
                                     remainingSeconds = uploadRemaining,
-                                    onCancel = onCancelUpload
+                                    onCancel = onCancelUpload,
+                                    speedBytesPerSec = uploadTask?.speedBytesPerSec ?: 0.0
                                 )
                             }
                             if (uploadFailed) {

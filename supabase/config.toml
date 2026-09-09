@@ -463,6 +463,8 @@ verify_jwt = false
 verify_jwt = false
 [functions.cron-auto-start-streams]
 verify_jwt = false
+[functions.cleanup-disappearing-messages]
+verify_jwt = false
 # Cron-invoked email senders (called by other edge functions / scheduler):
 [functions.send-stream-scheduled-email]
 verify_jwt = false

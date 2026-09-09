@@ -29,17 +29,40 @@ async function handler(req: Request): Promise<Response> {
 
   const supabase = createAdminClient();
 
-  // Get the message to check ownership
+  // Get the message to check ownership (media_bucket + media_url captured
+  // BEFORE the tombstone strips them, so the storage object can be purged).
   const { data: msg, error: fetchError } = await supabase
-    .from("messages").select("sender_id, is_deleted_for_everyone, media_url, media_thumbnail, file_name").eq("id", messageId).maybeSingle();
+    .from("messages").select("sender_id, is_deleted_for_everyone, media_url, media_bucket, media_thumbnail, file_name").eq("id", messageId).maybeSingle();
 
   if (fetchError || !msg) return json({ error: "Message not found" }, 404);
+
+  // A "bare path" is "{uid}/{uuid}.ext" (Task 24 shape). Legacy full URLs are
+  // ignored — they were already migrated in 20260924 §3.
+  const isObjectPath = (v: unknown): v is string =>
+    typeof v === "string" && v.length > 0 && !v.startsWith("http") && v.includes("/");
+
+  const purgeStorageObjects = async (bucket: unknown, paths: (string | null)[]) => {
+    if (typeof bucket !== "string" || bucket.length === 0) return;
+    const targets = paths.filter(isObjectPath);
+    if (targets.length === 0) return;
+    try {
+      // Service role removal: RLS-irrelevant, the sender authorized this
+      // deletion by choosing "delete for everyone" on their own message.
+      const { error: rmError } = await supabase.storage.from(bucket).remove(targets);
+      if (rmError) console.error("storage purge failed", bucket, rmError.message);
+    } catch (e) {
+      console.error("storage purge threw", bucket, e);
+    }
+  };
 
   if (action === "delete_for_everyone") {
     // Only the sender can delete for everyone
     if (msg.sender_id !== userId) {
       return json({ error: "Only the sender can delete for everyone" }, 403);
     }
+    // Purge the actual media objects — tombstoning alone left playable files
+    // in the bucket forever (audit finding F5-class).
+    await purgeStorageObjects(msg.media_bucket, [msg.media_url, msg.media_thumbnail]);
     // Strip media references too — previously the tombstone kept media_url,
     // so "deleted" photos/videos/files stayed fetchable via their URL.
     const { error: updateError } = await supabase

@@ -221,6 +221,50 @@ class TriggerFirebaseMessagingService : FirebaseMessagingService() {
         val callId = data["callId"] ?: return
         val callerName = data["callerName"] ?: "Incoming call"
         val isVideo = data["callType"] == "video"
+
+        // BUSY handling — a second incoming call while a call is already
+        // active/being answered must NEVER replace the live session: the old
+        // path overwrote the session and re-joined the shared engine, leaving
+        // the first call un-finalized. Mark the new call MISSED and surface a
+        // plain notification instead of a ring.
+        val activeSession = try {
+            com.example.di.AppServiceContainer.callService.currentCall.value
+        } catch (_: Exception) { null }
+        if (activeSession != null) {
+            android.util.Log.i(TAG, "Busy — incoming call $callId marked missed")
+            // upsertRecord is suspend — persist from a short-lived IO coroutine
+            // (onMessageReceived is not a suspend context).
+            val busyScope = kotlinx.coroutines.CoroutineScope(
+                kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
+            )
+            busyScope.launch {
+                try {
+                    com.example.di.AppServiceContainer.supabaseClient.upsertRecord(
+                        "call_sessions",
+                        org.json.JSONObject().apply {
+                            put("id", callId)
+                            put("status", "missed")
+                        }
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.w(TAG, "Failed to persist busy-missed call: ${e.message}")
+                }
+            }
+            try {
+                postNotification(
+                    this,
+                    CHANNEL_CALLS,
+                    (callId.hashCode() and 0x7FFFFFFF) or 0x00010000,
+                    "Missed call",
+                    if (isVideo) "Video call from $callerName (busy)" else "Voice call from $callerName (busy)",
+                    data
+                )
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "Failed to post busy notification: ${e.message}")
+            }
+            return
+        }
+
         try {
             com.example.service.IncomingCallNotificationHelper(this).apply {
                 showIncomingCallNotification(callId, callerName, isVideo)

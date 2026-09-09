@@ -93,23 +93,28 @@ async function handler(req: Request): Promise<Response> {
       return json({ error: `Conversation ${targetId} is blocked` }, 403);
     }
     // The message-request gate applied to send-message must also apply to
-    // forwards — pending/declined threads previously accepted forwarded
-    // messages from either side (bypassing the 3-message cap entirely).
-    if (tgtConv.request_status === "declined") {
-      return json({ error: `Conversation ${targetId}: request was declined` }, 403);
+    // forwards. try_forward_budget re-checks everything (participation,
+    // block enforcement in either direction, declined, pending owner-only +
+    // 3-message budget) under an advisory lock, so concurrent forwards can
+    // no longer race past the budget (the old count-then-insert was TOCTOU).
+    const { data: budget, error: budgetErr } = await supabase.rpc("try_forward_budget", {
+      p_conversation_id: targetId,
+      p_sender_id: userId,
+    });
+    if (budgetErr || !budget) {
+      console.error("try_forward_budget failed", budgetErr);
+      return json({ error: `Failed to validate conversation ${targetId}` }, 500);
     }
-    if (tgtConv.request_status === "pending") {
-      if (tgtConv.owner_id !== userId) {
-        return json({ error: `Accept the message request in conversation ${targetId} first` }, 403);
-      }
-      const { count: sentCount } = await supabase
-        .from("messages")
-        .select("id", { count: "exact", head: true })
-        .eq("conversation_id", targetId)
-        .eq("sender_id", userId);
-      if ((sentCount ?? 0) >= 3) {
-        return json({ error: `You can send up to 3 messages while your request in conversation ${targetId} is pending` }, 403);
-      }
+    if (budget.allowed !== true) {
+      const reason: Record<string, string> = {
+        CONVERSATION_NOT_FOUND: `Target conversation ${targetId} not found`,
+        NOT_A_PARTICIPANT: `Not authorized for conversation ${targetId}`,
+        CONVERSATION_BLOCKED: `Conversation ${targetId} is blocked`,
+        REQUEST_DECLINED: `Conversation ${targetId}: request was declined`,
+        REQUEST_NOT_ACCEPTED: `Accept the message request in conversation ${targetId} first`,
+        REQUEST_MESSAGE_LIMIT: `You can send up to 3 messages while your request in conversation ${targetId} is pending`,
+      };
+      return json({ error: reason[budget.error] ?? `Conversation ${targetId}: not allowed` }, budget.error === "CONVERSATION_NOT_FOUND" ? 404 : 403);
     }
   }
 

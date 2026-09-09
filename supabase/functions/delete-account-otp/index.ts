@@ -145,6 +145,10 @@ async function handler(req: Request): Promise<Response> {
     if (!otp) return json({ deleted: false, error: "No deletion code was issued. Please request one." }, 404);
     if (otp.consumed_at) return json({ deleted: false, error: "This code has already been used." }, 410);
     if (new Date(otp.expires_at).getTime() < Date.now()) return json({ deleted: false, error: "This code has expired." }, 410);
+    // Server-side attempt cap (previously only the in-memory limiter bounded guesses).
+    if ((otp.attempts ?? 0) >= (otp.max_attempts ?? 5)) {
+      return json({ deleted: false, error: "Too many incorrect attempts. Request a new code." }, 429);
+    }
 
     const [salt, storedHash] = otp.code_hash.split(":");
     const candidate = await sha256Hex(`${code}:${salt}`);

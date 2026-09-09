@@ -55,7 +55,7 @@ fun ChatContactInfoSheet(
     onClose: () -> Unit,
     onVoiceCall: () -> Unit,
     onVideoCall: () -> Unit,
-    onSetDisappearingMessages: (DisappearingDuration) -> Unit,
+    onOpenAutoDelete: () -> Unit,
     onClearChat: () -> Unit,
     onToggleMute: (Boolean) -> Unit = {},
     onBlockContact: () -> Unit = {},
@@ -64,7 +64,6 @@ fun ChatContactInfoSheet(
     onJumpToMessage: (String) -> Unit = {}
 ) {
     var selectedMediaTab by remember { mutableStateOf(0) } // 0: Media, 1: Docs, 2: Links, 3: Starred
-    var showDisappearingDialog by remember { mutableStateOf(false) }
     var showClearChatDialog by remember { mutableStateOf(false) }
     var showBlockDialog by remember { mutableStateOf(false) }
     var showUnblockDialog by remember { mutableStateOf(false) }
@@ -245,7 +244,7 @@ fun ChatContactInfoSheet(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { showDisappearingDialog = true }
+                                    .clickable { onOpenAutoDelete() }
                                     .padding(horizontal = 16.dp, vertical = 14.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -257,7 +256,7 @@ fun ChatContactInfoSheet(
                                 Spacer(modifier = Modifier.width(16.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Disappearing messages",
+                                        text = "Auto delete",
                                         fontSize = 16.sp,
                                         color = Color(0xFF111B21)
                                     )
@@ -576,63 +575,9 @@ fun ChatContactInfoSheet(
         }
     }
 
-    // Disappearing Messages picker dialog
-    if (showDisappearingDialog) {
-        AlertDialog(
-            onDismissRequest = { showDisappearingDialog = false },
-            containerColor = Color.White,
-            title = {
-                Text(
-                    text = "Disappearing messages",
-                    color = Color(0xFF111B21),
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Column {
-                    Text(
-                        text = "For more privacy and storage, new messages will disappear from this chat for everyone after the selected duration.",
-                        fontSize = 14.sp,
-                        color = Color(0xFF667781)
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    DisappearingDuration.values().forEach { duration ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onSetDisappearingMessages(duration)
-                                    showDisappearingDialog = false
-                                }
-                                .padding(vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = conversation?.disappearingDuration == duration,
-                                onClick = {
-                                    onSetDisappearingMessages(duration)
-                                    showDisappearingDialog = false
-                                },
-                                colors = RadioButtonDefaults.colors(selectedColor = WhatsAppFabGreen)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = duration.displayName,
-                                fontSize = 15.sp,
-                                color = Color(0xFF111B21)
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showDisappearingDialog = false }) {
-                    Text("Cancel", color = WhatsAppFabGreen)
-                }
-            }
-        )
-    }
+    // Disappearing Messages picker removed — "Auto delete" now opens the
+    // shared AutoDeleteDialog on the chat screen (single source of truth for
+    // the spec copy: title, body, 24h/7d/30d/Off options, UPDATE/CANCEL).
 
     // Clear Chat alert dialog
     if (showClearChatDialog) {
