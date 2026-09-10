@@ -1,7 +1,8 @@
 package com.example.ui.screens
 
 import android.content.Context
-import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -21,11 +22,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.di.AppServiceContainer
 import com.example.model.UserRepository
+import com.example.service.RazorpayOrderResult
+import com.example.service.RazorpayVerifyResult
 import com.example.service.ScheduledStream
 import com.example.service.StreamPricingType
-import com.example.service.supabase.SupabaseResult
+import com.example.ui.payment.RazorpayCheckoutParams
+import com.example.ui.payment.RazorpayCheckoutResult
 import kotlinx.coroutines.launch
-import org.json.JSONObject
 
 private val HeaderGreen = Color(0xFF008069)
 private val TextDark = Color(0xFF111B21)
@@ -41,9 +44,6 @@ fun StreamBookingDialog(
 ) {
     val context = LocalContext.current
     val userProfile by UserRepository.profile.collectAsState()
-    val walletBalance by AppServiceContainer.walletService.availableBalance.collectAsState()
-    val bankDetails by AppServiceContainer.walletService.bankDetails.collectAsState()
-    val payoutDetails by AppServiceContainer.walletService.payoutDetails.collectAsState()
     val coroutineScope = rememberCoroutineScope()
 
     val userName = userProfile.name
@@ -52,29 +52,104 @@ fun StreamBookingDialog(
     var isProcessing by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Build payment options dynamically from walletService bank/payout details.
-    // Wallet option is always available. Bank / UPI / PayPal options only
-    // appear if the user has actually configured them (no more hardcoded
-    // "Saved Bank Account (Canara •••• 4892)" nonsense).
-    val walletOption = "Trigger Wallet ($${"%.2f".format(walletBalance)})"
-    val paymentOptions = remember(walletBalance, bankDetails, payoutDetails) {
-        buildList {
-            add(walletOption)
-            if (bankDetails.accountNumber.isNotBlank()) {
-                add("Bank: ${bankDetails.bankName} (${bankDetails.accountNumber})")
+    // ---------------------------------------------------------------------------
+    // Razorpay checkout launcher.
+    // Declared in the screen composition (NOT inside the AlertDialog content)
+    // so the ActivityResult registry owner from MainActivity is available.
+    // ---------------------------------------------------------------------------
+    val checkoutLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        when (val checkout = RazorpayCheckoutResult.fromActivityResult(result)) {
+            is RazorpayCheckoutResult.Success -> {
+                isProcessing = true
+                coroutineScope.launch {
+                    // 1. Server verifies the HMAC signature against the key
+                    //    secret and — for stream_booking — inserts the
+                    //    stream_bookings row and credits the host's wallet.
+                    when (val verify = AppServiceContainer.razorpayPaymentService.verifyPayment(
+                        orderId = checkout.orderId,
+                        paymentId = checkout.paymentId,
+                        signature = checkout.signature,
+                        purpose = "stream_booking",
+                        streamId = stream.id
+                    )) {
+                        is RazorpayVerifyResult.Verified -> {
+                            // 2. Local booking side-effects: in-memory slot
+                            //    count, confirmation pushes to attendee and
+                            //    host, and the confirmation email dispatch.
+                            val booked = AppServiceContainer.streamScheduleService.bookSlot(
+                                context = context,
+                                streamId = stream.id,
+                                userName = userName,
+                                userEmail = userEmail
+                            )
+                            isProcessing = false
+                            if (booked.isSuccess) {
+                                onBookingSuccess()
+                            } else {
+                                errorMessage = booked.exceptionOrNull()?.message
+                                    ?: "Booking could not be completed after payment."
+                            }
+                        }
+                        is RazorpayVerifyResult.Failed -> {
+                            isProcessing = false
+                            errorMessage = "Payment verification failed: ${verify.message}"
+                        }
+                    }
+                }
             }
-            if (payoutDetails.upiId.isNotBlank()) {
-                add("UPI: ${payoutDetails.upiId}")
+            is RazorpayCheckoutResult.Failure -> {
+                isProcessing = false
+                errorMessage = checkout.message
             }
-            if (payoutDetails.paypalEmail.isNotBlank()) {
-                add("PayPal: ${payoutDetails.paypalEmail}")
+            RazorpayCheckoutResult.Cancelled -> {
+                isProcessing = false
+                // Silent — the user backed out of the sheet; no charge.
             }
         }
     }
-    var selectedPaymentMethod by remember { mutableStateOf(walletOption) }
+
+    fun startPaidBooking() {
+        isProcessing = true
+        errorMessage = null
+        coroutineScope.launch {
+            // Display currency ("USD ($)", "INR (₹)") → ISO code ("USD", "INR").
+            // The edge function validates the code server-side.
+            val currencyCode = stream.currency.trim().substringBefore(' ')
+                .uppercase().ifBlank { "INR" }
+
+            when (val order = AppServiceContainer.razorpayPaymentService.createOrder(
+                amountMajor = stream.amount,
+                currencyCode = currencyCode,
+                purpose = "stream_booking",
+                streamId = stream.id
+            )) {
+                is RazorpayOrderResult.Ready -> {
+                    checkoutLauncher.launch(
+                        RazorpayCheckoutParams.intent(
+                            context,
+                            RazorpayCheckoutParams(
+                                orderId = order.orderId,
+                                keyId = order.keyId,
+                                description = stream.title,
+                                prefillName = userName,
+                                prefillEmail = userEmail
+                            )
+                        )
+                    )
+                    // isProcessing stays true until the sheet returns a result.
+                }
+                is RazorpayOrderResult.Failed -> {
+                    isProcessing = false
+                    errorMessage = order.message
+                }
+            }
+        }
+    }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!isProcessing) onDismiss() },
         containerColor = Color.White,
         shape = RoundedCornerShape(20.dp),
         title = {
@@ -213,43 +288,35 @@ fun StreamBookingDialog(
                     }
                 }
 
-                // If Paid: Payment Method Selector
+                // If Paid: secure Razorpay payment notice. Method selection
+                // (Cards / UPI / NetBanking / Wallets) happens INSIDE the
+                // Razorpay sheet — no local method picker needed.
                 if (stream.type == StreamPricingType.PAID && !stream.isFull) {
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "Payment Method",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextDark
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // TODO: integrate Razorpay checkout SDK. The Razorpay SDK
-                    // (`com.razorpay:checkout`) is not yet in build.gradle.kts
-                    // — adding it is out of scope here. Until the SDK is wired
-                    // up, the PAID confirm button is disabled and the user is
-                    // directed to the FREE option.
-                    Text(
-                        text = "Razorpay checkout not yet integrated — please use the FREE option.",
-                        fontSize = 11.sp,
-                        color = RedAlert,
-                        fontWeight = FontWeight.Medium
-                    )
-
-                    paymentOptions.forEach { opt ->
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFFF0FDF4),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 2.dp)
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            RadioButton(
-                                selected = selectedPaymentMethod == opt,
-                                onClick = { selectedPaymentMethod = opt },
-                                colors = RadioButtonDefaults.colors(selectedColor = HeaderGreen)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(opt, fontSize = 13.sp, color = TextDark)
+                            Icon(Icons.Filled.Lock, contentDescription = null, tint = HeaderGreen, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = "Pay ${stream.priceDisplay} securely",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextDark
+                                )
+                                Text(
+                                    text = "Cards • UPI • NetBanking • Wallets — powered by Razorpay",
+                                    fontSize = 11.sp,
+                                    color = TextMuted
+                                )
+                            }
                         }
                     }
                 }
@@ -277,24 +344,15 @@ fun StreamBookingDialog(
                         return@Button
                     }
                     if (isPaid) {
-                        // Razorpay SDK not integrated — redirect user to FREE.
-                        Toast.makeText(
-                            context,
-                            "Razorpay checkout not yet integrated — please use the FREE option",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        startPaidBooking()
                         return@Button
                     }
                     isProcessing = true
                     errorMessage = null
 
-                    // FREE booking: just book the slot (no payment). The host's
-                    // wallet is NOT touched on the client — for PAID bookings
-                    // the server-side `verify-razorpay-payment` edge function
-                    // credits the host's wallet after a successful payment.
-                    // Previously this client was wrongly calling
-                    // `walletService.creditTicketSale(...)` which credited the
-                    // booker instead of the host. That call has been removed.
+                    // FREE booking: just book the slot (no payment). For PAID
+                    // bookings the server-side `verify-razorpay-payment` edge
+                    // function credits the host's wallet after checkout.
                     coroutineScope.launch {
                         val result = AppServiceContainer.streamScheduleService.bookSlot(
                             context = context,
@@ -310,7 +368,7 @@ fun StreamBookingDialog(
                         }
                     }
                 },
-                enabled = !stream.isFull && !isProcessing && !isPaid,
+                enabled = !stream.isFull && !isProcessing,
                 colors = ButtonDefaults.buttonColors(containerColor = HeaderGreen),
                 modifier = Modifier.testTag("confirm_booking_btn")
             ) {
@@ -318,7 +376,7 @@ fun StreamBookingDialog(
                     CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                 } else {
                     Text(
-                        text = if (isPaid) "Razorpay not integrated" else "Reserve Free Slot",
+                        text = if (isPaid) "Pay ${stream.priceDisplay} & Reserve" else "Reserve Free Slot",
                         color = Color.White,
                         fontWeight = FontWeight.Bold
                     )
@@ -326,7 +384,7 @@ fun StreamBookingDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(onClick = onDismiss, enabled = !isProcessing) {
                 Text("Cancel", color = TextMuted)
             }
         }

@@ -2,4 +2,15 @@
 <resources>
 
     <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar" />
+
+    <!-- Invisible host for the Razorpay checkout sheet: translucent so the
+         screen behind stays visible for the instant before Razorpay's own
+         PaymentActivity opens on top. -->
+    <style name="Theme.MyApplication.RazorpayBridge" parent="Theme.MyApplication">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>

@@ -64,6 +64,8 @@ object AppServiceContainer {
         private set
     lateinit var walletService: com.example.service.WalletService
         private set
+    lateinit var razorpayPaymentService: com.example.service.RazorpayPaymentService
+        private set
     lateinit var secretVaultService: com.example.service.SecretVaultService
         private set
 
@@ -173,6 +175,7 @@ object AppServiceContainer {
 
         streamScheduleService = com.example.service.StreamScheduleService(appScope)
         walletService = com.example.service.WalletService(context)
+        razorpayPaymentService = com.example.service.RazorpayPaymentService()
         secretVaultService = com.example.service.SecretVaultService(context)
 
         initialized = true

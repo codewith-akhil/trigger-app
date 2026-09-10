@@ -134,6 +134,11 @@ dependencies {
   // OpenStreetMap map engine for the Send Location screen (real interactive map,
   // live location dot, pinch/pan gestures). No API key or billing required.
   implementation(libs.osmdroid)
+  // Razorpay Checkout — native payment sheet for PAID stream bookings and
+  // wallet top-ups. Orders are created server-side (Supabase edge functions
+  // create-razorpay-order / verify-razorpay-payment); only the publishable
+  // key_id is ever handled on-device, the key secret never ships in the app.
+  implementation("com.razorpay:checkout:1.6.40")
   // implementation(libs.play.services.location)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)

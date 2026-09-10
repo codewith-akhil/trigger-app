@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,15 +20,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.di.AppServiceContainer
+import com.example.model.UserRepository
 import com.example.service.BankDetails
 import com.example.service.PayoutDetails
+import com.example.service.RazorpayOrderResult
+import com.example.service.RazorpayVerifyResult
 import com.example.service.WalletTransaction
+import com.example.ui.payment.RazorpayCheckoutParams
+import com.example.ui.payment.RazorpayCheckoutResult
 import kotlinx.coroutines.launch
 
 private val HeaderGreen = Color(0xFF008069)
@@ -45,6 +53,7 @@ fun WalletScreen(
 ) {
     val walletService = AppServiceContainer.walletService
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     val balance by walletService.availableBalance.collectAsState()
     val pending by walletService.pendingBalance.collectAsState()
@@ -54,13 +63,82 @@ fun WalletScreen(
     val transactions by walletService.transactions.collectAsState()
 
     var showWithdrawDialog by remember { mutableStateOf(false) }
+    var showTopUpDialog by remember { mutableStateOf(false) }
     var showEditBankDialog by remember { mutableStateOf(false) }
     var showEditPayoutDialog by remember { mutableStateOf(false) }
+    var isPaying by remember { mutableStateOf(false) }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
 
     // Hydrate balance + transactions from the server on entry.
     LaunchedEffect(Unit) {
         coroutineScope.launch { walletService.refreshFromServer() }
+    }
+
+    // -----------------------------------------------------------------------
+    // Razorpay top-up checkout launcher. Declared at screen level (NOT inside
+    // a dialog content lambda, where the ActivityResult registry owner from
+    // MainActivity is unavailable).
+    // -----------------------------------------------------------------------
+    val checkoutLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        when (val checkout = RazorpayCheckoutResult.fromActivityResult(result)) {
+            is RazorpayCheckoutResult.Success -> coroutineScope.launch {
+                // Server verifies the HMAC signature, then credits the
+                // payer's wallet (wallet_topup branch of the edge function).
+                when (val verify = AppServiceContainer.razorpayPaymentService.verifyPayment(
+                    orderId = checkout.orderId,
+                    paymentId = checkout.paymentId,
+                    signature = checkout.signature,
+                    purpose = "wallet_topup"
+                )) {
+                    is RazorpayVerifyResult.Verified -> {
+                        // Re-hydrate balance + transactions from the server.
+                        walletService.refreshFromServer()
+                        snackbarMessage = "Money added to your wallet successfully!"
+                    }
+                    is RazorpayVerifyResult.Failed ->
+                        snackbarMessage = "Top-up verification failed: ${verify.message}"
+                }
+            }
+            is RazorpayCheckoutResult.Failure ->
+                snackbarMessage = "Payment failed: ${checkout.message}"
+            RazorpayCheckoutResult.Cancelled ->
+                snackbarMessage = "Payment cancelled — no money was charged."
+        }
+        isPaying = false
+    }
+
+    fun startTopUp(amount: Double) {
+        showTopUpDialog = false
+        isPaying = true
+        coroutineScope.launch {
+            when (val order = AppServiceContainer.razorpayPaymentService.createOrder(
+                amountMajor = amount,
+                currencyCode = "INR",
+                purpose = "wallet_topup"
+            )) {
+                is RazorpayOrderResult.Ready -> {
+                    val profile = UserRepository.profile.value
+                    checkoutLauncher.launch(
+                        RazorpayCheckoutParams.intent(
+                            context,
+                            RazorpayCheckoutParams(
+                                orderId = order.orderId,
+                                keyId = order.keyId,
+                                description = "Trigger Wallet Top-up",
+                                prefillName = profile.name,
+                                prefillEmail = profile.email
+                            )
+                        )
+                    )
+                }
+                is RazorpayOrderResult.Failed -> {
+                    isPaying = false
+                    snackbarMessage = order.message
+                }
+            }
+        }
     }
 
     Scaffold(
@@ -165,29 +243,57 @@ fun WalletScreen(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            // Withdraw Button
-                            Button(
-                                onClick = { showWithdrawDialog = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(48.dp)
-                                    .testTag("wallet_withdraw_btn")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.ArrowDownward,
-                                    contentDescription = null,
-                                    tint = HeaderGreen,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Withdraw Funds",
-                                    color = HeaderGreen,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp
-                                )
+                            // Add Money (Razorpay top-up) + Withdraw
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Button(
+                                    onClick = { showTopUpDialog = true },
+                                    enabled = !isPaying,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .testTag("wallet_topup_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Add,
+                                        contentDescription = null,
+                                        tint = HeaderGreen,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (isPaying) "Processing…" else "Add Money",
+                                        color = HeaderGreen,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                }
+                                Button(
+                                    onClick = { showWithdrawDialog = true },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color.White.copy(alpha = 0.18f),
+                                        contentColor = Color.White
+                                    ),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .testTag("wallet_withdraw_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.ArrowDownward,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Withdraw",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                }
                             }
                         }
                     }
@@ -408,6 +514,14 @@ fun WalletScreen(
                         else "Failed to update payout details — please try again."
                 }
             }
+        )
+    }
+
+    // Add Money (Razorpay top-up) Dialog
+    if (showTopUpDialog) {
+        TopUpDialog(
+            onDismiss = { showTopUpDialog = false },
+            onProceed = { amount -> startTopUp(amount) }
         )
     }
 }
@@ -792,6 +906,107 @@ fun EditPayoutDetailsDialog(
                 colors = ButtonDefaults.buttonColors(containerColor = HeaderGreen)
             ) {
                 Text("Save Payouts", color = Color.White)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = TextSub)
+            }
+        }
+    )
+}
+
+@Composable
+fun TopUpDialog(
+    onDismiss: () -> Unit,
+    onProceed: (Double) -> Unit
+) {
+    var amountText by remember { mutableStateOf("") }
+    val amount = amountText.toDoubleOrNull() ?: 0.0
+    val isValid = amount >= 1.0
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Text("Add Money to Wallet", fontWeight = FontWeight.Bold, color = TextMain)
+        },
+        text = {
+            Column {
+                Text(
+                    text = "Top up your Trigger wallet balance securely via Razorpay.",
+                    fontSize = 13.sp,
+                    color = TextSub
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = amountText,
+                    onValueChange = { input ->
+                        // Digits with at most one decimal point.
+                        amountText = input.filter { ch -> ch.isDigit() || ch == '.' }
+                    },
+                    label = { Text("Amount (INR)") },
+                    placeholder = { Text("e.g. 500") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(10.dp),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("100", "500", "1000", "2000").forEach { preset ->
+                        OutlinedButton(
+                            onClick = { amountText = preset },
+                            shape = RoundedCornerShape(20.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = "₹$preset",
+                                fontSize = 12.sp,
+                                color = HeaderGreen,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.Lock,
+                        contentDescription = null,
+                        tint = AccentGreen,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Secured by Razorpay — Cards, UPI, NetBanking & Wallets",
+                        fontSize = 11.sp,
+                        color = TextSub
+                    )
+                }
+
+                if (amount > 0 && !isValid) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text("Minimum top-up amount is ₹1.", fontSize = 11.sp, color = RedAlert)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onProceed(amount) },
+                enabled = isValid,
+                colors = ButtonDefaults.buttonColors(containerColor = HeaderGreen)
+            ) {
+                Text(
+                    text = if (isValid) "Proceed to Pay ₹${"%.2f".format(amount)}" else "Proceed to Pay",
+                    color = Color.White
+                )
             }
         },
         dismissButton = {

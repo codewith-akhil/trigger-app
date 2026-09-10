@@ -101,6 +101,15 @@
             android:exported="false"
             android:foregroundServiceType="microphone|camera" />
 
+        <!-- Invisible bridge activity that hosts the Razorpay payment sheet.
+             Result is relayed back to Compose screens via Activity.setResult
+             (see ui/payment/RazorpayCheckout.kt). Never exported. -->
+        <activity
+            android:name=".ui.payment.RazorpayCheckoutActivity"
+            android:exported="false"
+            android:theme="@style/Theme.MyApplication.RazorpayBridge"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode" />
+
         <!-- FileProvider used by ProfileScreen to share a cache-resident JPEG
              with the system camera app (ActivityResultContracts.TakePicture). -->
         <provider

@@ -81,3 +81,11 @@
 # ----------------------------------------------------------------------------
 -keep class org.osmdroid.** { *; }
 -dontwarn org.osmdroid.**
+
+# ----------------------------------------------------------------------------
+# Razorpay Checkout (WebView-driven payment sheet, JS bridge + reflection)
+# ----------------------------------------------------------------------------
+-keep class com.razorpay.** { *; }
+-dontwarn com.razorpay.**
+-keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }
+-keepattributes JavascriptInterface
