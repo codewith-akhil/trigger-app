@@ -416,4 +416,13 @@ class ChatRepositoryImpl(
     suspend fun insertMessage(message: DomainMessage) {
         messageDao.insertMessage(MessageEntity.fromDomain(message))
     }
+
+    /**
+     * Persists a profile-resolved avatar URL onto the conversation row so the
+     * dashboard chat list renders the real photo (not the letter fallback)
+     * the moment the chat header resolves it — no sync pull required.
+     */
+    suspend fun updateConversationAvatarUrl(conversationId: String, url: String) {
+        conversationDao.updateAvatarUrl(conversationId, url)
+    }
 }

@@ -109,6 +109,10 @@ class ChatViewModel(
     val isLoadingOlder: StateFlow<Boolean> = messageWindow.isLoadingOlder
     val hasMoreOlder: StateFlow<Boolean> = messageWindow.hasMoreOlder
     val isLoadingNewer: StateFlow<Boolean> = messageWindow.isLoadingNewer
+    /** True while the empty-cache initial pull is in flight (fresh install /
+     *  first open of this chat on this device). The chat MUST show a loading
+     *  state for it — a bare empty list read as "broken chat". */
+    val isInitialSyncing: StateFlow<Boolean> = messageWindow.isInitialSyncing
 
     /** True when the window bottom is pinned away from the live edge (post-jump). */
     val isWindowed: StateFlow<Boolean> = messageWindow.isWindowed
@@ -398,7 +402,17 @@ class ChatViewModel(
                         is SupabaseResult.Success -> {
                             val row = res.data.optJSONObject(0)
                             val url = row?.optStringOrNull("avatar_url")
-                            if (!url.isNullOrBlank()) peerAvatarUrl.value = url
+                            if (!url.isNullOrBlank()) {
+                                peerAvatarUrl.value = url
+                                // Write-back: the dashboard chat list reads the
+                                // avatar from conversations.peerAvatarUrl —
+                                // persisting the resolved URL here turns the
+                                // list's letter fallback into the real photo
+                                // without waiting for the next sync pull.
+                                try {
+                                    repository.updateConversationAvatarUrl(conversationId, url)
+                                } catch (_: Exception) {}
+                            }
                         }
                         is SupabaseResult.Error -> {}
                     }

@@ -259,11 +259,18 @@ class DashboardViewModel : ViewModel() {
             conversationDao.deleteConversationsByIds(losers.distinct())
         }
 
-        // Owner-perspective fix: on mirrored rows the server peer_name is MY
-        // display name — resolve the REAL other-user name/avatar from profiles.
-        val mirroredOtherIds = keptRows.filter { it.isMirrored && MediaUrlResolver.isUuid(it.otherId) }
+        // Profile resolution — for EVERY kept row with a real user uuid:
+        //  - mirrored rows: the server's peer_name is MY name → resolve the
+        //    REAL other-user name/avatar from profiles.
+        //  - canonical rows: peer_name is correct, but peer_avatar_url is
+        //    usually NULL on the server (it is only ever populated by a push
+        //    of a value that itself came from this same pull — circular).
+        //    Fall back to the live profiles avatar so the chat list shows
+        //    real photos instead of letter placeholders.
+        val profileIds = keptRows
+            .filter { MediaUrlResolver.isUuid(it.otherId) }
             .map { it.otherId }.distinct()
-        val profilesById = if (mirroredOtherIds.isNotEmpty()) fetchProfiles(mirroredOtherIds) else emptyMap()
+        val profilesById = if (profileIds.isNotEmpty()) fetchProfiles(profileIds) else emptyMap()
 
         for (row in keptRows) {
             val existing = conversationDao.getConversationByIdOnce(row.id)
@@ -273,14 +280,24 @@ class DashboardViewModel : ViewModel() {
                 // sync silently un-archived all archived chats.
                 isArchived = existing?.isArchived ?: false
             )
+            val profile = profilesById[row.otherId]
             if (row.isMirrored) {
-                val profile = profilesById[row.otherId]
                 entity = entity.copy(
                     name = profile?.first?.takeIf { it.isNotBlank() }
                         ?: existing?.name?.takeIf { it.isNotBlank() && it != "Unknown" }
                         ?: "Unknown",
                     peerAvatarUrl = profile?.second ?: entity.peerAvatarUrl
                 )
+            } else if (profile != null) {
+                // Canonical row: server avatar is authoritative when present;
+                // profiles avatar fills the (usual) null case. Name only fills
+                // a blank/Unknown hole — never overrides a real peer_name.
+                if (entity.peerAvatarUrl.isNullOrBlank() && !profile.second.isNullOrBlank()) {
+                    entity = entity.copy(peerAvatarUrl = profile.second)
+                }
+                if ((entity.name.isBlank() || entity.name == "Unknown") && profile.first.isNotBlank()) {
+                    entity = entity.copy(name = profile.first)
+                }
             }
             conversationDao.insertConversation(entity)
         }

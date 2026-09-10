@@ -91,6 +91,12 @@ class MessageWindowController(
     private val _bottom = MutableStateFlow<MessageCursor?>(null)
     private val _initialized = MutableStateFlow(false)
 
+    /** True while the one-shot empty-cache server pull is in flight. The UI
+     *  MUST render a visible loading state for this instead of a bare empty
+     *  list — a silent blank was indistinguishable from a broken chat. */
+    private val _isInitialSyncing = MutableStateFlow(false)
+    val isInitialSyncing: StateFlow<Boolean> = _isInitialSyncing.asStateFlow()
+
     private val _isLoadingOlder = MutableStateFlow(false)
     val isLoadingOlder: StateFlow<Boolean> = _isLoadingOlder.asStateFlow()
 
@@ -121,19 +127,20 @@ class MessageWindowController(
 
     init {
         // Anchor the window ONCE. Local cache first — instant, no network.
-        // WhatsApp-equivalent population guarantee: on a fresh install (or
-        // any chat this device has never cached) Room is EMPTY, and the old
-        // code anchored an empty window and waited for a *coincidental*
-        // background pull — the "blank chat for 2-3s, nothing offline" bug.
-        // Now an empty cache deterministically triggers a one-shot newest-
-        // page pull before the anchor completes: the first render is either
-        // instant (cache) or fills the moment the pull lands. _initialized
-        // stays false until then, which also keeps scroll-to-top from
-        // dead-ending on an empty window (see loadOlderMessages).
+        // Task 25b: the previous version held _initialized=false (render =
+        // dead blank) while the empty-cache server pull ran 2-4s on mobile
+        // data. Now the window ALWAYS anchors immediately from the local
+        // read — even when empty — so the Room flow is live from frame one,
+        // and an empty cache additionally raises isInitialSyncing (the UI
+        // shows a real loading state) while the one-shot newest-page pull
+        // runs. Rows land in Room → the flow re-emits on its own.
         scope.launch {
             try {
                 var latest = dataSource.latest(conversationId, initialWindowSize)
                 if (latest.isEmpty()) {
+                    _top.value = null
+                    _initialized.value = true // Room flow live during the pull
+                    _isInitialSyncing.value = true
                     try {
                         dataSource.initialPageFromServer(conversationId, initialWindowSize)
                     } catch (_: Exception) {
@@ -149,6 +156,7 @@ class MessageWindowController(
                 _top.value = null
             } finally {
                 _initialized.value = true
+                _isInitialSyncing.value = false
             }
         }
     }
@@ -156,6 +164,10 @@ class MessageWindowController(
     /** Scroll-to-top trigger: grows the window by one page of older messages. */
     fun loadOlderMessages() {
         if (_isLoadingOlder.value || !_hasMoreOlder.value || !_initialized.value) return
+        // The init pull owns an empty window — don't race it with a second
+        // initial-page fetch (both would land, Room dedupes, but the second
+        // wastes a network round trip).
+        if (_isInitialSyncing.value) return
         _isLoadingOlder.value = true
         scope.launch {
             try {

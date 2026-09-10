@@ -102,6 +102,7 @@ fun WhatsAppDashboardScreen(
                     peerId = conv.peerId,
                     name = conv.name,
                     avatarRes = conv.avatarRes,
+                    avatarUrl = conv.peerAvatarUrl,
                     initialColor = conv.initialColor,
                     lastMessage = conv.lastMessage,
                     timestamp = conv.timestamp,
@@ -862,7 +863,15 @@ fun ChatListItem(
                     .background(Color(chat.initialColor)),
                 contentAlignment = Alignment.Center
             ) {
-                if (chat.avatarRes != null) {
+                if (chat.avatarUrl != null) {
+                    // Real profile photo (resolved from profiles / sync pull).
+                    coil.compose.AsyncImage(
+                        model = chat.avatarUrl,
+                        contentDescription = chat.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else if (chat.avatarRes != null) {
                     Image(
                         painter = painterResource(id = chat.avatarRes),
                         contentDescription = chat.name,

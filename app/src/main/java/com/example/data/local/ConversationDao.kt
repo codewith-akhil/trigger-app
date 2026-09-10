@@ -33,6 +33,11 @@ interface ConversationDao {
     @Query("UPDATE conversations SET peerId = :peerId WHERE id = :id")
     suspend fun updatePeerId(id: String, peerId: String?)
 
+    /** Persist a profile-resolved avatar URL onto the conversation row so the
+     *  chat list renders the real photo instead of the letter fallback. */
+    @Query("UPDATE conversations SET peerAvatarUrl = :url WHERE id = :id")
+    suspend fun updateAvatarUrl(id: String, url: String?)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertConversation(conversation: ConversationEntity)
 

@@ -175,6 +175,7 @@ fun ChatScreen(
     )
 
     val messages by viewModel.messages.collectAsState()
+    val isInitialSyncing by viewModel.isInitialSyncing.collectAsState()
     // Task 25 pagination state (bounded window)
     val isLoadingOlder by viewModel.isLoadingOlder.collectAsState()
     val hasMoreOlder by viewModel.hasMoreOlder.collectAsState()
@@ -1144,6 +1145,32 @@ fun ChatScreen(
                                 duration = conversationInfo?.disappearingDuration ?: DisappearingDuration.OFF,
                                 onChangeClick = { showAutoDeleteDialog = true }
                             )
+                        }
+                    }
+
+                    // Empty-cache initial pull (fresh install / first open of
+                    // this chat on this device): show a real loading state —
+                    // a bare blank area read as a broken chat.
+                    if (messages.isEmpty() && isInitialSyncing) {
+                        item(key = "initial_sync_loading") {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 48.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(26.dp),
+                                    strokeWidth = 2.5.dp,
+                                    color = Color(0xFF008069)
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    "Loading messages…",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = Color(0xFF667781)
+                                )
+                            }
                         }
                     }
 
