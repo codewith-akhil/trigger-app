@@ -308,6 +308,32 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-10 (versionCode 5 — release rebuild: payments + deep links shipped,
+  commit `fbba725` + `1011e28`):** First published binaries containing the
+  end-to-end Razorpay checkout and the App Links deep-link work — every
+  earlier artifact predated them. **App:** `RazorpayPaymentService`
+  (create-razorpay-order / verify-razorpay-payment via edge functions; key
+  secret stays server-side) + `ui/payment/RazorpayCheckout.kt` invisible
+  bridge activity (official Checkout sheet, `PaymentResultWithDataListener`)
+  + R8 keep rules + translucent theme; StreamBookingDialog PAID flow
+  ("Pay ₹X & Reserve" → order → sheet → server verify → booking side
+  effects) and WalletScreen "Add Money" top-up (INR presets, min ₹1) both
+  wired through the same order→checkout→verify→refresh pipeline. Deep links:
+  `https://(www.)?triggerappltd.cyou/stream/{id}` autoVerify App Links,
+  canonical share host www. **Release:** rebuilt from source after a full
+  sandbox reset (JDK21 + Gradle 9.3.1 + SDK 36.1 restored);
+  `:app:compileReleaseKotlin` green, `assembleRelease bundleRelease` signed
+  with the upload key (SHA-256 `ebfe33de…`, cert CN=Trigger App). versionCode
+  bumped 4→5 because versionCode 4 (44ffdc3, WhatsApp-parity) had already
+  been distributed via the GitHub mirror — same-versionCode rebuilds would
+  not upgrade on those installs. **Publishing:** durable artifacts +
+  local 16 MiB-part manifest regenerated (APK 151,638,137 B sha256
+  `75f887ef…` · 10 parts; AAB 76,360,888 B sha256 `9d0fe2d2…` · 5 parts);
+  GitHub release v1.0-test assets swapped to the same build (one-click
+  mirror); download page serves the new build via /api/download-part.
+  Razorpay still in TEST mode (`rzp_test_…`) — test cards / `success@razorpay`
+  UPI only until live keys are swapped in the edge-function secrets.
+
 - **2026-09-09 (post-Task-26 security audit hardening wave — migration
   `20260928_final_hardening.sql` + `cleanup-disappearing-messages`; NO
   AAB/APK rebuild):** Follow-up audit fixes (F-numbered in the migration
