@@ -43,16 +43,17 @@ interface Body {
   senderName?: string;
   messagePreview?: string;
   messageType?: string;
+  viewOnce?: boolean;
   messageId?: string;
   skipIfOnline?: boolean;
 }
 
 // Truncate the preview for the FCM body (max ~100 chars for notification display).
-function buildPreview(type: string | undefined, preview: string): string {
+function buildPreview(type: string | undefined, preview: string, viewOnce?: boolean): string {
   const p = (preview ?? "").trim();
   switch (type) {
-    case "IMAGE": return "📷 Photo";
-    case "VIDEO": return "🎥 Video";
+    case "IMAGE": return viewOnce === true ? "📷 View-once photo" : "📷 Photo";
+    case "VIDEO": return viewOnce === true ? "🎥 View-once video" : "🎥 Video";
     case "AUDIO":
     case "VOICE_NOTE": return "🎤 Voice message";
     case "DOCUMENT": return "📄 Document";
@@ -184,7 +185,7 @@ async function handler(req: Request): Promise<Response> {
   }
 
   // --- Send via FCM --------------------------------------------------------
-  const preview = buildPreview(body.messageType, body.messagePreview ?? "");
+  const preview = buildPreview(body.messageType, body.messagePreview ?? "", body.viewOnce === true);
   const results = await sendFcmBatch(
     {
       title: body.senderName,

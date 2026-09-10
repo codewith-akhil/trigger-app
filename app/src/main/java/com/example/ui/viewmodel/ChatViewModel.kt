@@ -1082,7 +1082,10 @@ class ChatViewModel(
 
     // View-Once open
     fun openViewOnceMedia(message: DomainMessage) {
-        if (message.isViewed) return
+        // Once-only, and never for the SENDER: exactly like WhatsApp, the
+        // sender cannot re-open (or pre-open) their own view-once media —
+        // the server rejects the receipt for senders too.
+        if (message.isViewed || message.isOutgoing) return
         activeViewerMessage.value = message
         viewModelScope.launch {
             messageService.markViewOnceOpened(message.id)
@@ -1147,7 +1150,12 @@ class ChatViewModel(
 
     fun forwardSelectedTo(targetConversationIds: List<String>) {
         val currentList = messages.value
-        val toForward = currentList.filter { selectedMessageIds.value.contains(it.id) }
+        // View-once media is NON-FORWARDABLE — forwarding would mint an
+        // unbounded copy and defeat the entire feature. (The service layer
+        // re-checks this: MessageServiceImpl.forwardMessage is the backstop.)
+        val toForward = currentList.filter {
+            selectedMessageIds.value.contains(it.id) && !it.isViewOnce
+        }
         clearSelection()
         viewModelScope.launch {
             toForward.forEach { msg ->

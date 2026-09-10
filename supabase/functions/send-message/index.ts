@@ -396,7 +396,10 @@ async function handler(req: Request): Promise<Response> {
   }
 
   // Update conversation's last_message
+  const isViewOnce = body.is_view_once === true;
   const lastMsgPreview = body.type === "TEXT" ? (body.text ?? "").slice(0, 100)
+    : isViewOnce && body.type === "IMAGE" ? "📷 View-once photo"
+    : isViewOnce && body.type === "VIDEO" ? "🎥 View-once video"
     : body.type === "IMAGE" ? "📷 Photo"
     : body.type === "VIDEO" ? "🎥 Video"
     : body.type === "AUDIO" || body.type === "VOICE_NOTE" ? "🎤 Voice message"
@@ -459,6 +462,7 @@ async function handler(req: Request): Promise<Response> {
       senderName: senderName,
       messagePreview: preview,
       messageType: body.type,
+      viewOnce: isViewOnce,
     };
     // Call send-chat-notification edge function (internal HTTP call)
     const token = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";

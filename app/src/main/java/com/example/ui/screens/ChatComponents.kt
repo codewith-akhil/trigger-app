@@ -901,7 +901,10 @@ fun DomainChatBubble(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(8.dp))
-                                    .clickable(enabled = !message.isViewed, onClick = onOpenViewOnce)
+                                    .clickable(
+                                        enabled = !message.isViewed && !message.isOutgoing,
+                                        onClick = onOpenViewOnce
+                                    )
                                     .background(if (message.isViewed) Color.Black.copy(alpha = 0.05f) else Color(0xFFE8F5E9))
                                     .padding(horizontal = 10.dp, vertical = 8.dp)
                             ) {
@@ -921,7 +924,13 @@ fun DomainChatBubble(
                                 }
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = if (message.isViewed) "Opened" else "Photo • View once",
+                                    text = if (message.isViewed) {
+                                        "Opened"
+                                    } else if (message.type == MessageType.VIDEO) {
+                                        "Video • View once"
+                                    } else {
+                                        "Photo • View once"
+                                    },
                                     color = if (message.isViewed) Color(0xFF8696A0) else Color(0xFF111B21),
                                     fontSize = 14.sp,
                                     fontWeight = if (message.isViewed) FontWeight.Normal else FontWeight.Medium

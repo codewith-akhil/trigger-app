@@ -50,6 +50,12 @@ fun ChatMediaViewer(
     onReact: (String) -> Unit = {},
     onSendReply: (String) -> Unit = {}
 ) {
+    // View-once mode: the viewer becomes a locked, view-only surface — no
+    // star, no share (that would literally export the bytes via FileProvider),
+    // no delete, no reactions, no reply. Exactly like WhatsApp's spartan
+    // view-once screen.
+    val viewOnce = message.isViewOnce
+
     var isStarred by remember { mutableStateOf(message.isStarred) }
     var replyText by remember { mutableStateOf("") }
     var scale by remember { mutableFloatStateOf(1f) }
@@ -90,18 +96,30 @@ fun ChatMediaViewer(
                     mediaUrl = message.mediaUrl,
                     thumbnailUrl = message.mediaThumbnail,
                     mediaBucket = message.mediaBucket,
-                    mediaPath = message.mediaPath
+                    mediaPath = message.mediaPath,
+                    isViewOnce = viewOnce
                 )
             } else {
                 // Image viewer with pinch to zoom
                 if (!message.mediaUrl.isNullOrEmpty() || !message.mediaThumbnail.isNullOrEmpty()) {
                     AsyncImage(
                         // Task 24: stable bucket/path cache keys for private media.
-                        model = com.example.ui.screens.privateMediaModel(
-                            message.mediaBucket,
-                            message.mediaUrl ?: message.mediaThumbnail,
-                            message.mediaPath
-                        ),
+                        // View-once: bypass Coil's memory AND disk caches entirely
+                        // so the decrypted image never outlives the viewing
+                        // session on the recipient's device.
+                        model = if (viewOnce) {
+                            coil.request.ImageRequest.Builder(LocalContext.current)
+                                .data(message.mediaUrl ?: message.mediaThumbnail)
+                                .memoryCachePolicy(coil.request.CachePolicy.DISABLED)
+                                .diskCachePolicy(coil.request.CachePolicy.DISABLED)
+                                .build()
+                        } else {
+                            com.example.ui.screens.privateMediaModel(
+                                message.mediaBucket,
+                                message.mediaUrl ?: message.mediaThumbnail,
+                                message.mediaPath
+                            )
+                        },
                         contentDescription = "Photo",
                         contentScale = ContentScale.Fit,
                         modifier = Modifier
@@ -158,30 +176,32 @@ fun ChatMediaViewer(
                 )
             }
 
-            IconButton(onClick = { isStarred = !isStarred }) {
-                Icon(
-                    imageVector = if (isStarred) Icons.Filled.Star else Icons.Filled.StarBorder,
-                    contentDescription = "Star",
-                    tint = if (isStarred) Color(0xFFFFC107) else Color.White
-                )
-            }
+            if (!viewOnce) {
+                IconButton(onClick = { isStarred = !isStarred }) {
+                    Icon(
+                        imageVector = if (isStarred) Icons.Filled.Star else Icons.Filled.StarBorder,
+                        contentDescription = "Star",
+                        tint = if (isStarred) Color(0xFFFFC107) else Color.White
+                    )
+                }
 
-            IconButton(onClick = {
-                onShare()
-            }) {
-                Icon(
-                    imageVector = Icons.Filled.Forward,
-                    contentDescription = "Share",
-                    tint = Color.White
-                )
-            }
+                IconButton(onClick = {
+                    onShare()
+                }) {
+                    Icon(
+                        imageVector = Icons.Filled.Forward,
+                        contentDescription = "Share",
+                        tint = Color.White
+                    )
+                }
 
-            IconButton(onClick = onDelete) {
-                Icon(
-                    imageVector = Icons.Filled.Delete,
-                    contentDescription = "Delete",
-                    tint = Color.White
-                )
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = "Delete",
+                        tint = Color.White
+                    )
+                }
             }
         }
 
@@ -206,6 +226,7 @@ fun ChatMediaViewer(
                 )
             }
 
+            if (!viewOnce) {
             // Quick emoji reactions row
             Row(
                 modifier = Modifier
@@ -291,6 +312,7 @@ fun ChatMediaViewer(
                     }
                 }
             }
+            } // if (!viewOnce) — reactions + reply are hidden in view-once mode
         }
     }
 }
@@ -310,7 +332,8 @@ private fun RealVideoPlayer(
     mediaUrl: String?,
     thumbnailUrl: String?,
     mediaBucket: String? = null,
-    mediaPath: String? = null
+    mediaPath: String? = null,
+    isViewOnce: Boolean = false
 ) {
     val context = LocalContext.current
     var playbackError by remember(mediaUrl) { mutableStateOf<String?>(null) }
@@ -426,9 +449,19 @@ private fun RealVideoPlayer(
                 if (!thumbnailUrl.isNullOrEmpty() || !mediaUrl.isNullOrEmpty()) {
                     AsyncImage(
                         // Task 24: stable bucket/path cache keys for the poster.
-                        model = com.example.ui.screens.privateMediaModel(
-                            mediaBucket, thumbnailUrl ?: mediaUrl, mediaPath
-                        ),
+                        // View-once: the poster frame must not land in Coil
+                        // memory/disk caches either.
+                        model = if (isViewOnce) {
+                            coil.request.ImageRequest.Builder(context)
+                                .data(thumbnailUrl ?: mediaUrl)
+                                .memoryCachePolicy(coil.request.CachePolicy.DISABLED)
+                                .diskCachePolicy(coil.request.CachePolicy.DISABLED)
+                                .build()
+                        } else {
+                            com.example.ui.screens.privateMediaModel(
+                                mediaBucket, thumbnailUrl ?: mediaUrl, mediaPath
+                            )
+                        },
                         contentDescription = "Video Thumbnail",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()

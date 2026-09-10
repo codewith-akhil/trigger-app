@@ -968,6 +968,11 @@ class MessageServiceImpl(
     }
 
     override suspend fun forwardMessage(message: DomainMessage, targetConversationIds: List<String>) {
+        // Hard invariant: view-once media can NEVER be forwarded — a forward
+        // would mint an unbounded copy and defeat the entire feature. The UI
+        // already filters view-once out of the selection; this is the
+        // service-level backstop.
+        if (message.isViewOnce) return
         // Insert locally for each target
         val currentTime = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()).format(java.util.Date())
         val localCopyIds = mutableListOf<String>()
@@ -1279,6 +1284,23 @@ class MessageServiceImpl(
                             } else if (obj.optString("status", "") == "DELIVERED" &&
                                 existing.status != MessageStatus.READ) {
                                 repository.updateMessageStatus(id, MessageStatus.DELIVERED)
+                            }
+                            // View-once receipt heal: this device opened the
+                            // media while OFFLINE (local flag set, but the
+                            // mark-view-once-opened call never reached the
+                            // server) — retry the receipt so the sender still
+                            // sees "Opened".
+                            if (existing.isViewOnce && existing.isViewed &&
+                                !existing.isOutgoing && !obj.optBoolean("is_viewed", false)
+                            ) {
+                                runCatching {
+                                    AppServiceContainer.supabaseClient.invokeFunction(
+                                        "mark-view-once-opened",
+                                        org.json.JSONObject().put("message_id", id)
+                                    )
+                                }.onFailure {
+                                    Log.w(TAG, "view-once receipt heal failed: ${it.message}")
+                                }
                             }
                         }
                     }

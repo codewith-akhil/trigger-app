@@ -308,6 +308,37 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-10 (versionCode 7 — PERFECT view-once + screenshot/screen-record
+  prevention, 7 files):** Closed every leak vector of the view-once feature
+  the audit remediation had introduced. **Storage contract unchanged: media
+  stays in Supabase Storage and the DB forever** — view-once is a pure
+  policy flag (`is_view_once` / `is_viewed`), nothing is ever deleted.
+  **Capture prevention, 3 layers** (ChatScreen viewer host): `FLAG_SECURE`
+  while a view-once viewer is on screen (system screenshots refused outright;
+  MediaProjection recorders, HDMI/virtual displays, assistant overlays render
+  black) + `setRecentsScreenshotEnabled(false)` (API 33+ — the Overview task
+  thumbnail can never contain the media) + `Activity.ScreenCaptureCallback`
+  (API 34+ — force-closes the viewer with a toast if a capture still slips
+  through an OEM path). The media is composition-gated behind
+  `secureApplied`: the first frame that can possibly show it is already
+  FLAG_SECURE (kills the one-frame leak of the old post-composition
+  flag-add). **Once-only enforcement:** the viewer is a locked surface for
+  view-once — star/share/delete/reactions/reply all hidden (share previously
+  exported the raw bytes through the FileProvider!); the sender can never
+  open their own view-once media (bubble-click + VM guards; the server
+  rejects the receipt for senders); forwarding is blocked at BOTH the
+  ViewModel selection filter and the `MessageServiceImpl.forwardMessage`
+  service backstop; view-once is excluded from the starred grid (DAO);
+  Coil memory+disk caches are bypassed for view-once loads (image AND video
+  poster) so decrypted media never outlives the session on disk; an
+  offline-open receipt self-heals on the next sync-messages pull so the
+  sender still sees "Opened"; the bubble pill says "Video • View once" for
+  videos. Edge functions (committed, deploy pending a fresh
+  SUPABASE_ACCESS_TOKEN): view-once-aware FCM preview ("📷 View-once photo")
+  and chat-list `last_message`. Residual physics (unchanged, cannot be
+  prevented by ANY app): photographing the screen with another device and
+  root-level frame capture — same exposure as WhatsApp.
+
 - **2026-09-10 (versionCode 6 — FINAL chat fix: WhatsApp-equivalent cache
   population, 4 files):** Killed the "chat opens blank, messages pop in 2-3s
   later / nothing offline" defect class permanently. Root cause: the chat

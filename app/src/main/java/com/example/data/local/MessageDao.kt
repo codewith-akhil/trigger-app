@@ -71,7 +71,9 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE isOutgoing = 1 AND status IN ('SENDING', 'FAILED') AND timestampMillis < :olderThanMillis")
     suspend fun getStaleOutgoingMessages(olderThanMillis: Long): List<MessageEntity>
 
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND isStarred = 1 ORDER BY timestampMillis DESC")
+    // View-once media is excluded from the starred grid too: star is hidden
+    // for it, and a starred view-once row must never render a thumbnail.
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND isStarred = 1 AND isViewOnce = 0 ORDER BY timestampMillis DESC")
     suspend fun getStarredMessages(conversationId: String): List<MessageEntity>
 
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND isPinned = 1 ORDER BY timestampMillis DESC")

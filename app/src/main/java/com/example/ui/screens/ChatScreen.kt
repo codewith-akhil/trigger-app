@@ -1380,20 +1380,67 @@ fun ChatScreen(
     // Full screen Media Viewer
     val activeViewerMessageValue = activeViewerMessage
 
-    // Screenshot prevention (C10): FLAG_SECURE while a VIEW-ONCE media is on
-    // screen — previously there was zero screenshot protection anywhere.
+    // Screenshot & screen-record prevention for VIEW-ONCE media. Three layers:
+    //   1. FLAG_SECURE — system screenshots are refused outright, and every
+    //      capture path (MediaProjection recorders, HDMI/virtual displays,
+    //      assistant overlays) renders this window black.
+    //   2. setRecentsScreenshotEnabled(false) (API 33+) — the Overview/Recents
+    //      task thumbnail can never contain the media.
+    //   3. registerScreenCaptureCallback (API 34+) — if a capture still slips
+    //      through an OEM path that ignores FLAG_SECURE, the viewer is
+    //      force-closed the instant it is detected.
+    // The media is additionally gated behind `secureApplied`: composition
+    // renders a black screen until the flags are confirmed applied, so the
+    // first frame that can possibly contain the media is already secure
+    // (kills the one-frame leak the old post-composition flag-add had).
     val secureViewer = activeViewerMessageValue?.isViewOnce == true
-    if (secureViewer) {
-        DisposableEffect(Unit) {
-            val window = (context as? android.app.Activity)?.window
-            window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-            onDispose {
-                window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+    var secureApplied by remember { mutableStateOf(false) }
+    DisposableEffect(secureViewer) {
+        val activity = context as? android.app.Activity
+        val window = activity?.window
+        var captureCallback: android.app.Activity.ScreenCaptureCallback? = null
+        if (secureViewer && activity != null && window != null) {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                runCatching { activity.setRecentsScreenshotEnabled(false) }
             }
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                runCatching {
+                    val cb = object : android.app.Activity.ScreenCaptureCallback {
+                        override fun onScreenCaptured() {
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                viewModel.activeViewerMessage.value = null
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Screen capture detected — view-once media closed",
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
+                    activity.registerScreenCaptureCallback(
+                        androidx.core.content.ContextCompat.getMainExecutor(context),
+                        cb
+                    )
+                    captureCallback = cb
+                }
+            }
+            secureApplied = true
+        }
+        onDispose {
+            window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            if (android.os.Build.VERSION.SDK_INT >= 33 && activity != null) {
+                runCatching { activity.setRecentsScreenshotEnabled(true) }
+            }
+            val cb = captureCallback
+            if (android.os.Build.VERSION.SDK_INT >= 34 && activity != null && cb != null) {
+                runCatching { activity.unregisterScreenCaptureCallback(cb) }
+            }
+            secureApplied = false
         }
     }
 
-    if (activeViewerMessageValue != null) {
+    if (activeViewerMessageValue != null && (!secureViewer || secureApplied)) {
         ChatMediaViewer(
             message = activeViewerMessageValue,
             onClose = { viewModel.activeViewerMessage.value = null },
@@ -1474,6 +1521,11 @@ fun ChatScreen(
                 }
             }
         )
+    } else if (activeViewerMessageValue != null) {
+        // View-once guard window: renders a solid black screen until the
+        // FLAG_SECURE/recents guards above are confirmed applied. The viewer
+        // content itself only enters composition after `secureApplied`.
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black))
     }
 
     // Contact Info sheet
