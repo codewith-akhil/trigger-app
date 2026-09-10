@@ -308,6 +308,31 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-10 (versionCode 6 — FINAL chat fix: WhatsApp-equivalent cache
+  population, 4 files):** Killed the "chat opens blank, messages pop in 2-3s
+  later / nothing offline" defect class permanently. Root cause: the chat
+  rendered Room directly (correct) but NOTHING guaranteed Room was populated
+  — catch-up raced the conversation pull and found it empty on fresh
+  installs, the realtime pull-signal was suppressed on the process's FIRST
+  socket connect, and an empty window dead-ended scroll-to-top. **Fixes:**
+  (1) `MessageWindowController.init` — empty local cache now deterministically
+  triggers a one-shot newest-page backfill (`DataSource.initialPageFromServer`
+  → sync-messages initial branch, sinceTs=0) before the anchor completes;
+  `_initialized` gates scroll until it resolves. (2) `loadOlderMessages` —
+  empty-window dead end (`oldestLoaded == null → return`) replaced with the
+  same retryable backfill; empty results never poison `hasMoreOlder`.
+  (3) `SupabaseClient.onOpen` — pull signal now emits on EVERY connect
+  including the first (watermark 0 = initial newest-page pull). (4)
+  `DashboardViewModel` — message catch-up now runs strictly AFTER the
+  sync-conversations pull lands (chained in its `finally`) instead of racing
+  it at t=0; the connectivity-regain collector `.drop(1)`s the synthetic
+  initial StateFlow emission (same race + duplicate rounds toward the
+  30-req/min sync limit); outbox flush moved ahead of the pull. Net behavior:
+  warm chats open instantly from Room; never-cached chats fill on open with
+  one bounded pull; already-cached chats are pre-populated in the background
+  before first tap; offline renders cache as before. `DataSource` gained
+  `initialPageFromServer` with a default no-op (existing JVM fakes unaffected).
+
 - **2026-09-10 (versionCode 5 — release rebuild: payments + deep links shipped,
   commit `fbba725` + `1011e28`):** First published binaries containing the
   end-to-end Razorpay checkout and the App Links deep-link work — every

@@ -293,11 +293,17 @@ class SupabaseClient(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.i(TAG, "Realtime WebSocket connected")
                 realtimeFailureCount.set(0)
-                // If this is a reconnect (not the first connection), emit a signal
-                // so listeners can sync any messages they missed during the gap.
-                if (hasConnectedBefore) {
-                    _reconnectSignals.tryEmit(Unit)
-                }
+                // Emit on EVERY successful open — INCLUDING the first connect
+                // of the process. The old `if (hasConnectedBefore)` guard
+                // suppressed the signal exactly when it mattered most: the
+                // first chat opened after launch never triggered its
+                // watermark pull, so on a fresh install the chat stayed blank
+                // until some unrelated event (chat switch, connectivity flap,
+                // socket drop) finally fired a pull. Listeners treat the
+                // signal as "pull whatever the current chat is missing since
+                // its watermark" — equally valid on first connect, where the
+                // watermark defaults to 0 (an initial newest-page pull).
+                _reconnectSignals.tryEmit(Unit)
                 hasConnectedBefore = true
 
                 // Send join messages for each table

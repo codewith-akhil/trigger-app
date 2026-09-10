@@ -73,6 +73,18 @@ class MessageWindowController(
 
         /** Live Room flow over the inclusive [top..bottom] window (null = unbounded), ascending. */
         fun observeWindow(conversationId: String, top: MessageCursor?, bottom: MessageCursor?): Flow<List<DomainMessage>>
+
+        /**
+         * One-shot newest-page pull for an EMPTY local cache (fresh install
+         * or a conversation this device has never seen): fetch the newest
+         * [limit] rows from the server and upsert them into the local cache.
+         * Default no-op so simple fakes stay valid; the app overrides this
+         * with the sync-messages "initial" branch (sinceTs=0 → the server
+         * returns the NEWEST page). Returning empty is allowed (offline /
+         * server error) — callers must stay retryable, never poison
+         * hasMoreOlder from an empty result.
+         */
+        suspend fun initialPageFromServer(conversationId: String, limit: Int): List<DomainMessage> = emptyList()
     }
 
     private val _top = MutableStateFlow<MessageCursor?>(null)
@@ -108,10 +120,28 @@ class MessageWindowController(
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
-        // Anchor the window ONCE from the local cache — instant, no network.
+        // Anchor the window ONCE. Local cache first — instant, no network.
+        // WhatsApp-equivalent population guarantee: on a fresh install (or
+        // any chat this device has never cached) Room is EMPTY, and the old
+        // code anchored an empty window and waited for a *coincidental*
+        // background pull — the "blank chat for 2-3s, nothing offline" bug.
+        // Now an empty cache deterministically triggers a one-shot newest-
+        // page pull before the anchor completes: the first render is either
+        // instant (cache) or fills the moment the pull lands. _initialized
+        // stays false until then, which also keeps scroll-to-top from
+        // dead-ending on an empty window (see loadOlderMessages).
         scope.launch {
             try {
-                val latest = dataSource.latest(conversationId, initialWindowSize)
+                var latest = dataSource.latest(conversationId, initialWindowSize)
+                if (latest.isEmpty()) {
+                    try {
+                        dataSource.initialPageFromServer(conversationId, initialWindowSize)
+                    } catch (_: Exception) {
+                        // Offline / server error — keep the (empty) local
+                        // anchor; the connectivity-regain catch-up heals it.
+                    }
+                    latest = dataSource.latest(conversationId, initialWindowSize)
+                }
                 _top.value =
                     if (latest.size >= initialWindowSize) MessageCursor.of(latest.last())
                     else null // whole local conversation fits the initial window
@@ -130,7 +160,19 @@ class MessageWindowController(
         scope.launch {
             try {
                 val oldestLoaded = messages.value.firstOrNull()?.let(MessageCursor::of)
-                if (oldestLoaded == null) return@launch // nothing rendered yet
+                if (oldestLoaded == null) {
+                    // Empty window: Room has nothing for this conversation
+                    // (the init backfill failed offline, or is still in
+                    // flight). Retry the one-shot initial page instead of
+                    // dead-ending silently — rows land in Room and the window
+                    // flow re-emits on its own. Never disable hasMoreOlder on
+                    // an empty result: offline must stay retryable.
+                    try {
+                        dataSource.initialPageFromServer(conversationId, pageSize)
+                    } catch (_: Exception) {
+                    }
+                    return@launch
+                }
 
                 // 1) Local cache first — free and instant.
                 val localPage = dataSource.olderFromLocal(conversationId, oldestLoaded, pageSize)

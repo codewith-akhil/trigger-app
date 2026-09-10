@@ -85,6 +85,20 @@ class ChatViewModel(
             override suspend fun messageById(conversationId: String, messageId: String) =
                 repository.getMessageById(messageId)
 
+            /**
+             * Population guarantee (final chat fix): one-shot newest-page
+             * backfill when Room has nothing for this conversation — the
+             * WhatsApp "cache is full before the UI reads it" contract.
+             * syncMessages(sinceTs=0) hits the server's INITIAL branch
+             * (newest page, rows upserted into Room inside it); the read-back
+             * keeps Room the single source of truth. Empty return = offline,
+             * which the controller treats as retryable.
+             */
+            override suspend fun initialPageFromServer(conversationId: String, limit: Int): List<DomainMessage> {
+                messageService.syncMessages(conversationId = conversationId, sinceTs = 0L)
+                return repository.getLatestMessages(conversationId, limit)
+            }
+
             override fun observeWindow(conversationId: String, top: MessageCursor?, bottom: MessageCursor?) =
                 repository.observeMessageWindow(conversationId, top, bottom)
         }
@@ -415,11 +429,15 @@ class ChatViewModel(
             }
         }
         // NOTE (WhatsApp local-first model): there is deliberately NO
-        // syncMessages() call here. Opening a chat renders Room directly —
-        // zero network, zero sync, zero waiting. Multi-device catch-up runs
-        // in the BACKGROUND (app start + connectivity regain via
-        // MessageService.backgroundCatchUpSync, watermark-scoped so cached
-        // rows are never re-downloaded).
+        // syncMessages() call HERE. Opening a chat renders Room directly —
+        // zero waiting on the hot path. The population guarantee lives in
+        // MessageWindowController.init: when Room is empty for this
+        // conversation it pulls the newest page once (initialPageFromServer),
+        // so a fresh install fills its cache deterministically instead of
+        // staring at a blank chat. Multi-device catch-up for ALREADY-cached
+        // chats runs in the BACKGROUND (conversation pull completion +
+        // connectivity regain via backgroundCatchUpSync, watermark-scoped so
+        // cached rows are never re-downloaded).
         // Retry any failed messages (offline queue)
         viewModelScope.launch {
             try {

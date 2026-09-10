@@ -66,18 +66,21 @@ class DashboardViewModel : ViewModel() {
         // while the app was closed gets a chance now.
         ConnectivityObserver.start(AppServiceContainer.context)
         // Background multi-device message catch-up (WhatsApp model): runs
-        // HERE — app start and every connectivity regain — pulling only the
-        // rows newer than each conversation's local watermark into Room.
-        // Opening a chat NEVER syncs: the chat screen renders Room directly,
-        // offline included. Failures are non-fatal (retried on next regain).
+        // AFTER the conversation pull below has landed (chained in its
+        // finally) and on every GENUINE connectivity regain. It used to run
+        // as a parallel launch at t=0 — on a fresh install that raced the
+        // conversation pull, found Room's conversations table still EMPTY,
+        // and pulled nothing, so every chat opened blank until some
+        // unrelated trigger fired a pull. Opening a chat NEVER syncs: the
+        // chat screen renders Room directly, offline included. Failures are
+        // non-fatal (retried on the next regain).
         viewModelScope.launch {
-            try {
-                AppServiceContainer.messageService.backgroundCatchUpSync()
-            } catch (_: Exception) {
-            }
-        }
-        viewModelScope.launch {
-            ConnectivityObserver.isOnline.collect { online ->
+            // .drop(1): the StateFlow replays the current state on subscribe,
+            // and running catch-up on that synthetic initial emission is the
+            // fresh-install race described above (plus a duplicate round that
+            // could hit the 30-req/min sync rate limit). Real offline→online
+            // transitions still fire it.
+            ConnectivityObserver.isOnline.drop(1).collect { online ->
                 if (online) {
                     try {
                         AppServiceContainer.messageService.retryPendingOutbox()
@@ -93,6 +96,13 @@ class DashboardViewModel : ViewModel() {
         // Sync conversations from Supabase on app launch (multi-device sync)
         viewModelScope.launch {
             _isSyncing.value = true
+            // Flush the offline outbox first — independent of conversations,
+            // idempotent (dedupe keys), so stuck SENDING/FAILED messages from
+            // the last session retry immediately.
+            try {
+                AppServiceContainer.messageService.retryPendingOutbox()
+            } catch (_: Exception) {
+            }
             try {
                 val payload = org.json.JSONObject().apply {
                     put("action", "pull")
@@ -107,6 +117,16 @@ class DashboardViewModel : ViewModel() {
                 _errorMessage.value = e.message ?: "Failed to sync conversations."
             } finally {
                 _isSyncing.value = false
+                // Message catch-up runs HERE — strictly after conversation
+                // rows exist in Room. On a fresh install this ordering is the
+                // whole game: the per-conversation watermark pulls only find
+                // their targets once the conversations themselves have been
+                // pulled, so by the time the user taps a chat its messages
+                // are already cached and the chat renders instantly.
+                try {
+                    AppServiceContainer.messageService.backgroundCatchUpSync()
+                } catch (_: Exception) {
+                }
             }
         }
         // Bell badge seed. Defensive by design: the user_notifications table may
