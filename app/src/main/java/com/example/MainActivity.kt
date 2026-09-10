@@ -147,19 +147,24 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 }
 
 /**
- * Holds a pending https://triggerappltd.cyou/stream/<id> App Link.
- * MainActivity writes it on cold start (onCreate) and warm delivery
- * (onNewIntent); the dashboard reads it to preselect the Stream tab and
- * StreamTabContent consumes it once to fetch + open the booking dialog.
- * Survives until the dashboard is reachable (e.g. link tapped before login).
+ * Holds a pending https://www.triggerappltd.cyou/stream/<id> App Link
+ * (also accepts the apex host triggerappltd.cyou, which the website
+ * redirects to www). MainActivity writes it on cold start (onCreate) and
+ * warm delivery (onNewIntent); the dashboard reads it to preselect the
+ * Stream tab and StreamTabContent consumes it once to fetch + open the
+ * booking dialog. Survives until the dashboard is reachable (e.g. link
+ * tapped before login).
  */
 object StreamDeepLink {
     var pendingStreamId by mutableStateOf<String?>(null)
         private set
 
+    /** Hosts whose /stream/<id> links we accept (canonical www + apex). */
+    private val STREAM_LINK_HOSTS = setOf("www.triggerappltd.cyou", "triggerappltd.cyou")
+
     fun setFromIntent(intent: Intent?) {
         val data = intent?.data ?: return
-        if (data.scheme == "https" && data.host == "triggerappltd.cyou") {
+        if (data.scheme == "https" && data.host in STREAM_LINK_HOSTS) {
             val segments = data.pathSegments
             if (segments.size >= 2 && segments[0] == "stream" && segments[1].isNotBlank()) {
                 pendingStreamId = segments[1]

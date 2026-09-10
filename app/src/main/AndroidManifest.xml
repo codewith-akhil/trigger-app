@@ -54,10 +54,13 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- App Links: shared stream links (https://triggerappltd.cyou/stream/<id>)
-                 open the app directly. Requires /.well-known/assetlinks.json on the
-                 domain (see docs/web-deploy/); without it Android shows the
-                 disambiguation chooser but the app is still selectable. -->
+            <!-- App Links: shared stream links (https://www.triggerappltd.cyou/stream/<id>,
+                 canonical, and https://triggerappltd.cyou/stream/<id> which the
+                 site 302-redirects to www) open the app directly. Requires
+                 /.well-known/assetlinks.json on the domain — hosted by the
+                 Trigger-App-Web repo deployed on AWS Amplify (see docs/web-deploy/);
+                 without it Android shows the disambiguation chooser but the app
+                 is still selectable. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
 
@@ -66,6 +69,10 @@
 
                 <data
                     android:host="triggerappltd.cyou"
+                    android:pathPrefix="/stream"
+                    android:scheme="https" />
+                <data
+                    android:host="www.triggerappltd.cyou"
                     android:pathPrefix="/stream"
                     android:scheme="https" />
             </intent-filter>

@@ -1,78 +1,63 @@
-# Deploying https://triggerappltd.cyou (stream share links)
+# Stream share links — https://www.triggerappltd.cyou (LIVE SETUP)
 
-The Android app now generates share links like:
+The Android app generates share links like:
 
-    https://triggerappltd.cyou/stream/sch_1725889200123
+    https://www.triggerappltd.cyou/stream/sch_1725889200123
 
 and registers an **App Links** intent-filter (`android:autoVerify="true"`)
-for `https://triggerappltd.cyou/stream/*`. Tapping a shared link opens the
-Trigger App directly on the Stream tab with the booking dialog for that
-stream (any signed-in user can resolve the id — `ss_select` RLS policy on
-`scheduled_streams`).
+for BOTH hosts (`www.triggerappltd.cyou` — canonical, and the apex
+`triggerappltd.cyou`). Tapping a shared link opens the Trigger App directly
+on the Stream tab with the booking dialog for that stream (any signed-in
+user can resolve the id — `ss_select` RLS policy on `scheduled_streams`).
 
-You own the domain — TWO files must be hosted on it for everything to work.
+## Hosting — ALREADY DONE, nothing to upload by hand
 
-## 1. Assetlinks verification (makes the app open WITHOUT the chooser)
+The website (and both required pieces) lives in the separate repo:
 
-Upload this repo file:
+    https://github.com/codewith-akhil/Trigger-App-Web   (deployed on AWS Amplify)
 
-    docs/web-deploy/.well-known/assetlinks.json
+which serves:
 
-so it is served EXACTLY at:
+| URL | What | Implementation |
+|---|---|---|
+| `https://www.triggerappltd.cyou/.well-known/assetlinks.json` | Digital Asset Links statement (com.trigger.app + upload-key SHA-256 `ebfe33de…a4e20b`), `application/json`, no redirect | `src/app/.well-known/assetlinks.json/route.ts` + static copy in `public/.well-known/` |
+| `https://www.triggerappltd.cyou/stream/<id>` | Branded browser-fallback landing page ("Open in Trigger App" + Google Play button) | `src/app/stream/[id]/page.tsx` |
+| `https://triggerappltd.cyou/*` | 302 → same path on `www` (Amplify domain config) | — |
 
-    https://triggerappltd.cyou/.well-known/assetlinks.json
+Pushing to `main` of Trigger-App-Web redeploys Amplify automatically.
+Verify after a deploy:
 
-Requirements:
-- HTTP 200, `Content-Type: application/json`, no redirect (https only).
-- The fingerprint inside (`ebfe33de…a4e20b`) is the upload-key certificate
-  (SHA-256 of `trigger-upload-key (2).jks`) — it matches every APK/AAB this
-  pipeline signs. If you ever change the signing key, regenerate the file.
+    curl -s https://www.triggerappltd.cyou/.well-known/assetlinks.json
 
-Verify after upload (from any machine):
-
-    curl -s https://triggerappltd.cyou/.well-known/assetlinks.json
-
-and re-verify app-side:
+and re-verify app-side (after installing an APK built from ≥ this commit):
 
     adb shell pm verify-app-links --re-verify com.trigger.app
     adb shell dumpsys package com.trigger.app | grep -A5 "App Links"
 
-Until verification succeeds, Android shows the "Open with" chooser — the
-app still works, verification just removes the extra tap.
+## Key facts
 
-## 2. Landing page (browser fallback for people without the app)
+- **www is canonical**: the apex 302-redirects to www. Android's verifier
+  gets a redirect-free 200 on www, which is why share links and the
+  manifest's primary host use `www.`.
+- The fingerprint inside assetlinks.json is the SHA-256 of the upload key
+  (`trigger-upload-key (2).jks`) — it matches every APK/AAB this pipeline
+  signs. If the signing key ever changes, regenerate BOTH copies (app repo
+  `docs/web-deploy/.well-known/assetlinks.json` and the Trigger-App-Web
+  route handler + public copy) and redeploy.
+- Until verification succeeds, Android shows the "Open with" chooser —
+  the app still works, verification just removes the extra tap.
+- A dormant GitHub Pages deployment (gh-pages branch of THIS repo, CNAME
+  `triggerappltd.cyou`) also serves the same files. It is unused while the
+  domain DNS points at AWS; kept purely as an emergency fallback.
 
-Upload:
+## What is wired in the app (code, this repo)
 
-    docs/web-deploy/index.html
-
-to the web root of `triggerappltd.cyou` (any static host: Cloudflare Pages,
-Netlify, GitHub Pages behind the custom domain, cPanel, nginx …). It is a
-single dependency-free page with an "Open in Trigger App" button that
-re-fires the deep link.
-
-Minimal nginx example:
-
-    server {
-      listen 443 ssl;
-      server_name triggerappltd.cyou;
-      root /var/www/triggerapp;
-      location = /.well-known/assetlinks.json {
-        default_type application/json;
-      }
-      location /stream/ { try_files /index.html =404; }
-    }
-
-(If you use Cloudflare, proxying is fine — assetlinks.json must still be
-returned unmodified and without redirects.)
-
-## 3. What was wired in the app (code, this repo)
-
-- `StreamScheduleService.scheduleStream()` — share links now use the real domain.
+- `StreamScheduleService.scheduleStream()` — share links use
+  `https://www.triggerappltd.cyou/stream/<id>`.
 - `StreamScheduleService.fetchStreamById(id)` — resolves one scheduled stream
   for any signed-in user (used by the deep link).
-- `AndroidManifest.xml` — `autoVerify` App Links intent-filter.
-- `MainActivity` — captures the link on cold start AND warm delivery
-  (`StreamDeepLink` holder).
+- `AndroidManifest.xml` — autoVerify App Links intent-filter for both hosts.
+- `MainActivity` (`StreamDeepLink`) — captures the link on cold start AND
+  warm delivery; accepts both hosts.
 - Dashboard — jumps to the Stream tab; `StreamTabContent` fetches the stream
   and opens the booking dialog; unknown ids show a "Stream not found" toast.

@@ -121,9 +121,11 @@ class StreamScheduleService(
 
         val streamId = "sch_${System.currentTimeMillis()}"
         // Real, user-owned domain. Deep link: App Links intent-filter in the
-        // manifest routes https://triggerappltd.cyou/stream/<id> into the app,
-        // where the dashboard Stream tab fetches the stream and opens booking.
-        val shareLink = "https://triggerappltd.cyou/stream/$streamId"
+        // manifest routes https://www.triggerappltd.cyou/stream/<id> into the
+        // app, where the dashboard Stream tab fetches the stream and opens
+        // booking. www is canonical (redirect-free 200; the apex host
+        // 302-redirects here), so verification is most reliable on www.
+        val shareLink = "https://www.triggerappltd.cyou/stream/$streamId"
 
         val newStream = ScheduledStream(
             id = streamId,
