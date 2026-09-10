@@ -308,6 +308,36 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-10 (versionCode 8 — dashboard Requests tab + notifications fixes,
+  4 files):** (1) **Dashboard "Requests" tab** — new filter chip next to
+  All/Unread/Groups; shows ALL pending message requests (incoming AND
+  outgoing — the canonical sender-owned row already synced to both sides via
+  `sync-conversations` pull; no backend change needed). Tapping a request
+  opens the chat, which renders Accept/Decline (receiver) or the waiting /
+  declined state (requester). Pending requests never mix into the other
+  tabs; the tab has a dedicated empty state and never falls back to the
+  legacy seed chats; the bottom-bar Chats badge now uses a tab-independent
+  unread count so it stays truthful on the Requests tab. (2) **Notification
+  rows now navigate to the actor's profile** — the NavHost wiring
+  (`USER_PROFILE`) already existed; the row simply never had a click handler.
+  The "Message" button on request-accepted rows still opens the chat
+  directly. (3) **Bell badge reset actually works** — root cause: the
+  screen marked `user_notifications` read via `upsertRecord`, which is an
+  INSERT under the hood, and that table deliberately has NO insert RLS
+  policy (only service-role edge functions insert), so every mark-read
+  silently failed and the badge re-derived as 1 forever. New
+  `SupabaseClient.patchRecord` primitive (REST PATCH = UPDATE, the exact
+  permission the table grants) + one atomic
+  `PATCH user_notifications?user_id=eq.me&is_read=eq.false {"is_read":true}`.
+  (4) **Follow back / Following buttons removed** from notification rows per
+  product decision — row tap opens the profile instead. Build provenance:
+  signed with the same upload key (SHA-1 5b7f4bcd…), aapt2
+  versionCode='8' versionName='1.0', APK 151,638,141 B sha256 35d50d13…,
+  AAB 76,363,429 B sha256 db7ef60b…, source commit ebd2c17. Also hardened:
+  gradle.properties now persists the sandbox-safe build memory settings
+  (-Xmx1536m / workers.max=2 / kotlin.daemon 768m) that previously existed
+  only as session flags.
+
 - **2026-09-10 (versionCode 7 — PERFECT view-once + screenshot/screen-record
   prevention, 7 files):** Closed every leak vector of the view-once feature
   the audit remediation had introduced. **Storage contract unchanged: media
