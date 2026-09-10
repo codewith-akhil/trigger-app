@@ -425,10 +425,17 @@ class DashboardViewModel : ViewModel() {
                 timestamp = ChatTimeFormatter.formatForList(entity.lastActivityMillis, entity.timestamp)
             )
         }.filter { conv ->
-            // Task 24: outgoing message REQUESTS stay off the chat list until
-            // accepted (v10 contract: requests surface via NewMessage →
-            // Message Requests, mirroring Instagram/WhatsApp behaviour).
-            val notPending = conv.requestStatus != "pending"
+            // REQUESTS tab shows ONLY pending message requests (incoming AND
+            // outgoing — the canonical sender-owned row carries request_status
+            // "pending" on both sides' pulls; ChatScreen renders the
+            // Accept/Decline UI for the receiver and the waiting state for the
+            // requester). Every other tab keeps the Task-24 contract: pending
+            // never mixes into the regular chat list.
+            val matchesRequestPolicy = if (filter == ChatFilter.REQUESTS) {
+                conv.requestStatus == "pending"
+            } else {
+                conv.requestStatus != "pending"
+            }
 
             // Archived filter — when showArchived=false, hide archived chats;
             // when showArchived=true, show only archived chats.
@@ -442,11 +449,25 @@ class DashboardViewModel : ViewModel() {
                 ChatFilter.ALL -> true
                 ChatFilter.UNREAD -> conv.unreadCount > 0
                 ChatFilter.GROUPS -> conv.isGroup
+                ChatFilter.REQUESTS -> true
             }
 
-            notPending && matchesArchiveFilter && matchesQuery && matchesFilter
+            matchesRequestPolicy && matchesArchiveFilter && matchesQuery && matchesFilter
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Tab-independent unread count for the bottom-bar Chats badge. The
+    // [conversations] flow bakes the active filter in, so summing it on the
+    // Requests tab would drop accepted-chat unread from the badge. This one
+    // ignores search/filter/archived toggles and always reflects the real
+    // inbox: accepted chats only (pending requests surface in the Requests
+    // tab with their own badges, not in the bottom-bar count).
+    val totalUnreadCount: StateFlow<Int> = conversationDao.getAllConversations()
+        .map { rows ->
+            rows.filter { it.requestStatus != "pending" && !it.isArchived }
+                .sumOf { it.unreadCount }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     fun onSearchQueryChanged(q: String) {
         _searchQuery.value = q
@@ -463,6 +484,11 @@ class DashboardViewModel : ViewModel() {
     fun setFilter(filter: ChatFilter) {
         _selectedFilter.value = filter
     }
+
+    /** True while the Requests tab is active (the screen swaps its empty
+     *  state and list source accordingly). */
+    val isRequestsTab: Boolean
+        get() = _selectedFilter.value == ChatFilter.REQUESTS
 
     fun setShowArchived(show: Boolean) {
         _showArchived.value = show

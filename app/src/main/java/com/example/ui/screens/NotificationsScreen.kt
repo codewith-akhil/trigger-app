@@ -1,8 +1,8 @@
 package com.example.ui.screens
 
-import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -75,9 +75,7 @@ data class NotificationEntry(
     val createdAtIso: String,
     val actorName: String,
     val actorUsername: String?,
-    val actorAvatarUrl: String?,
-    /** Whether I currently follow the actor (drives the Follow back button). */
-    val amFollowingActor: Boolean
+    val actorAvatarUrl: String?
 )
 
 /**
@@ -85,14 +83,16 @@ data class NotificationEntry(
  * `user_notifications` table:
  *  - fetch: GET user_notifications?user_id=eq.me&order=created_at.desc&limit=100
  *  - actor display data: batched `profiles` lookup (CallsTabContent pattern)
- *  - follow state: direct `follows` table probe (NewMessageScreen pattern)
- *  - follow rows   → "Follow back" (green filled) / "Following" (tap toggles)
- *    via the existing toggle-follow-user edge function
- *  - accept rows   → "Message" → opens the chat with the actor (NavHost)
- *  - mark-read: every fetched row is upserted back with is_read=true (the
- *    SupabaseClient surface has no PATCH primitive; merge-duplicates upsert on
- *    the row id performs the same owner UPDATE under RLS), then the dashboard
- *    bell badge is cleared via [onNotificationsRead].
+ *  - tap a row    → opens the actor's profile page (NavHost USER_PROFILE)
+ *  - accept rows  → "Message" → opens the chat with the actor (NavHost)
+ *    (follow rows carry no action button — the row itself opens the profile)
+ *  - mark-read: ONE atomic PATCH (`UPDATE … is_read=true WHERE user_id=me AND
+ *    is_read=false`). The previous implementation upserted each row back —
+ *    an INSERT under the hood — and this table deliberately has NO insert
+ *    policy (rows are only created by service-role edge functions), so every
+ *    write silently failed under RLS and the bell badge never reset. PATCH
+ *    maps 1:1 to the existing UPDATE policy. Then the dashboard bell badge
+ *    is cleared via [onNotificationsRead].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -103,13 +103,11 @@ fun NotificationsScreen(
     onNotificationsRead: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
     var entries by remember { mutableStateOf<List<NotificationEntry>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var followBusy by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     val client = AppServiceContainer.supabaseClient
 
@@ -163,25 +161,9 @@ fun NotificationsScreen(
                     }
                 }
 
-                // Which of the actors do I already follow? (direct follows probe)
-                val followActorIds = rows.filter { it.optString("type") == "follow" }
-                    .map { it.optString("actor_id") }
-                    .filter { MediaUrlResolver.isUuid(it) }
-                    .distinct()
-                val followingSet = HashSet<String>()
-                if (followActorIds.isNotEmpty()) {
-                    when (val fRes = client.getTable(
-                        "follows",
-                        "follower_id=eq.$me&following_id=in.(${followActorIds.joinToString(",")})&select=following_id"
-                    )) {
-                        is SupabaseResult.Success -> {
-                            for (i in 0 until fRes.data.length()) {
-                                followingSet.add(fRes.data.getJSONObject(i).optString("following_id"))
-                            }
-                        }
-                        is SupabaseResult.Error -> { /* treated as "not following" */ }
-                    }
-                }
+                // Which of the actors do I already follow? — NOT probed
+                // anymore: follow rows carry no action button (row tap opens
+                // the profile), so the extra `follows` query is dead weight.
 
                 entries = rows.mapNotNull { row ->
                     val actorId = row.optString("actor_id")
@@ -196,29 +178,25 @@ fun NotificationsScreen(
                         createdAtIso = row.optString("created_at"),
                         actorName = fullName.ifBlank { "Someone" },
                         actorUsername = profile?.second,
-                        actorAvatarUrl = profile?.third,
-                        amFollowingActor = actorId in followingSet
+                        actorAvatarUrl = profile?.third
                     )
                 }
                 isLoading = false
 
-                // Mark-read: upsert each still-unread row back with is_read=true
-                // (merge-duplicates on id = owner UPDATE under RLS). Errors are
-                // swallowed on purpose — read-state is best-effort cosmetics.
-                for (row in rows.filter { !it.optBoolean("is_read", false) }) {
-                    try {
-                        val payload = JSONObject()
-                            .put("id", row.optString("id"))
-                            .put("user_id", me)
-                            .put("actor_id", row.optString("actor_id"))
-                            .put("type", row.optString("type"))
-                            .put("is_read", true)
-                        val createdAt = row.optString("created_at")
-                        if (createdAt.isNotBlank()) payload.put("created_at", createdAt)
-                        client.upsertRecord("user_notifications", payload, onConflict = "id")
-                    } catch (e: Exception) {
-                        // Non-fatal — the badge refresh re-derives the truth.
-                    }
+                // Mark-read: ONE atomic PATCH — `UPDATE user_notifications SET
+                // is_read=true WHERE user_id=me AND is_read=false`. RLS only
+                // grants UPDATE on own rows here (no INSERT policy by design),
+                // which is exactly why the old per-row upsert silently failed
+                // and the bell badge never reset. Errors are non-fatal — the
+                // badge refresh re-derives the truth.
+                try {
+                    client.patchRecord(
+                        "user_notifications",
+                        "user_id=eq.$me&is_read=eq.false",
+                        JSONObject().put("is_read", true)
+                    )
+                } catch (e: Exception) {
+                    // Non-fatal — the badge refresh re-derives the truth.
                 }
                 onNotificationsRead()
             } catch (e: Exception) {
@@ -228,25 +206,15 @@ fun NotificationsScreen(
         }
     }
 
-    fun toggleFollow(entry: NotificationEntry) {
-        if (entry.actorId in followBusy) return
-        followBusy = followBusy + entry.actorId
-        coroutineScope.launch {
-            val action = if (entry.amFollowingActor) "unfollow" else "follow"
-            val payload = JSONObject()
-                .put("targetUserId", entry.actorId)
-                .put("action", action)
-            when (client.invokeFunction("toggle-follow-user", payload)) {
-                is SupabaseResult.Success -> {
-                    entries = entries.map {
-                        if (it.id == entry.id) it.copy(amFollowingActor = !entry.amFollowingActor) else it
-                    }
-                }
-                is SupabaseResult.Error ->
-                    Toast.makeText(context, "Action failed", Toast.LENGTH_SHORT).show()
-            }
-            followBusy = followBusy - entry.actorId
-        }
+    fun openActorProfile(entry: NotificationEntry) {
+        onOpenUserProfile(
+            UserSearchResult(
+                id = entry.actorId,
+                name = entry.actorName,
+                username = entry.actorUsername,
+                avatarUrl = entry.actorAvatarUrl
+            )
+        )
     }
 
     fun messageActor(entry: NotificationEntry) {
@@ -337,8 +305,7 @@ fun NotificationsScreen(
                         items(entries, key = { it.id }) { entry ->
                             NotificationRow(
                                 entry = entry,
-                                isFollowBusy = entry.actorId in followBusy,
-                                onFollowToggle = { toggleFollow(entry) },
+                                onClick = { openActorProfile(entry) },
                                 onMessage = { messageActor(entry) }
                             )
                         }
@@ -352,13 +319,15 @@ fun NotificationsScreen(
 @Composable
 private fun NotificationRow(
     entry: NotificationEntry,
-    isFollowBusy: Boolean,
-    onFollowToggle: () -> Unit,
+    onClick: () -> Unit,
     onMessage: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // Whole row opens the actor's profile — the trailing "Message"
+            // button consumes its own clicks, so it still opens the chat.
+            .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -413,33 +382,9 @@ private fun NotificationRow(
 
         when (entry.type) {
             "follow" -> {
-                if (entry.amFollowingActor) {
-                    // "Following" renders muted but stays tappable (tap = unfollow).
-                    OutlinedButton(
-                        onClick = onFollowToggle,
-                        enabled = !isFollowBusy,
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = NotifTextSecondary,
-                            disabledContentColor = NotifTextSecondary
-                        ),
-                        border = BorderStroke(1.dp, Color(0xFFDBDDE0)),
-                        modifier = Modifier.heightIn(min = 48.dp)
-                    ) {
-                        Text("Following", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                } else {
-                    Button(
-                        onClick = onFollowToggle,
-                        enabled = !isFollowBusy,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = NotifGreenAccent,
-                            disabledContainerColor = NotifGreenAccent.copy(alpha = 0.6f)
-                        ),
-                        modifier = Modifier.heightIn(min = 48.dp)
-                    ) {
-                        Text("Follow back", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
+                // No follow/follow-back button on notification rows (user
+                // request): tapping the row opens the actor's profile, where
+                // the real follow action lives.
             }
             "message_request_accepted" -> {
                 OutlinedButton(

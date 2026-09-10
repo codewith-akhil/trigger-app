@@ -43,7 +43,7 @@ enum class DashboardTab {
 }
 
 enum class ChatFilter {
-    ALL, UNREAD, GROUPS
+    ALL, UNREAD, GROUPS, REQUESTS
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -93,7 +93,8 @@ fun WhatsAppDashboardScreen(
     val notificationsUnread by viewModel.notificationsUnread.collectAsState()
     LaunchedEffect(Unit) { viewModel.refreshNotificationsUnread() }
 
-    val allChats = remember(dbConversations) {
+    val allChats = remember(dbConversations, selectedFilter) {
+        val isRequestsTab = selectedFilter == ChatFilter.REQUESTS
         if (dbConversations.isNotEmpty()) {
             dbConversations.map { conv ->
                 ChatItem(
@@ -111,13 +112,19 @@ fun WhatsAppDashboardScreen(
                     isOnline = conv.isOnline
                 )
             }
+        } else if (isRequestsTab) {
+            // The Requests tab NEVER falls back to the legacy seed chats —
+            // an empty request inbox must render the empty state, not demos.
+            emptyList()
         } else {
             ChatRepository.initialChats
         }
     }
 
     val displayedChats = allChats
-    val totalUnread = remember(allChats) { allChats.sumOf { it.unreadCount } }
+    // Bottom-bar badge: tab-independent count straight from the ViewModel —
+    // summing the (filter-baked) list would zero it out on the Requests tab.
+    val totalUnread by viewModel.totalUnreadCount.collectAsState()
 
     Scaffold(
         modifier = Modifier
@@ -273,6 +280,9 @@ fun WhatsAppDashboardScreen(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(bottom = 80.dp)
                         ) {
+                            if (selectedFilter == ChatFilter.REQUESTS && displayedChats.isEmpty()) {
+                                item(key = "requests_empty_state") { RequestsEmptyState() }
+                            }
                             items(displayedChats, key = { it.id }) { chat ->
                                 ChatListItem(
                                     chat = chat,
@@ -745,6 +755,45 @@ fun FilterChipsRow(
             title = "Groups",
             isSelected = selectedFilter == ChatFilter.GROUPS,
             onClick = { onFilterSelected(ChatFilter.GROUPS) }
+        )
+
+        FilterChipItem(
+            title = "Requests",
+            isSelected = selectedFilter == ChatFilter.REQUESTS,
+            onClick = { onFilterSelected(ChatFilter.REQUESTS) }
+        )
+    }
+}
+
+/** Empty state for the Requests tab — mirrors the notifications empty
+ *  styling: muted icon + one-line explainer, centered in the list area. */
+@Composable
+fun RequestsEmptyState() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 32.dp, vertical = 56.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Mail,
+            contentDescription = null,
+            tint = Color(0xFF667781),
+            modifier = Modifier.size(44.dp)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = "No message requests",
+            color = Color(0xFF667781),
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "Messages from people you haven't chatted with will show up here.",
+            color = Color(0xFF667781),
+            fontSize = 13.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
     }
 }

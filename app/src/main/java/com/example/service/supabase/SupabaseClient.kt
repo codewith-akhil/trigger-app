@@ -785,6 +785,54 @@ class SupabaseClient(
             }
         }
 
+    /**
+     * Partial UPDATE of rows matching [queryParams] via REST PATCH.
+     * Unlike [upsertRecord] (INSERT … ON CONFLICT, which needs an INSERT RLS
+     * policy) this maps 1:1 to the UPDATE policy — e.g. marking one's own
+     * user_notifications read on tables that deliberately have no insert
+     * policy. Returns Success(updatedRowCount) — the row body is not needed
+     * by callers, so `Prefer: return=representation` is only used to count
+     * what actually changed.
+     */
+    suspend fun patchRecord(
+        tableName: String,
+        queryParams: String,
+        updates: JSONObject
+    ): SupabaseResult<Int> =
+        withContext(Dispatchers.IO) {
+            if (!BackendConfig.isSupabaseConfigured) {
+                return@withContext SupabaseResult.Success(0)
+            }
+
+            try {
+                val token = ensureFreshAccessToken() ?: anonKey
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/v1/$tableName?$queryParams")
+                    .addHeader("apikey", anonKey)
+                    .addHeader("Authorization", "Bearer $token")
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Prefer", "return=representation")
+                    .patch(updates.toString().toRequestBody(jsonMediaType))
+                    .build()
+
+                val response = httpClient.newCall(request).execute()
+                val responseBody = response.body?.string() ?: ""
+
+                if (response.isSuccessful) {
+                    val updatedCount = if (responseBody.trim().startsWith("[")) {
+                        JSONArray(responseBody).length()
+                    } else {
+                        0
+                    }
+                    SupabaseResult.Success(updatedCount)
+                } else {
+                    SupabaseResult.Error(parseErrorMessage(responseBody, "Failed to update $tableName"), response.code)
+                }
+            } catch (e: Exception) {
+                SupabaseResult.Error(e.message ?: "Patch record error")
+            }
+        }
+
     // ==========================================
     // STORAGE (/storage/v1)
     // ==========================================
