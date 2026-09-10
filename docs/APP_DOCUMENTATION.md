@@ -308,6 +308,35 @@ duration, history) · streams (schedule, booking emails, live) · wallet
 
 ## 10. Version history (documentation updates)
 
+- **2026-09-11 (versionCode 9 — instant chat-open + real profile photos,
+  10 files, commit `874ffa1`):** Two user-reported bugs from the v8 build.
+  (1) **Blank chat for 2–4s on open** — root cause: `MessageWindowController`
+  init refused to anchor the window (`_initialized=false` → empty render)
+  while the empty-cache newest-page pull ran a full `sync-messages` round
+  trip (2–4s on mobile data) — every conversation's FIRST open after an
+  install/update hit this (Room only caches what this device has already
+  opened). Fix: the window now anchors instantly from the local read even
+  when empty (Room flow live from frame one), raises `isInitialSyncing`
+  during the pull, and ChatScreen renders a visible "Loading messages…"
+  spinner state instead of a dead blank; scroll-to-top no longer races the
+  init pull. Warm-cache opens were already instant and remain unchanged.
+  (2) **Dashboard showed letter avatars although photos exist** — three
+  stacked causes: `ChatListItem` never rendered `peerAvatarUrl` at all
+  (only the legacy `avatarRes` drawable); the sync pull only profile-
+  resolved avatars for MIRRORED conversation rows (canonical rows — the
+  ones the initiator's device keeps — never got a lookup, and the server's
+  `peer_avatar_url` column is circularly null because it is only populated
+  by pushing back a value that came from this same pull); and the chat
+  header's working avatar (fetched live from `profiles`) was never written
+  back to Room. Fix: `ChatItem`/`DomainConversation` carry `avatarUrl`,
+  the chat list renders AsyncImage(url) → drawable → initial, the pull
+  profile-resolves avatar/name for ALL rows, and ChatViewModel persists
+  the header avatar into `conversations.peerAvatarUrl` so the list updates
+  without waiting for the next sync. Build provenance: same upload key
+  (SHA-1 5b7f4bcd…), aapt2 versionCode='9' versionName='1.0', APK
+  151,638,141 B sha256 b480f573…, AAB 76,363,628 B sha256 0e880018…,
+  source commit 874ffa1.
+
 - **2026-09-10 (versionCode 8 — dashboard Requests tab + notifications fixes,
   4 files):** (1) **Dashboard "Requests" tab** — new filter chip next to
   All/Unread/Groups; shows ALL pending message requests (incoming AND
