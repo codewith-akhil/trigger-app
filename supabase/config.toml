@@ -465,6 +465,12 @@ verify_jwt = false
 verify_jwt = false
 [functions.cleanup-disappearing-messages]
 verify_jwt = false
+# Phase 6 legal-retention (authenticated via the service-role key, validated
+# inside the function — no user JWT context exists):
+[functions.purge-expired-media]
+verify_jwt = false
+[functions.admin-evidence]
+verify_jwt = false
 # Cron-invoked email senders (called by other edge functions / scheduler):
 [functions.send-stream-scheduled-email]
 verify_jwt = false

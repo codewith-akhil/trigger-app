@@ -5,6 +5,15 @@
 //
 // Also triggers a push notification to the receiver via send-chat-notification.
 //
+// LEGAL-RETENTION ARCHIVE (Phase 6): after a media message is accepted, the
+// object is COPIED (never moved) into the private `media_vault` bucket and
+// registered in `media_archive` with purge_at = now() + 14 days. This runs
+// for EVERY media type INCLUDING view-once (owner's explicit compliance
+// decision). The archive is invisible to end users: media_archive has RLS
+// with zero policies, media_vault has no user-facing storage policies — only
+// the service role can ever read it. Archiving failure NEVER fails the send
+// (log + continue).
+//
 // Auth: requires a valid Supabase JWT.
 // Request body: all message fields (conversation_id, type, text, media_url, etc.)
 // Response 200: { "sent": true, "message": {...} }
@@ -23,6 +32,37 @@ const MAX_IMAGE = 50 * 1024 * 1024;   // 50 MB
 const MAX_VIDEO = 250 * 1024 * 1024;  // 250 MB
 const MAX_AUDIO = 55 * 1024 * 1024;   // 55 MB
 const MAX_DOC = 55 * 1024 * 1024;     // 55 MB
+
+// --- Legal-retention archive (Phase 6) constants ---------------------------
+const VAULT_BUCKET = "media_vault";               // private vault bucket
+const RETENTION_DAYS = 14;                        // hard purge window
+const ARCHIVE_KIND_BY_TYPE: Record<string, string> = {
+  IMAGE: "image", VIDEO: "video", VOICE_NOTE: "voice", AUDIO: "audio", DOCUMENT: "file",
+};
+const ARCHIVE_MIME_BY_EXT: Record<string, string> = {
+  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
+  gif: "image/gif", mp4: "video/mp4", mov: "video/quicktime", mkv: "video/x-matroska",
+  m4a: "audio/mp4", aac: "audio/aac", mp3: "audio/mpeg", ogg: "audio/ogg",
+  opus: "audio/opus", amr: "audio/amr", wav: "audio/wav", pdf: "application/pdf",
+  txt: "text/plain", zip: "application/zip", doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+// The client sends the BARE object path in media_url (private-bucket shape);
+// legacy rows may carry a full public/signed URL — extract the object path.
+function resolveObjectPath(mediaUrl: unknown): string | null {
+  if (typeof mediaUrl !== "string" || mediaUrl.trim().length === 0) return null;
+  const v = mediaUrl.trim();
+  if (!v.startsWith("http")) return v.split("?")[0];
+  try {
+    const u = new URL(v);
+    const m = u.pathname.match(/\/object\/(?:public|sign|authenticated)\/[^/]+\/(.+)$/);
+    if (m) return decodeURIComponent(m[1].split("?")[0]);
+  } catch { /* unparseable — treat as no path */ }
+  return null;
+}
 
 const VALID_TYPES = ["TEXT", "IMAGE", "VIDEO", "AUDIO", "VOICE_NOTE", "DOCUMENT", "LOCATION", "CONTACT", "CALL_LOG", "SYSTEM"];
 
@@ -441,6 +481,65 @@ async function handler(req: Request): Promise<Response> {
       p_conversation_id: conversationId,
       p_user_id: receiverId,
     });
+  }
+
+  // --- Legal-retention archive (Phase 6) ----------------------------------
+  // Copy (NOT move) the media object into the private media_vault bucket and
+  // register it in media_archive with a 14-day purge_at. Runs for every
+  // archiveable media type INCLUDING view-once. Idempotent: on conflict
+  // (message_id) do nothing. Never fails the send — any error is logged and
+  // swallowed; the next send is unaffected and this row simply isn't archived
+  // (the daily purge sweep only touches registered rows).
+  {
+    const sourceBucket = (body.media_bucket ?? "").trim();
+    const sourcePath = resolveObjectPath(body.media_url);
+    const archiveKind = ARCHIVE_KIND_BY_TYPE[body.type ?? ""];
+    if (sourceBucket && sourcePath && archiveKind && msg.id) {
+      try {
+        const messageId = String(msg.id);
+        const baseName = ((body.file_name ?? "").trim() || sourcePath.split("/").pop() || "media")
+          .split("?")[0].replace(/[\\/:*?"<>|]/g, "_") || "media";
+        const vaultPath = `${messageId}/${baseName}`;
+        const ext = baseName.includes(".") ? baseName.split(".").pop()!.toLowerCase() : "";
+        const mime = (body.mime_type ?? "").trim() || ARCHIVE_MIME_BY_EXT[ext] || null;
+        const copyRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/storage/v1/object/copy`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            bucketId: sourceBucket,
+            sourceKey: sourcePath,
+            destinationBucket: VAULT_BUCKET,
+            destinationKey: vaultPath,
+          }),
+        });
+        if (!copyRes.ok) {
+          // Non-fatal: log + continue (send already succeeded).
+          console.warn("media_archive: storage copy failed", copyRes.status,
+            await copyRes.text().catch(() => ""));
+        } else {
+          const { error: archErr } = await supabase.from("media_archive").upsert({
+            message_id: messageId,
+            conversation_id: conversationId,
+            sender_id: userId,
+            receiver_id: receiverId ?? null,
+            media_kind: archiveKind,
+            source_bucket: sourceBucket,
+            source_path: sourcePath,
+            vault_path: vaultPath,
+            byte_size: fileSize > 0 ? fileSize : null,
+            mime,
+            is_view_once: isViewOnce,
+            purge_at: new Date(Date.now() + RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+          }, { onConflict: "message_id", ignoreDuplicates: true });
+          if (archErr) console.warn("media_archive: upsert failed", archErr.message);
+        }
+      } catch (archErr) {
+        console.warn("media_archive failed (non-fatal)", archErr);
+      }
+    }
   }
 
   // Send push notification to the receiver via send-chat-notification edge function
