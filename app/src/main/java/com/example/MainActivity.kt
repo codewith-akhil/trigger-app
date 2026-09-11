@@ -47,9 +47,6 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             )
         }
 
-        handleCallIntent(intent)
-        StreamDeepLink.setFromIntent(intent)
-
         // osmdroid configuration — MUST run before the first MapView is created.
         // A per-app User-Agent is REQUIRED by the OpenStreetMap tile usage policy,
         // and the tile cache lives in the app-private cacheDir (no storage permission).
@@ -61,8 +58,12 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         // Create FCM notification channels + auto-register the FCM token with
         // the Supabase register-push-token edge function on every app launch.
-        com.example.service.TriggerFirebaseMessagingService.createNotificationChannels(this)
-        com.example.service.TriggerFirebaseMessagingService.registerToken(this)
+        try {
+            com.example.service.TriggerFirebaseMessagingService.createNotificationChannels(this)
+            com.example.service.TriggerFirebaseMessagingService.registerToken(this)
+        } catch (t: Throwable) {
+            android.util.Log.w(TAG, "Push notification setup caught exception: ${t.message}")
+        }
 
         // Enable edge-to-edge so content draws behind the system bars.
         enableEdgeToEdge()

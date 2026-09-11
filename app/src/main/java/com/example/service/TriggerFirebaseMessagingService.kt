@@ -110,41 +110,82 @@ class TriggerFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
+         * Safely ensures FirebaseApp is initialized without throwing when
+         * google-services.json is absent or not packaged.
+         */
+        private fun ensureFirebaseInitialized(context: Context): Boolean {
+            return try {
+                if (com.google.firebase.FirebaseApp.getApps(context).isNotEmpty()) {
+                    return true
+                }
+                val app = com.google.firebase.FirebaseApp.initializeApp(context)
+                app != null
+            } catch (e: Throwable) {
+                try {
+                    val projectId = try {
+                        com.example.BuildConfig.FIREBASE_PROJECT_ID.ifBlank { "trigger-app" }
+                    } catch (t: Throwable) {
+                        "trigger-app"
+                    }
+                    val options = com.google.firebase.FirebaseOptions.Builder()
+                        .setApplicationId("1:133240935936:android:com.trigger.app")
+                        .setApiKey("AIzaSyTriggerAppSafeInitKeyPlaceholder")
+                        .setProjectId(projectId)
+                        .build()
+                    com.google.firebase.FirebaseApp.initializeApp(context.applicationContext, options)
+                    true
+                } catch (fallbackEx: Throwable) {
+                    android.util.Log.w(TAG, "Unable to initialize FirebaseApp: ${fallbackEx.message}")
+                    false
+                }
+            }
+        }
+
+        /**
          * Register (or refresh) the FCM token with the Supabase
          * register-push-token edge function. Call this on app launch + on
          * token refresh.
          */
         fun registerToken(context: Context) {
-            com.google.firebase.messaging.FirebaseMessaging.getInstance().token
-                .addOnSuccessListener { token ->
-                    // POST the token to the register-push-token edge function
-                    // in a background coroutine.
-                    val scope = kotlinx.coroutines.CoroutineScope(
-                        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
-                    )
-                    scope.launch {
-                        try {
-                            val deviceId = android.provider.Settings.Secure.getString(
-                                context.contentResolver,
-                                android.provider.Settings.Secure.ANDROID_ID
-                            ) ?: "unknown"
-                            val payload = org.json.JSONObject().apply {
-                                put("fcmToken", token)
-                                put("deviceId", deviceId)
-                                put("platform", "android")
-                                put("appVersion", context.packageManager
-                                    .getPackageInfo(context.packageName, 0)?.versionName ?: "1.0.0")
+            try {
+                if (!ensureFirebaseInitialized(context)) {
+                    android.util.Log.w(TAG, "FirebaseApp is not available; skipping FCM token registration.")
+                    return
+                }
+
+                com.google.firebase.messaging.FirebaseMessaging.getInstance().token
+                    .addOnSuccessListener { token ->
+                        // POST the token to the register-push-token edge function
+                        // in a background coroutine.
+                        val scope = kotlinx.coroutines.CoroutineScope(
+                            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
+                        )
+                        scope.launch {
+                            try {
+                                val deviceId = android.provider.Settings.Secure.getString(
+                                    context.contentResolver,
+                                    android.provider.Settings.Secure.ANDROID_ID
+                                ) ?: "unknown"
+                                val payload = org.json.JSONObject().apply {
+                                    put("fcmToken", token)
+                                    put("deviceId", deviceId)
+                                    put("platform", "android")
+                                    put("appVersion", context.packageManager
+                                        .getPackageInfo(context.packageName, 0)?.versionName ?: "1.0.0")
+                                }
+                                com.example.di.AppServiceContainer.supabaseClient
+                                    .invokeFunction("register-push-token", payload)
+                            } catch (e: Exception) {
+                                android.util.Log.w(TAG, "FCM token registration failed: ${e.message}")
                             }
-                            com.example.di.AppServiceContainer.supabaseClient
-                                .invokeFunction("register-push-token", payload)
-                        } catch (e: Exception) {
-                            android.util.Log.w(TAG, "FCM token registration failed: ${e.message}")
                         }
                     }
-                }
-                .addOnFailureListener { e ->
-                    android.util.Log.w(TAG, "FCM token retrieval failed: ${e.message}")
-                }
+                    .addOnFailureListener { e ->
+                        android.util.Log.w(TAG, "FCM token retrieval failed: ${e.message}")
+                    }
+            } catch (t: Throwable) {
+                android.util.Log.w(TAG, "FCM token registration caught error: ${t.message}")
+            }
         }
     }
 
