@@ -8,6 +8,7 @@ import com.example.model.DomainMessage
 import com.example.model.MessageType
 import com.example.service.*
 import com.example.service.supabase.SupabaseClient
+import com.example.storage.TriggerStorageManager
 import com.example.service.webrtc.AgoraWebRtcService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,6 +69,8 @@ object AppServiceContainer {
         private set
     lateinit var secretVaultService: com.example.service.SecretVaultService
         private set
+    lateinit var storageManager: TriggerStorageManager
+        private set
 
     val agoraService: AgoraWebRtcService
         get() = agoraWebRtcService
@@ -78,6 +81,14 @@ object AppServiceContainer {
         // Application context only — the previous code pinned the first
         // Activity to process-wide singletons for the app's lifetime (leak).
         this.context = context.applicationContext
+
+        // Phase 1 (WhatsApp-grade storage): single source of truth for every
+        // on-device path. The directory tree is created OFF the main thread —
+        // initialize() must never block or crash the UI. ensureTree() is
+        // idempotent and never throws; the appScope handler below is the
+        // extra safety net for anything unexpected.
+        storageManager = TriggerStorageManager(context)
+        appScope.launch(Dispatchers.IO) { storageManager.ensureTree() }
 
         // Pass context so the Supabase session persists across process death
         supabaseClient = SupabaseClient(context)
