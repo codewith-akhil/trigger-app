@@ -51,3 +51,57 @@ export async function resolveUserId(authHeader: string | null): Promise<string |
   if (error || !data?.user) return null;
   return data.user.id;
 }
+
+// ---------------------------------------------------------------------------
+// Storage-capable service key
+// ---------------------------------------------------------------------------
+// On projects migrated to the new API-key system, the runtime-injected
+// SUPABASE_SERVICE_ROLE_KEY can be a new-style secret that PostgREST accepts
+// but the STORAGE service still rejects. The legacy JWT stored in
+// public.app_secrets always works for storage, so probe the env key first and
+// fall back to the DB copy when it is rejected. Cached per isolate.
+
+let storageKeyCache: string | null = null;
+
+export async function resolveStorageServiceKey(admin: SupabaseClient): Promise<string> {
+  if (storageKeyCache) return storageKeyCache;
+
+  const envKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const url = Deno.env.get("SUPABASE_URL") ?? "";
+
+  if (envKey && url) {
+    try {
+      const probe = await fetch(`${url}/storage/v1/bucket`, {
+        headers: { Authorization: `Bearer ${envKey}` },
+      });
+      // 200 = key accepted; anything 4xx/5xx auth-related (401/403) = rejected.
+      if (probe.ok) {
+        storageKeyCache = envKey;
+        return storageKeyCache;
+      }
+      console.error("storage rejected env service key (status", probe.status, ") — using app_secrets fallback");
+    } catch (e) {
+      console.error("storage probe failed", e);
+    }
+  }
+
+  const { data } = await admin
+    .from("app_secrets")
+    .select("value")
+    .eq("key", "service_role_key")
+    .maybeSingle();
+  const stored = (data as { value?: string } | null)?.value ?? "";
+  storageKeyCache = stored || envKey;
+  return storageKeyCache;
+}
+
+/** Admin client bound to an explicit key (use with resolveStorageServiceKey). */
+export function createAdminClientWithKey(serviceKey: string): SupabaseClient {
+  const url = Deno.env.get("SUPABASE_URL");
+  if (!url || !serviceKey) {
+    throw new Error("Missing SUPABASE_URL or service key");
+  }
+  return createClient(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}

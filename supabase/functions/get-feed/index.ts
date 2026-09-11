@@ -21,7 +21,11 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { handleOptions, json, errorResponse } from "../_shared/cors.ts";
-import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
+import {
+  createAdminClient,
+  resolveUserId,
+  resolveStorageServiceKey,
+} from "../_shared/supabase.ts";
 
 const MEDIA_BUCKET = "feed-media";
 const SIGN_TTL_SECONDS = 3600;
@@ -39,13 +43,13 @@ interface SignedEntry {
 async function signPaths(
   paths: string[],
   transform: { width: number } | null,
+  storageKey: string,
 ): Promise<Map<string, string>> {
   const result = new Map<string, string>();
   if (paths.length === 0) return result;
 
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  if (!serviceKey || !supabaseUrl) return result;
+  if (!storageKey || !supabaseUrl) return result;
 
   const body: Record<string, unknown> = { expiresIn: SIGN_TTL_SECONDS, paths };
   if (transform) body.transform = { width: transform.width, resize: "fill" };
@@ -53,7 +57,7 @@ async function signPaths(
   const res = await fetch(`${supabaseUrl}/storage/v1/object/sign/${MEDIA_BUCKET}`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${serviceKey}`,
+      Authorization: `Bearer ${storageKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
@@ -88,6 +92,9 @@ async function handler(req: Request): Promise<Response> {
   }
 
   const supabase = createAdminClient();
+  // storage rejects some runtime service keys (new API-key system) — resolve
+  // a key that actually works for storage signing
+  const storageKey = await resolveStorageServiceKey(supabase);
   const scope = body.scope ?? "feed";
   const limit = Math.min(Math.max(Number(body.limit ?? 20), 1), 50);
   const offset = Math.max(Number(body.offset ?? 0), 0);
@@ -171,8 +178,8 @@ async function handler(req: Request): Promise<Response> {
   }
 
   const [fullSigned, previewSigned] = await Promise.all([
-    signPaths(fullPaths, null),
-    signPaths(previewPaths, { width: 24 }),
+    signPaths(fullPaths, null, storageKey),
+    signPaths(previewPaths, { width: 24 }, storageKey),
   ]);
 
   // ---------------------------------------------------------------------

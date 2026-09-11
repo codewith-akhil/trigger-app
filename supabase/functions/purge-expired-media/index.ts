@@ -11,8 +11,12 @@
 // The ROW IS NEVER DELETED — the ledger must prove deletion happened.
 // Rows in status 'legal_hold' are deliberately never touched.
 //
-// Auth: SERVICE ROLE KEY ONLY. Any other Authorization is rejected with 401
-// (timing-safe comparison). Deploy with --no-verify-jwt (self-validates).
+// Auth: SERVICE ROLE KEY ONLY. Accepts (a) the runtime-injected service-role
+// key, or (b) the key stored in public.app_secrets (the pg_cron job sends that
+// one — projects migrated to the new API-key system inject a DIFFERENT
+// runtime key, so the DB value is the source of truth for cron). Any other
+// Authorization is rejected with 401 (timing-safe comparisons).
+// Deploy with --no-verify-jwt (self-validates).
 //
 // Response 200: { "ok": true, "purged": n, "failed": m, "scanned": n+m }
 // ----------------------------------------------------------------------------
@@ -40,14 +44,27 @@ async function handler(req: Request): Promise<Response> {
   const preflight = handleOptions(req);
   if (preflight) return preflight;
 
-  // Service-role key ONLY (the pg_cron job sends exactly this header).
-  const expected = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  // Service-role key ONLY (env-injected key, or the app_secrets copy the
+  // pg_cron job sends).
   const provided = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
-  if (!expected || !timingSafeEqualStr(provided, expected)) {
-    return errorResponse("Unauthorized", 401);
-  }
+  if (!provided) return errorResponse("Unauthorized", 401);
 
   const supabase = createAdminClient();
+
+  const envKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  let authKey = "";
+  if (envKey && timingSafeEqualStr(provided, envKey)) {
+    authKey = envKey;
+  } else {
+    const { data: secretRow } = await supabase
+      .from("app_secrets")
+      .select("value")
+      .eq("key", "service_role_key")
+      .maybeSingle();
+    const stored = (secretRow as { value?: string } | null)?.value ?? "";
+    if (stored && timingSafeEqualStr(provided, stored)) authKey = stored;
+  }
+  if (!authKey) return errorResponse("Unauthorized", 401);
 
   // Rows due for purge — oldest first.
   const { data: due, error: selErr } = await supabase
@@ -65,7 +82,7 @@ async function handler(req: Request): Promise<Response> {
   const rows = (due ?? []) as { id: string; message_id: string; vault_path: string | null }[];
   let purged = 0;
   let failed = 0;
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const serviceKey = authKey; // validated key — also used for storage deletes
   const baseUrl = Deno.env.get("SUPABASE_URL") ?? "";
 
   for (const row of rows) {

@@ -18,7 +18,17 @@ alter table public.countries add column if not exists fx_updated_at   timestampt
 alter table public.countries add column if not exists currency        char(3);
 
 -- backfill country_name for the dial-code shape where it is null
-update public.countries set country_name = name where country_name is null and name is not null;
+-- (guarded: the dial-code `name` column may no longer exist if the
+--  20260910 currency migration already reshaped the table)
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'countries' and column_name = 'name'
+  ) then
+    execute 'update public.countries set country_name = name where country_name is null and name is not null';
+  end if;
+end $$;
 
 -- FULL unique index (NULLs never collide) so ON CONFLICT inference works in
 -- every historical table shape — the 20260910 migration may already have a

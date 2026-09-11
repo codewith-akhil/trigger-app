@@ -26,7 +26,12 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { handleOptions, json, errorResponse } from "../_shared/cors.ts";
-import { createAdminClient, resolveUserId } from "../_shared/supabase.ts";
+import {
+  createAdminClient,
+  resolveUserId,
+  resolveStorageServiceKey,
+  createAdminClientWithKey,
+} from "../_shared/supabase.ts";
 
 interface MediaItem {
   position?: number;
@@ -240,13 +245,16 @@ async function handler(req: Request): Promise<Response> {
       if (!post) return errorResponse("Post not found", 404);
       if (post.author_id !== userId) return errorResponse("Not your post", 403);
 
-      // remove storage objects under {authorId}/{postId}/
+      // remove storage objects under {authorId}/{postId}/ — the storage API
+      // may reject the runtime service key, so bind to a resolved one
+      const storageKey = await resolveStorageServiceKey(supabase);
+      const storageAdmin = createAdminClientWithKey(storageKey);
       const folder = `${post.author_id}/${post.id}`;
-      const { data: objects } = await supabase.storage.from(MEDIA_BUCKET).list(folder, {
+      const { data: objects } = await storageAdmin.storage.from(MEDIA_BUCKET).list(folder, {
         limit: 100,
       });
       if (objects && objects.length > 0) {
-        await supabase.storage.from(MEDIA_BUCKET).remove(
+        await storageAdmin.storage.from(MEDIA_BUCKET).remove(
           objects.map((o) => `${folder}/${o.name}`),
         );
       }
