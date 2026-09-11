@@ -98,16 +98,19 @@ fun PaymentValidationScreen(
                         validationStatus = ValidationStatus.SUCCESS
                     }
                     is RazorpayVerifyResult.Failed -> {
-                        // In local dev/mock or edge scenarios, if Razorpay returned success to client,
-                        // unlock so user is never locked out of paid content
-                        feedRepository.unlockPaidPost(postId)
-                        validationStatus = ValidationStatus.SUCCESS
+                        // SECURITY: a failed server verification must NEVER unlock
+                        // the post — unlocking here would let any client-side error
+                        // (or tampered signature) grant free access. Show the
+                        // failure state with the server's diagnosis instead.
+                        failureReason = result.message
+                        validationStatus = ValidationStatus.FAILED
                     }
                 }
             } else {
-                // If signature was not provided (e.g. simulated success), unlock and show receipt
-                feedRepository.unlockPaidPost(postId)
-                validationStatus = ValidationStatus.SUCCESS
+                // No signature present — there is nothing to verify. Never unlock
+                // on an unverifiable payment.
+                failureReason = "Payment signature was missing — verification is not possible."
+                validationStatus = ValidationStatus.FAILED
             }
         }
     }
