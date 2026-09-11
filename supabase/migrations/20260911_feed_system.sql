@@ -19,12 +19,12 @@ alter table public.countries add column if not exists currency        char(3);
 
 -- backfill country_name for the dial-code shape where it is null
 update public.countries set country_name = name where country_name is null and name is not null;
--- backfill currency_code from the legacy `currency` column if present
-update public.countries set currency_code = currency where currency_code is null and currency is not null;
 
--- unique index so seeding can ON CONFLICT
+-- FULL unique index (NULLs never collide) so ON CONFLICT inference works in
+-- every historical table shape — the 20260910 migration may already have a
+-- currency_code UNIQUE constraint; a second index is redundant but harmless.
 create unique index if not exists countries_currency_code_uniq
-  on public.countries (currency_code) where currency_code is not null;
+  on public.countries (currency_code);
 
 -- currency seed (fx_rate refreshed from exchangerate-api by cron)
 insert into public.countries (currency_code, country_name, iso2, currency_symbol, fx_rate)
@@ -38,8 +38,6 @@ values
   ('CAD','Canada','CA','C$', 0.730000),
   ('SGD','Singapore','SG','S$', 0.740000),
   ('JPY','Japan','JP','¥', 0.006700),
-  ('LKR','Sri Lanka','LK','Rs', 0.003400),
-  ('NPR','Nepal','NP','रू', 0.007400),
   ('MYR','Malaysia','MY','RM', 0.210000)
 on conflict (currency_code) do nothing;
 

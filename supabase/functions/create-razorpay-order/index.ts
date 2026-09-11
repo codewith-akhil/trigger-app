@@ -68,7 +68,9 @@ async function handler(req: Request): Promise<Response> {
     return errorResponse("amount must be a positive number", 422);
   }
   const currency = (body.currency ?? "INR").toUpperCase();
-  if (!["INR", "USD", "EUR", "GBP"].includes(currency)) {
+  // Razorpay-supported currencies (covers the `countries` seed used by the
+  // feed's currency picker).
+  if (!["INR", "USD", "EUR", "GBP", "AED", "AUD", "CAD", "SGD", "JPY", "MYR"].includes(currency)) {
     return errorResponse("Unsupported currency", 422);
   }
   if (!body.receipt?.trim()) return errorResponse("receipt is required", 422);

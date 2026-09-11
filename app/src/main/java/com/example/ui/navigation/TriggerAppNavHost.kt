@@ -345,7 +345,11 @@ fun TriggerAppNavHost(
                     navController.navigate(TriggerDestinations.postUpload(mediaType))
                 },
                 onNavigateToEditDraft = { postId ->
-                    navController.navigate(TriggerDestinations.postUpload("photo", postId))
+                    // Reuse the draft's own media type so "replace media" picks the
+                    // right gallery kind.
+                    val draft = AppServiceContainer.feedRepository.drafts.value.find { it.id == postId }
+                    val mediaType = if (draft?.mediaType == com.example.model.PostMediaType.VIDEO) "video" else "photo"
+                    navController.navigate(TriggerDestinations.postUpload(mediaType, postId))
                 },
                 onNavigateToPostView = { postId ->
                     navController.navigate(TriggerDestinations.postView(postId))
