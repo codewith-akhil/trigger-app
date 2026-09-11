@@ -58,6 +58,7 @@ fun WhatsAppDashboardScreen(
     onNavigateToScheduleStream: () -> Unit = {},
     onNavigateToStreamHistory: () -> Unit = {},
     onNavigateToPostUpload: (mediaType: String) -> Unit = {},
+    onNavigateToEditDraft: (postId: String) -> Unit = {},
     onNavigateToPostView: (postId: String) -> Unit = {},
     onNavigateToPaymentOverview: (postId: String) -> Unit = {},
     // Full cleanup (presence offline -> realtime disconnect -> server signOut
@@ -369,7 +370,8 @@ fun WhatsAppDashboardScreen(
                     FeedTabContent(
                         onNavigateToUpload = { showPostMediaPickerSheet = true },
                         onNavigateToPostView = onNavigateToPostView,
-                        onNavigateToPaymentOverview = onNavigateToPaymentOverview
+                        onNavigateToPaymentOverview = onNavigateToPaymentOverview,
+                        onNavigateToEditDraft = onNavigateToEditDraft
                     )
                 }
 

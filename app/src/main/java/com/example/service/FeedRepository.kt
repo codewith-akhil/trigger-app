@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import com.example.di.AppServiceContainer
+import com.example.service.supabase.SupabaseResult
 import com.example.model.CurrencyOption
 import com.example.model.FeedMediaItem
 import com.example.model.FeedPost

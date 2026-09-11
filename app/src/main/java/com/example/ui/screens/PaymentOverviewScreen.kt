@@ -292,7 +292,10 @@ fun PaymentOverviewScreen(
                                 .background(Color.Black),
                             contentAlignment = Alignment.Center
                         ) {
-                            val thumbUrl = post.mediaUrls.firstOrNull() ?: ""
+                            // Locked paid posts only carry the tiny preview — never
+                            // the full media URL.
+                            val thumbUrl = post.lockedPreviewUrls.firstOrNull()
+                                ?: post.mediaUrls.firstOrNull() ?: ""
                             if (thumbUrl.isNotBlank()) {
                                 AsyncImage(
                                     model = thumbUrl,

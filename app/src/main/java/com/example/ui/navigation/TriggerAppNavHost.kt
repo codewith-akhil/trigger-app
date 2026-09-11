@@ -49,8 +49,9 @@ object TriggerDestinations {
     const val STREAM_HISTORY = "stream_history"
     const val WALLET = "wallet"
     const val SECRET_VAULT = "secret_vault"
-    const val POST_UPLOAD = "post_upload/{mediaType}"
-    fun postUpload(mediaType: String = "photo") = "post_upload/$mediaType"
+    const val POST_UPLOAD = "post_upload/{mediaType}?draftId={draftId}"
+    fun postUpload(mediaType: String = "photo", draftId: String? = null) =
+        "post_upload/$mediaType" + if (draftId.isNullOrBlank()) "?draftId=" else "?draftId=$draftId"
 
     const val POST_VIEW = "post_view/{postId}"
     fun postView(postId: String) = "post_view/$postId"
@@ -343,6 +344,9 @@ fun TriggerAppNavHost(
                 onNavigateToPostUpload = { mediaType ->
                     navController.navigate(TriggerDestinations.postUpload(mediaType))
                 },
+                onNavigateToEditDraft = { postId ->
+                    navController.navigate(TriggerDestinations.postUpload("photo", postId))
+                },
                 onNavigateToPostView = { postId ->
                     navController.navigate(TriggerDestinations.postView(postId))
                 },
@@ -613,10 +617,18 @@ fun TriggerAppNavHost(
             )
         }
 
-        composable(TriggerDestinations.POST_UPLOAD) { backStackEntry ->
+        composable(
+            route = TriggerDestinations.POST_UPLOAD,
+            arguments = listOf(
+                androidx.navigation.navArgument("mediaType") { type = androidx.navigation.NavType.StringType; defaultValue = "photo" },
+                androidx.navigation.navArgument("draftId") { type = androidx.navigation.NavType.StringType; defaultValue = "" }
+            )
+        ) { backStackEntry ->
             val mediaType = backStackEntry.arguments?.getString("mediaType") ?: "photo"
+            val draftId = backStackEntry.arguments?.getString("draftId").orEmpty()
             PostUploadScreen(
                 initialMediaType = mediaType,
+                draftId = draftId.takeIf { it.isNotBlank() },
                 onBack = {
                     navController.popBackStack()
                 },

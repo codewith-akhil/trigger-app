@@ -84,6 +84,12 @@ fun PostViewScreen(
     val userProfile by UserRepository.profile.collectAsState()
     val reportedCommentIds by feedRepository.reportedCommentIds.collectAsState()
 
+    // Re-fetch the post on open — signed media URLs expire (1h TTL) and the
+    // unlock state may have changed on another device.
+    LaunchedEffect(postId) {
+        feedRepository.getPostLive(postId)
+    }
+
     var showCommentsSheet by remember { mutableStateOf(false) }
     var doubleTapHeartVisible by remember { mutableStateOf(false) }
     var replyingToComment by remember { mutableStateOf<PostComment?>(null) }
@@ -318,7 +324,11 @@ fun PostViewScreen(
                                     }
                                 }
                             } else {
-                                val url = post.mediaUrls.firstOrNull() ?: ""
+                                // Locked paid posts carry a tiny preview URL for the
+                                // blur treatment (full urls are withheld by the server).
+                                val url = post.mediaUrls.firstOrNull()
+                                    ?: post.lockedPreviewUrls.firstOrNull()
+                                    ?: ""
                                 AsyncImage(
                                     model = url,
                                     contentDescription = "Post Image",

@@ -94,7 +94,10 @@ fun PaymentValidationScreen(
                 )
                 when (result) {
                     is RazorpayVerifyResult.Verified -> {
-                        feedRepository.unlockPaidPost(postId)
+                        // Server recorded the unlock — re-fetch the post (fresh
+                        // signed media urls) and mark it locally too.
+                        feedRepository.unlockPaidPostLocally(postId)
+                        feedRepository.getPostLive(postId)
                         validationStatus = ValidationStatus.SUCCESS
                     }
                     is RazorpayVerifyResult.Failed -> {

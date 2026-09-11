@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.TriggerFabGreen
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -70,7 +71,7 @@ fun FeedCropEditor(
     onCancel: () -> Unit
 ) {
     val context = LocalContext.current
-    val density = androidx.compose.ui.platform.LocalDensity.current
+    val cropScope = rememberCoroutineScope()
 
     var frameSize by remember { mutableStateOf(IntSize.Zero) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -121,44 +122,46 @@ fun FeedCropEditor(
         return Offset(off.x.coerceIn(-maxX, maxX), off.y.coerceIn(-maxY, maxY))
     }
 
-    suspend fun confirm() {
+    fun confirm() {
         val bm = bitmap ?: return
         val frame = frameSize
         if (frame.width == 0 || frame.height == 0) return
         processing = true
         processError = null
-        try {
-            val s = baseScale * scale
-            val contentW = bm.width * s
-            val contentH = bm.height * s
-            val srcLeft = ((contentW - frame.width) / 2f - offset.x) / s
-            val srcTop = ((contentH - frame.height) / 2f - offset.y) / s
-            val srcW = frame.width / s
-            val srcH = frame.height / s
+        cropScope.launch {
+            try {
+                val s = baseScale * scale
+                val contentW = bm.width * s
+                val contentH = bm.height * s
+                val srcLeft = ((contentW - frame.width) / 2f - offset.x) / s
+                val srcTop = ((contentH - frame.height) / 2f - offset.y) / s
+                val srcW = frame.width / s
+                val srcH = frame.height / s
 
-            val clampedLeft = srcLeft.coerceIn(0f, bm.width.toFloat())
-            val clampedTop = srcTop.coerceIn(0f, bm.height.toFloat())
-            val clampedW = min(srcW, bm.width - clampedLeft).coerceAtLeast(1f)
-            val clampedH = min(srcH, bm.height - clampedTop).coerceAtLeast(1f)
+                val clampedLeft = srcLeft.coerceIn(0f, bm.width.toFloat())
+                val clampedTop = srcTop.coerceIn(0f, bm.height.toFloat())
+                val clampedW = min(srcW, bm.width - clampedLeft).coerceAtLeast(1f)
+                val clampedH = min(srcH, bm.height - clampedTop).coerceAtLeast(1f)
 
-            if (isVideo) {
-                val out = withContext(Dispatchers.IO) {
-                    transformVideoCrop(
-                        context, mediaUri,
-                        clampedLeft / bm.width, clampedTop / bm.height,
-                        (clampedLeft + clampedW) / bm.width, (clampedTop + clampedH) / bm.height
-                    ) { fraction -> progress = fraction }
+                if (isVideo) {
+                    val out = withContext(Dispatchers.IO) {
+                        transformVideoCrop(
+                            context, mediaUri,
+                            clampedLeft / bm.width, clampedTop / bm.height,
+                            (clampedLeft + clampedW) / bm.width, (clampedTop + clampedH) / bm.height
+                        ) { fraction -> progress = fraction }
+                    }
+                    onConfirmed(CropOutput.CroppedVideo(out, videoDurationMs))
+                } else {
+                    val out = withContext(Dispatchers.IO) {
+                        cropImage(context, bm, clampedLeft, clampedTop, clampedW, clampedH)
+                    }
+                    onConfirmed(CropOutput.CroppedImage(out.first, out.second, out.third))
                 }
-                onConfirmed(CropOutput.CroppedVideo(out, videoDurationMs))
-            } else {
-                val out = withContext(Dispatchers.IO) {
-                    cropImage(context, bm, clampedLeft, clampedTop, clampedW, clampedH)
-                }
-                onConfirmed(CropOutput.CroppedImage(out.first, out.second, out.third))
+            } catch (e: Exception) {
+                processError = e.message ?: "Cropping failed"
+                processing = false
             }
-        } catch (e: Exception) {
-            processError = e.message ?: "Cropping failed"
-            processing = false
         }
     }
 
@@ -407,6 +410,9 @@ private fun cropImage(
 
 // ---------------------------------------------------------------------------
 // Video crop via media3 Transformer + CropEffect
+// Completion is detected by polling getProgress until it reports that no
+// transformation is active (PROGRESS_STATE_NO_TRANSFORMATION) — the exact
+// listener API differs across media3 versions, polling does not.
 // ---------------------------------------------------------------------------
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 private suspend fun transformVideoCrop(
@@ -421,42 +427,26 @@ private suspend fun transformVideoCrop(
     val outFile = File(context.cacheDir, "feed_video_crop_${System.currentTimeMillis()}.mp4")
     if (outFile.exists()) outFile.delete()
 
-    val cropEffect = androidx.media3.effect.CropEffect(fracLeft, fracTop, fracRight, fracBottom)
+    val cropEffect = androidx.media3.effect.Crop(fracLeft, fracTop, fracRight, fracBottom)
 
     val transformer = androidx.media3.transformer.Transformer.Builder(context)
         .setVideoEffects(listOf(cropEffect))
         .build()
 
-    val latch = java.util.concurrent.CountDownLatch(1)
-    val errorRef = java.util.concurrent.atomic.AtomicReference<Exception?>()
-
-    transformer.addListener(
-        androidx.core.content.ContextCompat.getMainExecutor(context),
-        object : androidx.media3.transformer.Transformer.Listener {
-            override fun onCompleted(result: androidx.media3.transformer.CompositionResult) {
-                latch.countDown()
-            }
-
-            override fun onError(exception: androidx.media3.transformer.TransformationException) {
-                errorRef.set(exception)
-                latch.countDown()
-            }
-        }
-    )
-
     val mediaItem = androidx.media3.common.MediaItem.fromUri(inputUri)
     transformer.startTransformation(mediaItem, outFile.absolutePath)
 
     val holder = androidx.media3.transformer.ProgressHolder()
-    while (!latch.await(150, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-        transformer.getProgress(holder)
+    val noTransformation = androidx.media3.transformer.Transformer.PROGRESS_STATE_NO_TRANSFORMATION
+
+    while (transformer.getProgress(holder) != noTransformation) {
         onProgress(holder.progress / 100f)
+        Thread.sleep(150)
     }
     onProgress(1f)
 
-    errorRef.get()?.let { throw IllegalStateException("Video processing failed: ${it.message}", it) }
     if (!outFile.exists() || outFile.length() == 0L) {
-        throw IllegalStateException("Video processing produced no output")
+        throw IllegalStateException("Video processing produced no output — try a shorter clip")
     }
     outFile
 }
