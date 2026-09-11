@@ -159,6 +159,53 @@ async function handler(req: Request): Promise<Response> {
         related_stream_id: streamId,
       });
     }
+  } else if (purpose === "post_unlock" && streamId) {
+    // Creator-economy post unlock. Same payer rule as the other purposes —
+    // a valid signature for someone else's payment can never unlock for them.
+    if (userId !== payerUserId) {
+      return errorResponse("Only the payer can verify this payment", 403, ErrorCode.FORBIDDEN);
+    }
+
+    const { data: post } = await supabase
+      .from("feed_posts")
+      .select("id, author_id, post_type")
+      .eq("id", streamId)
+      .single();
+    if (!post) return errorResponse("Post not found", 404);
+    if (post.post_type !== "paid") return errorResponse("Post is not a paid post", 422);
+
+    // Record the unlock (idempotent on (post_id, buyer_id))
+    const { error: unlockError } = await supabase.from("post_unlocks").upsert(
+      {
+        post_id: post.id,
+        buyer_id: userId,
+        creator_id: post.author_id,
+        amount: amount,
+        currency: currency,
+        payment_id: body.razorpayPaymentId,
+        reference_id: referenceId,
+      },
+      { onConflict: "post_id,buyer_id" },
+    );
+    if (unlockError) {
+      console.error("post_unlock insert failed", unlockError);
+      return errorResponse("Payment verified but unlock failed — contact support", 500, ErrorCode.INTERNAL_ERROR);
+    }
+
+    // Credit the creator's wallet (service role bypasses RLS — caller is buyer)
+    const { error: creditError } = await supabase.from("wallet_transactions").insert({
+      user_id: post.author_id,
+      type: "credit",
+      amount: amount,
+      currency: currency === "INR" ? "INR (₹)" : currency,
+      description: `Post unlock sale (${post.id})`,
+      reference_id: referenceId,
+      status: "completed",
+    });
+    if (creditError) {
+      // Non-fatal: the unlock itself is recorded; log for reconciliation.
+      console.error("creator wallet credit failed", creditError);
+    }
   } else if (purpose === "wallet_topup") {
     // Credit the PAYER (notes.user_id), not the caller — anyone could
     // otherwise submit someone's signature and have the money land in THEIR
