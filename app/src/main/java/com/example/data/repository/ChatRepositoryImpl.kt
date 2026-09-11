@@ -411,6 +411,13 @@ class ChatRepositoryImpl(
         messageDao.updateMessageMediaFull(messageId, mediaUrl, bucket, path)
     }
 
+    /** Phase 3 media persistence: records the durable on-device archive copy
+     *  path (Trigger folder tree) on the row after a successful download, or
+     *  nulls it. UI render/play prefers this file when it exists. */
+    suspend fun updateMessageLocalMediaPath(messageId: String, path: String?) {
+        messageDao.updateMessageLocalMediaPath(messageId, path)
+    }
+
     /** Marks a message viewed (view-once sync from Realtime UPDATE events). */
     suspend fun markMessageViewed(messageId: String) {
         messageDao.markMessageViewed(messageId)
@@ -418,9 +425,16 @@ class ChatRepositoryImpl(
 
     /**
      * Inserts a message directly (for incoming Realtime messages).
+     * Phase 3: REPLACE-on-conflict would otherwise wipe an already-archived
+     * localMediaPath when the same row is re-delivered (realtime replay,
+     * history refetch) — the archived path is preserved when the incoming
+     * domain object doesn't carry one.
      */
     suspend fun insertMessage(message: DomainMessage) {
-        messageDao.insertMessage(MessageEntity.fromDomain(message))
+        val preservedPath = message.localMediaPath
+            ?: messageDao.getMessageById(message.id)?.localMediaPath
+        val toInsert = if (preservedPath != null) message.copy(localMediaPath = preservedPath) else message
+        messageDao.insertMessage(MessageEntity.fromDomain(toInsert))
     }
 
     /**

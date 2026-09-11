@@ -759,6 +759,19 @@ fun privateMediaModel(bucket: String?, url: String?, path: String?): Any {
         .build()
 }
 
+/**
+ * Phase 3 media persistence — the durable on-device archive copy for a media
+ * message, or null when the row carries none (still downloading, download
+ * failed, view-once — which is NEVER archived) or the file no longer exists.
+ * Pure function (disk check inside): wrap in remember(localMediaPath) at the
+ * call site so composables don't stat the file on every recomposition.
+ */
+fun archivedMediaFile(message: DomainMessage): java.io.File? {
+    val path = message.localMediaPath?.takeIf { it.isNotBlank() } ?: return null
+    val file = java.io.File(path)
+    return if (file.exists() && file.length() > 0L) file else null
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DomainChatBubble(
@@ -966,12 +979,25 @@ fun DomainChatBubble(
                             // poster frame (mediaThumbnail) — Coil cannot decode a
                             // video URL as an image, which used to leave both
                             // parties staring at a blank bubble.
+                            // Phase 3 file-first: when the durable on-device archive
+                            // copy exists, IMAGE bubbles load the File directly —
+                            // instant, zero network, works offline. The URL pipeline
+                            // (signed/public) is the fallback. VIDEO keeps the poster
+                            // model; playback prefers the archive inside the viewer.
+                            val localArchive = remember(message.localMediaPath) { archivedMediaFile(message) }
                             val mediaModel = if (isVideoMessage && !message.mediaThumbnail.isNullOrEmpty()) {
                                 message.mediaThumbnail
                             } else {
                                 message.mediaUrl ?: message.mediaThumbnail
                             }
-                            if (!mediaModel.isNullOrEmpty()) {
+                            if (localArchive != null && !isVideoMessage) {
+                                AsyncImage(
+                                    model = localArchive,
+                                    contentDescription = "Media",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else if (!mediaModel.isNullOrEmpty()) {
                                 AsyncImage(
                                     // Task 24: stable bucket/path cache keys so rotated
                                     // signed URLs keep hitting Coil's cached copy.
@@ -1146,12 +1172,22 @@ fun DomainChatBubble(
                             ) {
                                 // VIDEO prefers the poster frame — Coil cannot
                                 // decode a video URL as an image.
+                                // Phase 3 file-first: image bubbles load the durable
+                                // archive copy when it exists (URL pipeline fallback).
+                                val localArchive = remember(message.localMediaPath) { archivedMediaFile(message) }
                                 val mediaModel = if (isVideoMessage && !message.mediaThumbnail.isNullOrEmpty()) {
                                     message.mediaThumbnail
                                 } else {
                                     message.mediaUrl ?: message.mediaThumbnail
                                 }
-                                if (!mediaModel.isNullOrEmpty()) {
+                                if (localArchive != null && !isVideoMessage) {
+                                    AsyncImage(
+                                        model = localArchive,
+                                        contentDescription = "Media",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else if (!mediaModel.isNullOrEmpty()) {
                                     AsyncImage(
                                         // Task 24: stable bucket/path cache keys.
                                         model = privateMediaModel(

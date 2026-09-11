@@ -38,6 +38,12 @@ data class MessageEntity(
     val mediaThumbnail: String? = null,
     val mediaBucket: String? = null,
     val mediaPath: String? = null,
+    // Phase 3 media persistence: absolute path of the durable on-device copy
+    // inside the Trigger folder tree (Phase 1). Null = not archived yet —
+    // render/play then falls back to the URL pipeline. View-once rows never
+    // carry one (never archived). Written by MIGRATION_11_12's column +
+    // MessageServiceImpl archive worker / outgoing send flow.
+    val localMediaPath: String? = null,
     val fileName: String? = null,
     val fileSize: Long = 0L,
     val mediaDurationSec: Int = 0,
@@ -104,6 +110,7 @@ data class MessageEntity(
             mediaThumbnail = mediaThumbnail,
             mediaBucket = mediaBucket,
             mediaPath = mediaPath,
+            localMediaPath = localMediaPath,
             fileName = fileName,
             fileSize = fileSize,
             mediaDurationSec = mediaDurationSec,
@@ -154,6 +161,7 @@ data class MessageEntity(
                 mediaThumbnail = domain.mediaThumbnail,
                 mediaBucket = domain.mediaBucket,
                 mediaPath = domain.mediaPath,
+                localMediaPath = domain.localMediaPath,
                 fileName = domain.fileName,
                 fileSize = domain.fileSize,
                 mediaDurationSec = domain.mediaDurationSec,

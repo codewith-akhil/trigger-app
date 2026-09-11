@@ -74,6 +74,11 @@ data class DomainMessage(
     // expires. Previously only the (signed, expiring) URL was kept.
     val mediaBucket: String? = null,
     val mediaPath: String? = null,
+    // Phase 3 media persistence: absolute path of the durable on-device copy
+    // inside the Trigger folder tree (TriggerStorageManager). Null = not
+    // archived (UI falls back to the URL pipeline). View-once is NEVER
+    // archived. Renders/players prefer this file when it exists.
+    val localMediaPath: String? = null,
     val fileName: String? = null,
     val fileSize: Long = 0L,
     val mediaDurationSec: Int = 0,

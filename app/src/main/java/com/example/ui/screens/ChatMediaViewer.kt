@@ -97,11 +97,20 @@ fun ChatMediaViewer(
                     thumbnailUrl = message.mediaThumbnail,
                     mediaBucket = message.mediaBucket,
                     mediaPath = message.mediaPath,
+                    // Phase 3: prefer the durable archive copy for playback.
+                    localMediaPath = message.localMediaPath,
                     isViewOnce = viewOnce
                 )
             } else {
                 // Image viewer with pinch to zoom
-                if (!message.mediaUrl.isNullOrEmpty() || !message.mediaThumbnail.isNullOrEmpty()) {
+                // Phase 3 file-first: the durable on-device archive copy loads
+                // straight from disk when present (instant, offline-safe);
+                // otherwise the existing signed/public URL pipeline runs.
+                // VIEW-ONCE keeps its own branch FIRST and untouched: it only
+                // ever loads the URL with both Coil caches disabled — and
+                // view-once rows never carry an archive anyway.
+                val localArchive = remember(message.localMediaPath) { archivedMediaFile(message) }
+                if (localArchive != null || !message.mediaUrl.isNullOrEmpty() || !message.mediaThumbnail.isNullOrEmpty()) {
                     AsyncImage(
                         // Task 24: stable bucket/path cache keys for private media.
                         // View-once: bypass Coil's memory AND disk caches entirely
@@ -113,6 +122,8 @@ fun ChatMediaViewer(
                                 .memoryCachePolicy(coil.request.CachePolicy.DISABLED)
                                 .diskCachePolicy(coil.request.CachePolicy.DISABLED)
                                 .build()
+                        } else if (localArchive != null) {
+                            localArchive
                         } else {
                             com.example.ui.screens.privateMediaModel(
                                 message.mediaBucket,
@@ -333,18 +344,32 @@ private fun RealVideoPlayer(
     thumbnailUrl: String?,
     mediaBucket: String? = null,
     mediaPath: String? = null,
+    // Phase 3 media persistence: durable on-device archive copy — preferred
+    // playback source when the file exists. Null for view-once (never archived).
+    localMediaPath: String? = null,
     isViewOnce: Boolean = false
 ) {
     val context = LocalContext.current
     var playbackError by remember(mediaUrl) { mutableStateOf<String?>(null) }
     var retryTick by remember(mediaUrl) { mutableIntStateOf(0) }
 
+    // Phase 3: the durable archive copy wins when it actually exists —
+    // instant local playback, no signed-URL round-trip, works offline.
+    val localArchive = remember(localMediaPath) {
+        localMediaPath?.takeIf { it.isNotBlank() }?.let { p ->
+            java.io.File(p).takeIf { it.exists() && it.length() > 0L }
+        }
+    }
+
     // Task 24: signed URLs (1 h TTL) can expire between Room read and play.
     // Every Retry press force-mints a fresh signature before the player is
-    // rebuilt (remember(effectiveUrl, retryTick)).
-    var effectiveUrl by remember(mediaUrl) { mutableStateOf(mediaUrl) }
+    // rebuilt (remember(effectiveUrl, retryTick)) — but only when there is no
+    // local archive to play instead.
+    var effectiveUrl by remember(mediaUrl, localMediaPath) {
+        mutableStateOf(localArchive?.absolutePath ?: mediaUrl)
+    }
     LaunchedEffect(mediaUrl, retryTick) {
-        if (retryTick > 0 && mediaUrl != null && mediaUrl.startsWith("http") &&
+        if (retryTick > 0 && localArchive == null && mediaUrl != null && mediaUrl.startsWith("http") &&
             com.example.service.MediaUrlResolver.isPrivateBucket(mediaBucket)
         ) {
             effectiveUrl = com.example.service.MediaUrlResolver.resolveWithRefresh(

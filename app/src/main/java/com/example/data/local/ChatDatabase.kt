@@ -13,7 +13,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 @Database(
     entities = [MessageEntity::class, ConversationEntity::class],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -52,15 +52,20 @@ abstract class ChatDatabase : RoomDatabase() {
                         ADD_CONVERSATION_LAST_ACTIVITY,
                         ADD_CONVERSATION_DISAPPEARING_TIMESTAMP,
                         ADD_CONVERSATION_REQUEST_STATUS_AND_AVATAR,
-                        ADD_MESSAGES_PAGINATION_INDEX
+                        ADD_MESSAGES_PAGINATION_INDEX,
+                        ADD_MESSAGES_LOCAL_MEDIA_PATH
                     )
-                    // WARNING: with encryption at rest this now destroys the
-                    // user's ENTIRE message history (silently re-creating an
-                    // empty encrypted store) whenever a schema version has no
-                    // registered migration. It predates Phase 2 and MUST be
-                    // revisited (removed or replaced) before the next schema
-                    // change.
-                    .fallbackToDestructiveMigration()
+                    // Phase 3: fallbackToDestructiveMigration is GONE — and
+                    // deliberately so. The schema store is SQLCipher-encrypted
+                    // and holds the user's ENTIRE message history; a missing
+                    // migration must FAIL LOUDLY (Room throws
+                    // IllegalStateException "A migration from X to Y was
+                    // required but not found") instead of silently re-creating
+                    // an empty encrypted store. Verified: the chain above is
+                    // contiguous 2→12 (this DB has shipped starting at version
+                    // 2 — no 1→2 edge exists — and every step is registered),
+                    // so every upgradeable install finds its migration. Any
+                    // future schema change MUST append its Migration here.
                     .build()
                 INSTANCE = instance
                 instance
@@ -79,6 +84,18 @@ abstract class ChatDatabase : RoomDatabase() {
          */
         private fun gatedFactory() = SupportSQLiteOpenHelper.Factory { configuration ->
             GatedOpenHelper(configuration)
+        }
+
+        // Migration 11 → 12 (Phase 3 media persistence):
+        // messages.localMediaPath — absolute path of the message's durable
+        // on-device media copy inside the Trigger folder tree (Phase 1).
+        // Nullable: rows without an archived copy (still downloading,
+        // download failed, view-once — which is never archived) keep NULL and
+        // render/play from the URL pipeline. ADD COLUMN is metadata-only.
+        private val ADD_MESSAGES_LOCAL_MEDIA_PATH = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN localMediaPath TEXT")
+            }
         }
 
         // Migration 10 → 11 (Task 25): composite pagination index on messages.

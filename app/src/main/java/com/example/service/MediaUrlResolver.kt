@@ -10,6 +10,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
@@ -36,6 +37,9 @@ object MediaUrlResolver {
     private const val TAG = "MediaUrlResolver"
     const val CHAT_MEDIA_BUCKET = "chat_media"
     const val VOICE_NOTES_BUCKET = "voice_notes"
+
+    /** Suffix of the in-progress download file before the atomic rename. */
+    private const val DOWNLOAD_PART_SUFFIX = ".part"
 
     /** Buckets whose objects require an authenticated short-lived signed URL. */
     private val PRIVATE_BUCKETS = setOf(CHAT_MEDIA_BUCKET, VOICE_NOTES_BUCKET, "vault_media", "documents", "backups")
@@ -215,6 +219,57 @@ object MediaUrlResolver {
     fun publicUrl(bucket: String, objectPath: String): String {
         val base = com.example.config.BackendConfig.SUPABASE_URL
         return "$base/storage/v1/object/public/$bucket/$objectPath"
+    }
+
+    /**
+     * Phase 3 media persistence — streams [url] into [target] over the SAME
+     * OkHttp client the signed-URL minting uses. Bytes land in
+     * "<target>.part" first and are atomically renamed on success, so
+     * [target] is either a complete file or absent — never truncated.
+     *
+     * Never throws: any failure (offline, revoked signature, disk full) is
+     * logged, the .part file is cleaned up and false is returned — the caller
+     * keeps the row's localMediaPath null and the UI falls back to the URL
+     * pipeline. Dispatches onto [Dispatchers.IO] internally.
+     */
+    suspend fun downloadToFile(url: String, target: File): Boolean = withContext(Dispatchers.IO) {
+        val part = File(target.absolutePath + DOWNLOAD_PART_SUFFIX)
+        try {
+            val request = Request.Builder().url(url).build()
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "downloadToFile: HTTP ${response.code} for ${url.take(120)}")
+                    return@withContext false
+                }
+                val body = response.body ?: run {
+                    Log.w(TAG, "downloadToFile: empty body for ${url.take(120)}")
+                    return@withContext false
+                }
+                body.byteStream().use { input ->
+                    part.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+            if (part.length() <= 0L) {
+                part.delete()
+                return@withContext false
+            }
+            if (target.exists()) target.delete()
+            if (!part.renameTo(target)) {
+                // Cross-filesystem rename fallback (same tree in practice —
+                // cheap insurance against exotic mount layouts).
+                part.copyTo(target, overwrite = true)
+                part.delete()
+            }
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "downloadToFile failed: ${t.message}")
+            try {
+                part.delete()
+            } catch (_: Exception) {
+                // cleanup only — never rethrow
+            }
+            false
+        }
     }
 
     /**

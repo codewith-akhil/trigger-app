@@ -96,8 +96,9 @@ interface MessageDao {
 
     // Tombstone also NULLs the local media columns — the server strips them
     // on delete-for-everyone, so the deleter's own Room row should not keep a
-    // still-openable copy of the "deleted" media either.
-    @Query("UPDATE messages SET isDeletedForEveryone = 1, text = 'This message was deleted', mediaUrl = NULL, mediaPath = NULL, mediaThumbnail = NULL, mediaBucket = NULL WHERE id = :messageId")
+    // still-openable copy of the "deleted" media either (localMediaPath
+    // included — the FILE itself is left in place for user-managed cleanup).
+    @Query("UPDATE messages SET isDeletedForEveryone = 1, text = 'This message was deleted', mediaUrl = NULL, mediaPath = NULL, mediaThumbnail = NULL, mediaBucket = NULL, localMediaPath = NULL WHERE id = :messageId")
     suspend fun markDeletedForEveryone(messageId: String)
 
     @Query("DELETE FROM messages WHERE id = :messageId")
@@ -139,6 +140,12 @@ interface MessageDao {
      *  so the URL can be rebuilt forever, even after reinstall. */
     @Query("UPDATE messages SET mediaUrl = :mediaUrl, mediaBucket = :bucket, mediaPath = :path WHERE id = :messageId")
     suspend fun updateMessageMediaFull(messageId: String, mediaUrl: String, bucket: String?, path: String?)
+
+    /** Phase 3 media persistence: records (or clears) the absolute path of
+     *  the message's durable on-device copy inside the Trigger folder tree.
+     *  Null = no archived copy — render/play falls back to the URL pipeline. */
+    @Query("UPDATE messages SET localMediaPath = :path WHERE id = :messageId")
+    suspend fun updateMessageLocalMediaPath(messageId: String, path: String?)
 
     /** H4 unification: moves every message cached under a legacy peer-UUID key
      *  to the real server conversation UUID. Idempotent. */

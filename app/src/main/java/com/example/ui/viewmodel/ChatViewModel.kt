@@ -14,6 +14,8 @@ import com.example.service.MediaUrlResolver
 import com.example.service.MessageServiceImpl
 import com.example.service.supabase.RealtimeEvent
 import com.example.service.supabase.SupabaseResult
+import com.example.storage.ChatMediaFolders
+import com.example.storage.TriggerFolder
 import com.example.util.optStringOrNull
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -627,45 +629,57 @@ class ChatViewModel(
             presenceService.setUserRecording(peerId, true)
         }
 
-        // Real voice recording using MediaRecorder — captures actual audio amplitudes
-        try {
-            val context = AppServiceContainer.context
-            val voiceFile = java.io.File(context.cacheDir, "voice_${System.currentTimeMillis()}.m4a")
-            currentVoiceFile = voiceFile
-            val recorder = android.media.MediaRecorder().apply {
-                setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
-                setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
-                setAudioSamplingRate(44100)
-                setAudioEncodingBitRate(128000)
-                setOutputFile(voiceFile.absolutePath)
-                prepare()
-                start()
-            }
-            mediaRecorder = recorder
-
-            recordingTimerJob = viewModelScope.launch {
-                while (isActive) {
-                    delay(100) // Sample every 100ms for smooth waveform
-                    recordingDurationSec.value = (recordingDurationSec.value + 0.1f)
-                    // Get real amplitude from MediaRecorder (0-32767)
-                    val maxAmplitude = try { recorder.maxAmplitude } catch (e: Exception) { 0 }
-                    // Normalize to 0.0-1.0 for the waveform UI
-                    val amp = (maxAmplitude.toFloat() / 32767f).coerceIn(0f, 1f)
-                    recordingAmplitudes.value = (recordingAmplitudes.value + amp).takeLast(100)
+        // Real voice recording using MediaRecorder — captures actual audio
+        // amplitudes. Phase 3: the recording lands DIRECTLY in the durable
+        // Trigger tree (Trigger Voice Notes/Sent, TRG-*.m4a) — NEVER in
+        // context.cacheDir — so the file doubles as the archived outgoing copy
+        // (survives cache clears, renders file-first, feeds re-upload
+        // retries). Recorder setup + file creation run on Dispatchers.IO.
+        viewModelScope.launch {
+            try {
+                val voiceFile = withContext(Dispatchers.IO) {
+                    AppServiceContainer.storageManager.newUserMediaFile(
+                        TriggerFolder.VOICE_NOTES, isSent = true, "m4a"
+                    )
                 }
+                currentVoiceFile = voiceFile
+                val recorder = withContext(Dispatchers.IO) {
+                    android.media.MediaRecorder().apply {
+                        setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+                        setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+                        setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+                        setAudioSamplingRate(44100)
+                        setAudioEncodingBitRate(128000)
+                        setOutputFile(voiceFile.absolutePath)
+                        prepare()
+                        start()
+                    }
+                }
+                mediaRecorder = recorder
+
+                recordingTimerJob = viewModelScope.launch {
+                    while (isActive) {
+                        delay(100) // Sample every 100ms for smooth waveform
+                        recordingDurationSec.value = (recordingDurationSec.value + 0.1f)
+                        // Get real amplitude from MediaRecorder (0-32767)
+                        val maxAmplitude = try { recorder.maxAmplitude } catch (e: Exception) { 0 }
+                        // Normalize to 0.0-1.0 for the waveform UI
+                        val amp = (maxAmplitude.toFloat() / 32767f).coerceIn(0f, 1f)
+                        recordingAmplitudes.value = (recordingAmplitudes.value + amp).takeLast(100)
+                    }
+                }
+            } catch (e: Exception) {
+                // FAIL LOUDLY: no permission / mic busy. Previously this started a
+                // fake timer and later uploaded a 0-byte file that could never send.
+                Log.e("ChatViewModel", "Voice recording failed: ${e.message}")
+                voiceErrorMessage.value = "Couldn't record audio — check mic permission"
+                isRecordingVoice.value = false
+                isRecordingLocked.value = false
+                try { mediaRecorder?.release() } catch (_: Exception) {}
+                mediaRecorder = null
+                currentVoiceFile?.delete()
+                currentVoiceFile = null
             }
-        } catch (e: Exception) {
-            // FAIL LOUDLY: no permission / mic busy. Previously this started a
-            // fake timer and later uploaded a 0-byte file that could never send.
-            Log.e("ChatViewModel", "Voice recording failed: ${e.message}")
-            voiceErrorMessage.value = "Couldn't record audio — check mic permission"
-            isRecordingVoice.value = false
-            isRecordingLocked.value = false
-            try { mediaRecorder?.release() } catch (_: Exception) {}
-            mediaRecorder = null
-            currentVoiceFile?.delete()
-            currentVoiceFile = null
         }
     }
 
@@ -737,6 +751,10 @@ class ChatViewModel(
             // when it finishes (previously mediaUrl stayed null and the sender
             // hit the "Audio unavailable" gate on their OWN voice note).
             mediaUrl = voiceFile?.absolutePath,
+            // Phase 3: the recording IS the durable archived copy (recorded
+            // straight into Trigger Voice Notes/Sent) — persist the path on
+            // the row immediately so the sender's player hits the file.
+            localMediaPath = voiceFile?.absolutePath,
             mediaDurationSec = duration.toInt(),
             status = MessageStatus.SENDING,
             timestamp = time,
@@ -764,8 +782,10 @@ class ChatViewModel(
                 peerName = contactName
             )
             uploadService.enqueueUpload(task)
-            // The cache dir file can now be cleaned up on our side once the
-            // upload job has its own path reference.
+            // The recording already lives in the Trigger tree (Voice Notes /
+            // Sent) — it is the durable archived copy, NOT a cache file. Drop
+            // only the ViewModel reference; the file stays for file-first
+            // playback and re-upload retries.
             currentVoiceFile = null
         }
 
@@ -839,6 +859,35 @@ class ChatViewModel(
                 }
             }
 
+            // Phase 3: archive the picked content into the Trigger tree
+            // (*/Sent/) BEFORE the upload starts — content:// grants are
+            // transient and the archived copy (a) renders the sender's bubble
+            // from disk instantly, (b) survives cache clears as the
+            // re-upload source for retries, (c) outlives the upload itself.
+            // HARD GUARD: view-once payloads are NEVER archived — no
+            // browsable copy of a view-once media may exist on disk.
+            var archivedLocalPath: String? = null
+            if (!pending.isViewOnce &&
+                pending.type in listOf(
+                    MessageType.IMAGE, MessageType.VIDEO, MessageType.AUDIO, MessageType.DOCUMENT
+                ) &&
+                !pending.filePath.isNullOrBlank()
+            ) {
+                try {
+                    archivedLocalPath = ChatMediaFolders.archiveOutgoingCopy(
+                        sourcePath = pending.filePath,
+                        type = pending.type,
+                        fileName = pending.fileName,
+                        mimeType = pending.mimeType
+                    )?.absolutePath
+                    if (archivedLocalPath == null) {
+                        Log.w("ChatViewModel", "outgoing archive failed for ${pending.fileName} — continuing with URL pipeline")
+                    }
+                } catch (e: Exception) {
+                    Log.w("ChatViewModel", "outgoing archive error: ${e.message}")
+                }
+            }
+
             val message = DomainMessage(
                 id = msgId,
                 conversationId = conversationId,
@@ -852,6 +901,10 @@ class ChatViewModel(
                 // is created after upload via completeMediaUpload() with the real
                 // URL (recipients can never load a content:// URI).
                 mediaUrl = pending.previewUrl,
+                // Phase 3: durable archived copy inside the Trigger tree — the
+                // sender's row renders/plays from disk immediately. Null when
+                // the archive failed (URL pipeline fallback) or view-once.
+                localMediaPath = archivedLocalPath,
                 mediaThumbnail = thumbnailPath,
                 mediaDurationSec = durationSec.coerceAtLeast(0),
                 isViewOnce = pending.isViewOnce,
@@ -1500,17 +1553,25 @@ class ChatViewModel(
     }
 
     /** Resolves a PLAYABLE audio source for a voice message (Task 24):
-     *  - local sources (content://, recorded file, cached download) pass
-     *    through untouched;
-     *  - private-bucket remote notes mint a fresh short-lived signed URL and
-     *    download the bytes into an app-private cache file so replay, seek
-     *    and OFFLINE playback work without re-streaming;
-     *  - [forceRefresh] bypasses the cached file and re-signs (expired-URL
-     *    retry path). */
+     *  - local sources (content://, recorded file) pass through untouched;
+     *  - Phase 3: the durable on-device archive copy (messages.localMediaPath,
+     *    Trigger Voice Notes tree) wins whenever the file exists — instant
+     *    start, offline replay, zero re-download;
+     *  - otherwise a short-lived signed URL is minted and streamed directly
+     *    (the old ephemeral voice-cache staging is REMOVED — received notes are
+     *    archived by MessageServiceImpl into the Trigger tree, so the player
+     *    streams the URL at most once per note and every later play hits the
+     *    durable file);
+     *  - [forceRefresh] bypasses any memoized signature (expired-URL retry). */
     private suspend fun resolvePlayableAudioUrl(
         message: DomainMessage,
         forceRefresh: Boolean = false
     ): String? {
+        // Phase 3: the durable archive copy wins when it actually exists.
+        message.localMediaPath?.takeIf { it.isNotBlank() }?.let { path ->
+            val archived = java.io.File(path)
+            if (archived.exists() && archived.length() > 0L) return path
+        }
         val raw = message.mediaUrl ?: return null
         if (!raw.startsWith("http")) return raw // content:// or local file
         val bucket = message.mediaBucket
@@ -1519,31 +1580,10 @@ class ChatViewModel(
         if (bucket == null || !MediaUrlResolver.isPrivateBucket(bucket) || objectPath == null) {
             return MediaUrlResolver.resolveWithRefresh(raw, bucket, message.mediaPath, forceRefresh = forceRefresh) ?: raw
         }
-        // Stable per-object cache file under cacheDir/voice_cache/
-        val safe = objectPath.replace(Regex("[^A-Za-z0-9._-]"), "_")
-        val cacheDir = java.io.File(AppServiceContainer.context.cacheDir, "voice_cache")
-        val cacheFile = java.io.File(cacheDir, safe)
-        if (!forceRefresh && cacheFile.exists() && cacheFile.length() > 0) {
-            return cacheFile.absolutePath
-        }
-        val signedUrl = MediaUrlResolver.resolveWithRefresh(raw, bucket, objectPath, forceRefresh = forceRefresh)
-            ?: return if (cacheFile.exists() && cacheFile.length() > 0) cacheFile.absolutePath else null
-        // Best-effort local cache: on any failure we simply stream the URL.
-        try {
-            cacheDir.mkdirs()
-            val conn = java.net.URL(signedUrl).openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 30_000
-            if (conn.responseCode in 200..299) {
-                conn.inputStream.use { input ->
-                    cacheFile.outputStream().use { output -> input.copyTo(output) }
-                }
-                return cacheFile.absolutePath
-            }
-        } catch (_: Exception) {
-            // cache miss — the signed URL still streams
-        }
-        return signedUrl
+        // No archive yet (download still in flight or failed): stream the
+        // signed URL. resolveWithRefresh falls back to the last known
+        // signature while offline — no cacheDir staging anymore.
+        return MediaUrlResolver.resolveWithRefresh(raw, bucket, objectPath, forceRefresh = forceRefresh)
     }
 
     /** Seeks the CURRENTLY PLAYING message's audio to [fraction] (0..1) —

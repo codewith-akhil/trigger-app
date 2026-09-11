@@ -12,6 +12,7 @@ import com.example.model.PresenceStatus
 import com.example.service.supabase.RealtimeEvent
 import com.example.service.supabase.SupabaseClient
 import com.example.service.supabase.SupabaseResult
+import com.example.storage.ChatMediaFolders
 import com.example.util.optStringOrNull
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -277,7 +278,12 @@ class MessageServiceImpl(
                 val currentUserId = AppServiceContainer.supabaseClient.currentUser?.id ?: ""
                 if (senderId != currentUserId) {
                     val domainMsg = mapSupabaseToDomain(record, isOutgoing = false)
+                    // Insert FIRST with null localMediaPath — arrival is never
+                    // delayed by the media download (Phase 3 contract).
                     repository.insertMessage(domainMsg)
+                    // Phase 3: fire-and-forget archive of the media bytes into
+                    // the Trigger tree (row's localMediaPath updated on success).
+                    archiveIncomingMedia(domainMsg)
                     // Chat-list completeness: a conversation the local DB has
                     // never seen must surface IMMEDIATELY (previously it stayed
                     // invisible until the next sync-conversations pull, which is
@@ -463,6 +469,109 @@ class MessageServiceImpl(
             val text = if (isOnline) "online" else com.example.util.LastSeenFormatter.format(lastSeen)
             presenceService.setContactPresence(userId, status, text)
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 3 media persistence — received media → durable on-device copy
+    // ------------------------------------------------------------------
+
+    /** Message ids whose archive download is currently in flight — prevents
+     *  double downloads when the same row arrives via realtime AND sync AND
+     *  history pagination at the same time. */
+    private val mediaArchiveInFlight: MutableSet<String> =
+        java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
+
+    /** The four media kinds that get archived into the Trigger tree. */
+    private val ARCHIVABLE_MEDIA_TYPES = setOf(
+        MessageType.IMAGE, MessageType.VIDEO, MessageType.AUDIO, MessageType.DOCUMENT
+    )
+
+    /** True when [path] points at an existing, non-empty file. */
+    private fun archiveFileExists(path: String?): Boolean {
+        if (path.isNullOrBlank()) return false
+        return try {
+            val f = java.io.File(path)
+            f.exists() && f.length() > 0L
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * WhatsApp-model media persistence: [message]'s row is ALREADY in Room
+     * when this runs (insert happens first — arrival is never delayed). The
+     * media bytes are downloaded on a background dispatcher into the Trigger
+     * folder tree ([ChatMediaFolders.folderFor] →
+     * [com.example.storage.TriggerStorageManager.newUserMediaFile], isSent =
+     * false) and the row's localMediaPath is updated on success.
+     *
+     * Failure-tolerant by contract: any error is logged, the path stays null
+     * and the UI keeps rendering from the URL pipeline. Never throws, never
+     * blocks the caller.
+     *
+     * Guards — hard + double:
+     *  1. view-once media is NEVER archived (checked here at entry AND
+     *     re-verified against the live Room row inside the worker);
+     *  2. rows that already carry a localMediaPath with an existing file are
+     *     skipped (idempotent via path + File.exists);
+     *  3. the in-flight set dedups concurrent triggers across all paths.
+     */
+    fun archiveIncomingMedia(message: DomainMessage) {
+        // HARD GUARD: view-once media must never be persisted to browsable
+        // storage — the whole feature is "view once".
+        if (message.isViewOnce) return
+        if (message.type !in ARCHIVABLE_MEDIA_TYPES) return
+        if (message.mediaUrl.isNullOrBlank() && message.mediaPath.isNullOrBlank()) return
+        // Idempotency: already archived AND the file is still on disk → no-op.
+        if (archiveFileExists(message.localMediaPath)) return
+        // Cross-path dedup: realtime + sync + history racing on the same row.
+        if (!mediaArchiveInFlight.add(message.id)) return
+        scope.launch {
+            try {
+                val current = repository.getMessageById(message.id) ?: return@launch
+                // DOUBLE GUARD: re-verify against the LIVE Room row — the
+                // message may have been deleted, tombstoned, marked view-once,
+                // or already archived by another path while this job queued.
+                if (current.isViewOnce || current.isDeletedForEveryone) return@launch
+                if (current.type !in ARCHIVABLE_MEDIA_TYPES) return@launch
+                if (archiveFileExists(current.localMediaPath)) return@launch
+                val file = downloadMediaToArchive(current) ?: return@launch
+                repository.updateMessageLocalMediaPath(current.id, file.absolutePath)
+                Log.i(TAG, "Media archived for ${current.id} → ${file.name}")
+            } catch (e: Exception) {
+                // Leave localMediaPath null — the UI falls back to the URL.
+                Log.w(TAG, "Media archive failed for ${message.id}: ${e.message}")
+            } finally {
+                mediaArchiveInFlight.remove(message.id)
+            }
+        }
+    }
+
+    /**
+     * Resolves [message]'s media into a playable/loadable URL (signed for
+     * private buckets, public otherwise — the same resolution every render
+     * surface uses) and streams it into a fresh file in the Trigger tree.
+     * Returns null when resolution or download fails; never throws, and no
+     * partial file is ever left behind ([MediaUrlResolver.downloadToFile]
+     * guarantees the .part cleanup).
+     */
+    private suspend fun downloadMediaToArchive(message: DomainMessage): java.io.File? {
+        val storage = AppServiceContainer.storageManager
+        val folder = ChatMediaFolders.folderFor(message.type, message.mediaBucket)
+        val ext = ChatMediaFolders.inferExtension(
+            mimeType = null,
+            fileName = message.fileName,
+            url = message.mediaUrl ?: message.mediaPath,
+            type = message.type
+        )
+        val target = storage.newUserMediaFile(folder, isSent = false, ext)
+        val url = MediaUrlResolver.resolveWithRefresh(message.mediaUrl, message.mediaBucket, message.mediaPath)
+            ?: message.mediaUrl?.takeIf { it.startsWith("http") }
+        if (url.isNullOrBlank()) {
+            Log.w(TAG, "Media archive: no resolvable URL for ${message.id}")
+            return null
+        }
+        return if (MediaUrlResolver.downloadToFile(url, target)) target else null
     }
 
     private fun mapSupabaseToDomain(record: JSONObject, isOutgoing: Boolean): DomainMessage {
@@ -850,18 +959,24 @@ class MessageServiceImpl(
             // File("content://…").exists() is always false, which previously
             // let the row fall through to the re-send path and publish a dead
             // content:// URL on the server. A real local re-upload source is
-            // either a plain file path in mediaUrl or a surviving mediaPath.
+            // either a plain file path in mediaUrl, the Phase 3 archived copy
+            // (Trigger tree — preferred: it survives cache clears and revoked
+            // grants), or a surviving mediaPath.
+            val alreadyUploaded = !msg.mediaPath.isNullOrBlank() && !msg.mediaBucket.isNullOrBlank()
             val fileSource = when {
                 rawMediaUrl != null && !rawMediaUrl.startsWith("content://") &&
                     java.io.File(rawMediaUrl).exists() -> rawMediaUrl
+                // Phase 3: the durable archived copy is a valid re-upload
+                // source (only when the upload never completed — rows whose
+                // upload DID complete keep the cheaper re-send path below,
+                // avoiding a duplicate storage object).
+                !alreadyUploaded && archiveFileExists(msg.localMediaPath) -> msg.localMediaPath
                 !msg.mediaPath.isNullOrBlank() && !msg.mediaPath.startsWith("http") &&
                     !msg.mediaPath.startsWith("content://") &&
                     java.io.File(msg.mediaPath).exists() -> msg.mediaPath
                 else -> null
             }
             val isLocalFile = fileSource != null
-            val alreadyUploaded = !isLocalFile &&
-                !msg.mediaPath.isNullOrBlank() && !msg.mediaBucket.isNullOrBlank()
             if (!isLocalFile && !alreadyUploaded) {
                 // Nothing local to re-upload and no upload ever completed:
                 // the source file/URI is gone (revoked grant, cleared cache,
@@ -1201,6 +1316,8 @@ class MessageServiceImpl(
                         isOutgoing = obj.optString("sender_id", "") == myId
                     )
                     repository.insertMessage(domain)
+                    // Phase 3: archive the page's media rows (non-blocking).
+                    archiveIncomingMedia(domain)
                     out += domain
                 }
                 out
@@ -1222,6 +1339,8 @@ class MessageServiceImpl(
                 val myId = supabaseClient.currentUser?.id ?: ""
                 val domain = mapSupabaseToDomain(obj, isOutgoing = obj.optString("sender_id", "") == myId)
                 repository.insertMessage(domain)
+                // Phase 3: archive the deep-fetched row's media (non-blocking).
+                archiveIncomingMedia(domain)
                 domain
             }
             is SupabaseResult.Error -> {
@@ -1253,7 +1372,11 @@ class MessageServiceImpl(
                         val existing = repository.getMessageById(id)
                         if (existing == null) {
                             val isOutgoing = obj.optString("sender_id", "") == currentUserId
-                            repository.insertMessage(mapSupabaseToDomain(obj, isOutgoing = isOutgoing))
+                            val incoming = mapSupabaseToDomain(obj, isOutgoing = isOutgoing)
+                            // Insert FIRST, path null — download happens after.
+                            repository.insertMessage(incoming)
+                            // Phase 3: fire-and-forget archive (initial/background pull).
+                            archiveIncomingMedia(incoming)
                             if (!isOutgoing) {
                                 // A message the peer sent and this device pulled
                                 // via history/background sync HAS been delivered —
@@ -1302,6 +1425,13 @@ class MessageServiceImpl(
                                     Log.w(TAG, "view-once receipt heal failed: ${it.message}")
                                 }
                             }
+                            // Phase 3 self-heal: a re-delivered row that carries
+                            // media but still has no durable on-device copy (a
+                            // previous download failed, or the app died
+                            // mid-download) gets one more archive attempt. The
+                            // worker's own guards make this a cheap no-op when
+                            // the file already exists or the row is view-once.
+                            archiveIncomingMedia(existing)
                         }
                     }
                 }
