@@ -119,7 +119,10 @@ dependencies {
   implementation("androidx.sqlite:sqlite-ktx:2.5.0")
   implementation(libs.coil.compose)
   // H7: real full-screen video playback (was a fake thumbnail + hardcoded 0:14/0:42)
+  implementation(libs.androidx.exifinterface)
   implementation(libs.androidx.media3.exoplayer)
+  implementation(libs.androidx.media3.transformer)
+  implementation(libs.androidx.media3.effect)
   implementation(libs.androidx.media3.ui)
   implementation(libs.agora.rtc)
   // Retrofit / Moshi / OkHttp logging-interceptor were declared but never imported — removed in audit-E.
