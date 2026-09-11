@@ -111,6 +111,12 @@ dependencies {
   implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  // Phase 2: encrypted message store. SQLCipher supplies the crypto engine
+  // (net.zetetic.database.sqlcipher) that Room talks to via
+  // SupportOpenHelperFactory; sqlite-ktx is pinned to the same 2.5.0 that
+  // Room 2.7.0 pulls transitively so the Support* ABI matches exactly.
+  implementation("net.zetetic:sqlcipher-android:4.6.1")
+  implementation("androidx.sqlite:sqlite-ktx:2.5.0")
   implementation(libs.coil.compose)
   // H7: real full-screen video playback (was a fake thumbnail + hardcoded 0:14/0:42)
   implementation(libs.androidx.media3.exoplayer)

@@ -6,6 +6,10 @@ import androidx.room.migration.Migration
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.db.SupportSQLiteOpenHelper
+import com.example.di.AppServiceContainer
+import kotlinx.coroutines.runBlocking
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 @Database(
     entities = [MessageEntity::class, ConversationEntity::class],
@@ -18,6 +22,11 @@ abstract class ChatDatabase : RoomDatabase() {
     abstract fun conversationDao(): ConversationDao
 
     companion object {
+        // Phase 2: renamed from the legacy plaintext chat database (only
+        // TriggerDbMigrator knows the old file name) and encrypted at rest
+        // with SQLCipher. Same schema, same version.
+        private const val DB_NAME = "trigger_msgstore.db"
+
         @Volatile
         private var INSTANCE: ChatDatabase? = null
 
@@ -26,8 +35,14 @@ abstract class ChatDatabase : RoomDatabase() {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     ChatDatabase::class.java,
-                    "whatsapp_chat_db"
+                    DB_NAME
                 )
+                    // Phase 2: every open of the store is gated behind the DI
+                    // pipeline (passphrase unwrap + one-time rename/encrypt
+                    // migration) — see GatedOpenHelper below. This covers ALL
+                    // code paths, including direct-DAO users like
+                    // DashboardViewModel.
+                    .openHelperFactory(gatedFactory())
                     .addMigrations(
                         REMOVE_SEEDED_DATA,
                         ADD_PIN_EDIT_SEQ_IDEMPOTENCY_ARCHIVED,
@@ -39,11 +54,31 @@ abstract class ChatDatabase : RoomDatabase() {
                         ADD_CONVERSATION_REQUEST_STATUS_AND_AVATAR,
                         ADD_MESSAGES_PAGINATION_INDEX
                     )
+                    // WARNING: with encryption at rest this now destroys the
+                    // user's ENTIRE message history (silently re-creating an
+                    // empty encrypted store) whenever a schema version has no
+                    // registered migration. It predates Phase 2 and MUST be
+                    // revisited (removed or replaced) before the next schema
+                    // change.
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance
             }
+        }
+
+        /**
+         * Factory that defers the real SQLCipher [SupportOpenHelperFactory]
+         * until the DI gate releases. Room invokes the factory while the
+         * database object is being built (synchronously, on whatever thread
+         * calls [getInstance]) — creating the helper must therefore never
+         * block; the gate is awaited at OPEN time instead, when the file is
+         * actually touched on a Room executor thread. That ordering also
+         * avoids a deadlock: the gate is completed only after the migration,
+         * which runs without any Room connection.
+         */
+        private fun gatedFactory() = SupportSQLiteOpenHelper.Factory { configuration ->
+            GatedOpenHelper(configuration)
         }
 
         // Migration 10 → 11 (Task 25): composite pagination index on messages.
@@ -144,6 +179,78 @@ abstract class ChatDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE conversations ADD COLUMN isArchived INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_messages_seq ON messages(seq)")
             }
+        }
+    }
+}
+
+/**
+ * SupportSQLiteOpenHelper that refuses to touch the database file until the
+ * AppServiceContainer DI gate ([AppServiceContainer.databaseReady]) has
+ * completed — i.e. until the one-time rename + encrypt migration has run and
+ * the SQLCipher passphrase is published. The real helper is only created at
+ * that point, delegating to [SupportOpenHelperFactory] with the passphrase.
+ *
+ * Every Room code path funnels through getWritableDatabase()/
+ * getReadableDatabase() — repositories, ViewModels holding direct DAOs
+ * (DashboardViewModel), background sync, clearAllTables — so gating HERE
+ * makes it structurally impossible for anything to open the store before the
+ * migration finished. If the pipeline failed, every open throws the pipeline's
+ * exception: fail fast instead of silently creating an empty store.
+ *
+ * Blocking note: the await blocks the calling thread, which is always a Room
+ * executor / background thread — Room never opens a database synchronously on
+ * main.
+ */
+private class GatedOpenHelper(
+    private val configuration: SupportSQLiteOpenHelper.Configuration
+) : SupportSQLiteOpenHelper {
+
+    private val delegateLock = Any()
+
+    @Volatile
+    private var delegate: SupportSQLiteOpenHelper? = null
+
+    /** WAL flag Room may set before the first open — re-applied on creation. */
+    @Volatile
+    private var writeAheadLoggingEnabled = false
+
+    private fun unwrapped(): SupportSQLiteOpenHelper {
+        synchronized(delegateLock) {
+            delegate?.let { return it }
+            val gate = AppServiceContainer.databaseReady
+            if (!gate.isCompleted) {
+                runBlocking { gate.await() }
+            }
+            val passphrase = AppServiceContainer.dbPassphrase
+                ?: error("Database gate released without a passphrase")
+            TriggerDbMigrator.ensureSqlCipherLoaded()
+            val created = SupportOpenHelperFactory(passphrase).create(configuration)
+            if (writeAheadLoggingEnabled) {
+                created.setWriteAheadLoggingEnabled(true)
+            }
+            delegate = created
+            return created
+        }
+    }
+
+    override val databaseName: String?
+        get() = configuration.name
+
+    override fun setWriteAheadLoggingEnabled(enabled: Boolean) {
+        writeAheadLoggingEnabled = enabled
+        synchronized(delegateLock) { delegate?.setWriteAheadLoggingEnabled(enabled) }
+    }
+
+    override val writableDatabase: SupportSQLiteDatabase
+        get() = unwrapped().writableDatabase
+
+    override val readableDatabase: SupportSQLiteDatabase
+        get() = unwrapped().readableDatabase
+
+    override fun close() {
+        synchronized(delegateLock) {
+            delegate?.close()
+            delegate = null
         }
     }
 }

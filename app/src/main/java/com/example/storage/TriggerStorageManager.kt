@@ -62,10 +62,11 @@ import java.util.Locale
  * ```
  *
  * `Databases/` is reserved for **encrypted database snapshots only** — never
- * the live plaintext Room database, never keys. Anything landing there later
- * (scheduled backup/export phase) must already be ciphertext at rest, because
- * this directory is the one users are most likely to exfiltrate for manual
- * inspection.
+ * the live message store (which since Phase 2 lives encrypted at rest in the
+ * internal databases dir as "trigger_msgstore.db" — see TriggerDbMigrator),
+ * and never keys. Anything landing here later (scheduled backup/export
+ * phase) must already be ciphertext at rest, because this directory is the
+ * one users are most likely to exfiltrate for manual inspection.
  *
  * Threading: all methods are safe to call from any thread. Path derivation is
  * pure; [ensureTree] never throws (per-directory failures are logged and

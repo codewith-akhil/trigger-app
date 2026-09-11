@@ -20,7 +20,7 @@ import java.io.File
  * ----------------------------------------------------------------------------
  * Owns logout & account-switch hygiene for every piece of LOCAL per-user state:
  *
- *   - Room chat DB ("whatsapp_chat_db")        -> messages/conversations leaked across accounts
+ *   - Room chat DB (encrypted "trigger_msgstore.db") -> messages/conversations leaked across accounts
  *   - "trigger_chat_prefs"                     -> last_sync_ts etc. leaked across accounts
  *   - "trigger_secret_vault_prefs" + media dir -> vault PIN hash + files leaked across accounts
  *   - WalletService / SecretVaultService /     -> in-memory StateFlows kept serving the

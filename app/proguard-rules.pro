@@ -21,6 +21,12 @@
 -dontwarn androidx.room.paging.**
 
 # ----------------------------------------------------------------------------
+# SQLCipher (encrypted message store — native JNI + reflection inside the lib)
+# ----------------------------------------------------------------------------
+-keep class net.zetetic.database.** { *; }
+-dontwarn net.zetetic.database.**
+
+# ----------------------------------------------------------------------------
 # OkHttp
 # ----------------------------------------------------------------------------
 -dontwarn okhttp3.**

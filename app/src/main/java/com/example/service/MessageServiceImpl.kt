@@ -1334,6 +1334,12 @@ class MessageServiceImpl(
      */
     override suspend fun backgroundCatchUpSync() {
         try {
+            // Defense in depth: never touch Room before the one-time
+            // rename/encrypt migration has finished (the gated open-helper
+            // factory already covers every query — this keeps sync scheduling
+            // honest too and surfaces pipeline failure here instead of deep
+            // inside a DAO call).
+            AppServiceContainer.databaseReady.await()
             val conversations = try {
                 repository.getAllConversations().first()
             } catch (_: Exception) {

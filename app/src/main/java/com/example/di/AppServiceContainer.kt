@@ -2,6 +2,8 @@ package com.example.di
 
 import android.content.Context
 import com.example.data.local.ChatDatabase
+import com.example.data.local.DbKeyManager
+import com.example.data.local.TriggerDbMigrator
 import com.example.data.repository.ChatRepositoryImpl
 import com.example.model.CallType
 import com.example.model.DomainMessage
@@ -10,12 +12,14 @@ import com.example.service.*
 import com.example.service.supabase.SupabaseClient
 import com.example.storage.TriggerStorageManager
 import com.example.service.webrtc.AgoraWebRtcService
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.atomic.AtomicBoolean
 
 object AppServiceContainer {
     // Exception handler: an uncaught throw on this scope (e.g. a background
@@ -72,6 +76,28 @@ object AppServiceContainer {
     lateinit var storageManager: TriggerStorageManager
         private set
 
+    /**
+     * Phase 2 DI gate for the encrypted message store. Completes ONLY after
+     * the SQLCipher passphrase is available and the one-time rename/encrypt
+     * migration has finished; completes exceptionally (fail fast) if that
+     * pipeline fails — every database open awaits it via the gated factory
+     * in ChatDatabase, so no code path can touch the file before migration.
+     */
+    val databaseReady = CompletableDeferred<Unit>()
+
+    /**
+     * SQLCipher passphrase (raw 32-byte key) published by the startup
+     * pipeline right before [databaseReady] completes. NEVER logged.
+     */
+    @Volatile
+    var dbPassphrase: ByteArray? = null
+        private set
+
+    /** Once-guard so the migration pipeline is kicked exactly once. */
+    private val databasePipelineStarted = AtomicBoolean(false)
+
+    private lateinit var dbKeyManager: DbKeyManager
+
     val agoraService: AgoraWebRtcService
         get() = agoraWebRtcService
 
@@ -95,10 +121,23 @@ object AppServiceContainer {
         agoraTokenService = com.example.service.agora.SupabaseEdgeFunctionTokenService(supabaseClient)
         agoraRtcEngineManager = com.example.service.agora.AgoraRtcEngineManager(context, agoraTokenService)
 
+        // The Room wrapper is built synchronously (cheap: no file I/O happens
+        // here — the actual file open is gated behind [databaseReady]).
         database = ChatDatabase.getInstance(context)
         chatRepository = ChatRepositoryImpl(database, appScope)
         presenceService = PresenceServiceImpl(appScope)
         messageService = MessageServiceImpl(chatRepository, presenceService)
+
+        // Phase 2 (encrypted message store): on Dispatchers.IO, unwrap or
+        // create the SQLCipher passphrase, run the one-time legacy-plaintext →
+        // "trigger_msgstore.db" rename/encrypt migration (TriggerDbMigrator is
+        // the ONLY code aware of the legacy name), then release the gate so
+        // Room's gated open-helper factory can finally open the encrypted
+        // file. Failure completes the gate exceptionally: every database open
+        // fails fast instead of silently re-creating an empty store.
+        // initialize() itself never blocks on this.
+        dbKeyManager = DbKeyManager(context)
+        kickDatabasePipeline()
 
         storageService = StorageServiceImpl(context.cacheDir)
         notificationService = NotificationServiceImpl(context)
@@ -190,5 +229,29 @@ object AppServiceContainer {
         secretVaultService = com.example.service.SecretVaultService(context)
 
         initialized = true
+    }
+
+    /**
+     * Passphrase → migration → gate release, once per process, off main.
+     * On any failure the gate completes exceptionally with the original
+     * error (no fresh-key fallback: that would orphan the encrypted data).
+     */
+    private fun kickDatabasePipeline() {
+        if (!databasePipelineStarted.compareAndSet(false, true)) return
+        appScope.launch(Dispatchers.IO) {
+            try {
+                val passphrase = dbKeyManager.getOrCreatePassphrase()
+                TriggerDbMigrator.ensureMigrated(context, passphrase)
+                dbPassphrase = passphrase
+                databaseReady.complete(Unit)
+            } catch (t: Throwable) {
+                android.util.Log.e(
+                    "AppServiceContainer",
+                    "Encrypted chat DB pipeline failed — failing fast",
+                    t
+                )
+                databaseReady.completeExceptionally(t)
+            }
+        }
     }
 }
