@@ -297,6 +297,12 @@ class ChatRepositoryImpl(
         }
     }
 
+    /** Block flow: drop the local pending conversation row so the chat leaves
+     *  the Requests tab the instant the server confirms the block. */
+    suspend fun deleteLocalConversationRow(conversationId: String) {
+        conversationDao.deleteConversationsByIds(listOf(conversationId))
+    }
+
     suspend fun setDisappearingDuration(
         conversationId: String,
         duration: DisappearingDuration,

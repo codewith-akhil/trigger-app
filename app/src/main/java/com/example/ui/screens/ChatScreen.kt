@@ -186,6 +186,7 @@ fun ChatScreen(
     val presence by viewModel.contactPresence.collectAsState()
     val conversationMeta by viewModel.conversationMeta.collectAsState()
     val requestNotice by viewModel.requestNotice.collectAsState()
+    val requestActionInProgress by viewModel.requestActionInProgress.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
     val activeUploads by viewModel.activeUploads.collectAsState()
     val conversationInfo by viewModel.conversationInfo.collectAsState()
@@ -847,8 +848,10 @@ fun ChatScreen(
                 if (isRequestReceiver) {
                     MessageRequestReceiverBanner(
                         senderName = contactName,
+                        actionInProgress = requestActionInProgress,
                         onAccept = { viewModel.acceptMessageRequest() },
-                        onDecline = { viewModel.declineMessageRequest() }
+                        onDecline = { viewModel.declineMessageRequest() },
+                        onBlock = { viewModel.blockMessageRequest() }
                     )
                 } else if (isRequestRequester) {
                     MessageRequestRequesterBanner(messagesSent = conversationMeta?.myRequestMessageCount ?: 0)
@@ -3061,12 +3064,16 @@ private fun formatLiveExpiry(expiresAtMillis: Long): String {
 // Message-request banners (Instagram model)
 // ============================================================================
 
-/** RECEIVER: accept / decline an incoming message request. */
+/** RECEIVER: accept / decline / block an incoming message request.
+ *  [actionInProgress] shows a spinner on the running action and disables all
+ *  three buttons until it completes (double-tap safe). */
 @Composable
 private fun MessageRequestReceiverBanner(
     senderName: String,
+    actionInProgress: String?,
     onAccept: () -> Unit,
-    onDecline: () -> Unit
+    onDecline: () -> Unit,
+    onBlock: () -> Unit
 ) {
     Surface(
         modifier = Modifier
@@ -3097,19 +3104,54 @@ private fun MessageRequestReceiverBanner(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = onAccept,
+                    enabled = actionInProgress == null,
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00A884)),
                     shape = RoundedCornerShape(20.dp),
                     contentPadding = PaddingValues(horizontal = 22.dp, vertical = 6.dp)
                 ) {
-                    Text("Accept", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    if (actionInProgress == "accept") {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Accept", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
                 }
                 OutlinedButton(
                     onClick = onDecline,
+                    enabled = actionInProgress == null,
                     shape = RoundedCornerShape(20.dp),
                     contentPadding = PaddingValues(horizontal = 22.dp, vertical = 6.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD32F2F))
                 ) {
-                    Text("Decline", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    if (actionInProgress == "decline") {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            color = Color(0xFFD32F2F),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Decline", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                }
+                OutlinedButton(
+                    onClick = onBlock,
+                    enabled = actionInProgress == null,
+                    shape = RoundedCornerShape(20.dp),
+                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 6.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF616161))
+                ) {
+                    if (actionInProgress == "block") {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            color = Color(0xFF616161),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Block", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
                 }
             }
         }
