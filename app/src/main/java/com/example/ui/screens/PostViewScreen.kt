@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -89,6 +90,17 @@ fun PostViewScreen(
     var reportingComment by remember { mutableStateOf<PostComment?>(null) }
     var commentInputText by remember { mutableStateOf("") }
     var isDescriptionExpanded by remember { mutableStateOf(false) }
+
+    // Hardware/System back gesture handling: Dismiss dialogs/sheets first, then route onBack
+    BackHandler {
+        if (reportingComment != null) {
+            reportingComment = null
+        } else if (showCommentsSheet) {
+            showCommentsSheet = false
+        } else {
+            onBack()
+        }
+    }
 
     if (post == null) {
         // Fallback if post was removed or id not found
@@ -885,6 +897,215 @@ fun PostViewScreen(
 }
 
 // ----------------------------------------------------------------------------
+// Inappropriate Content Report Dialog with Reason Picker
+// ----------------------------------------------------------------------------
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CommentReportDialog(
+    comment: PostComment,
+    onDismiss: () -> Unit,
+    onSubmitReport: (reason: String, details: String) -> Unit
+) {
+    val reportReasons = remember {
+        listOf(
+            "Spam or misleading" to "Commercial spam, fraudulent links, or deceptive interactions",
+            "Harassment or bullying" to "Targeted personal attacks, threats, or hate speech",
+            "Inappropriate content" to "Explicit, sexually suggestive, or offensive text",
+            "Hate speech or discrimination" to "Attacking identity, race, religion, gender, or orientation",
+            "Violence or dangerous content" to "Encouraging harm, illegal acts, or violence",
+            "False information / Scam" to "Misleading financial claims, impersonation, or rumors",
+            "Other" to "Other violations of community guidelines"
+        )
+    }
+
+    var selectedReason by remember { mutableStateOf(reportReasons.first().first) }
+    var additionalDetails by remember { mutableStateOf("") }
+    var isSubmitting by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = { if (!isSubmitting) onDismiss() },
+        containerColor = Color(0xFF1E1E1E),
+        titleContentColor = Color.White,
+        textContentColor = Color(0xFFDCDCDC),
+        shape = RoundedCornerShape(20.dp),
+        icon = {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFE53935).copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ReportProblem,
+                    contentDescription = "Report",
+                    tint = Color(0xFFFF5252),
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+        },
+        title = {
+            Text(
+                text = "Report Comment",
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                color = Color.White
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = "Help us keep Trigger safe. Why are you reporting this comment?",
+                    fontSize = 13.sp,
+                    color = Color(0xFFA0A0A0),
+                    lineHeight = 18.sp
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Quoted comment preview card
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF282828),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = "@${comment.authorName}",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = AccentGreen
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = "\"${comment.text.take(120)}${if (comment.text.length > 120) "..." else ""}\"",
+                            fontSize = 12.5.sp,
+                            color = Color(0xFFE0E0E0),
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Text(
+                    text = "Select a reason:",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    color = Color.White
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Reasons picker
+                reportReasons.forEach { (reasonTitle, reasonDesc) ->
+                    val isSelected = selectedReason == reasonTitle
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSelected) AccentGreen.copy(alpha = 0.18f) else Color(0xFF242424),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (isSelected) AccentGreen else Color.Transparent
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 3.dp)
+                            .clickable { selectedReason = reasonTitle }
+                            .testTag("report_reason_$reasonTitle")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = { selectedReason = reasonTitle },
+                                colors = RadioButtonDefaults.colors(
+                                    selectedColor = AccentGreen,
+                                    unselectedColor = Color(0xFF757575)
+                                ),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = reasonTitle,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) Color.White else Color(0xFFD6D6D6)
+                                )
+                                Text(
+                                    text = reasonDesc,
+                                    fontSize = 10.5.sp,
+                                    color = Color(0xFF909090),
+                                    lineHeight = 14.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Additional details optional input
+                OutlinedTextField(
+                    value = additionalDetails,
+                    onValueChange = { if (it.length <= 300) additionalDetails = it },
+                    label = { Text("Additional details (optional)", color = Color(0xFF999999), fontSize = 12.sp) },
+                    placeholder = { Text("Provide any extra context...", color = Color(0xFF666666), fontSize = 12.sp) },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = AccentGreen,
+                        unfocusedBorderColor = Color(0xFF444444),
+                        cursorColor = AccentGreen
+                    ),
+                    maxLines = 3,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("report_details_input")
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    isSubmitting = true
+                    onSubmitReport(selectedReason, additionalDetails.trim())
+                },
+                enabled = !isSubmitting,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFE53935),
+                    contentColor = Color.White
+                ),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.testTag("submit_report_button")
+            ) {
+                Text(
+                    text = if (isSubmitting) "Submitting..." else "Submit Report",
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isSubmitting,
+                colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFA0A0A0)),
+                modifier = Modifier.testTag("cancel_report_button")
+            ) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+// ----------------------------------------------------------------------------
 // Instagram Comment Item Component
 // ----------------------------------------------------------------------------
 @Composable
@@ -893,6 +1114,8 @@ fun InstagramCommentItem(
     isCreator: Boolean,
     onLikeComment: () -> Unit,
     onReply: () -> Unit,
+    onReportComment: () -> Unit = {},
+    isReported: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -976,10 +1199,58 @@ fun InstagramCommentItem(
                     color = Color(0xFFA0A0A0),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clickable { onReply() }
+                    modifier = Modifier
+                        .clickable { onReply() }
+                        .testTag("comment_reply_${comment.id}")
                 )
+
+                Spacer(modifier = Modifier.width(16.dp))
+
+                // Flag / Report Action Button with Reason Picker Trigger
+                if (isReported) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.testTag("comment_reported_badge_${comment.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Flag,
+                            contentDescription = "Reported",
+                            tint = Color(0xFFFF9800),
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = "Reported",
+                            color = Color(0xFFFF9800),
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clickable { onReportComment() }
+                            .testTag("comment_report_button_${comment.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Flag,
+                            contentDescription = "Report Comment",
+                            tint = Color(0xFFA0A0A0),
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = "Report",
+                            color = Color(0xFFA0A0A0),
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
                 if (comment.likesCount > 0) {
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(16.dp))
                     Text(
                         text = "${comment.likesCount} ${if (comment.likesCount == 1) "like" else "likes"}",
                         color = Color(0xFFA0A0A0),
@@ -1013,6 +1284,8 @@ fun InstagramCommentsModalSheet(
     post: FeedPost,
     userProfile: com.example.model.UserProfile,
     replyingTo: PostComment?,
+    reportedCommentIds: Set<String> = emptySet(),
+    onReportComment: (PostComment) -> Unit = {},
     onClearReply: () -> Unit,
     onDismiss: () -> Unit,
     onAddComment: (String) -> Unit,
@@ -1099,7 +1372,9 @@ fun InstagramCommentsModalSheet(
                             onLikeComment = { onToggleCommentLike(comment.id) },
                             onReply = {
                                 sheetCommentText = "@${comment.authorName} "
-                            }
+                            },
+                            onReportComment = { onReportComment(comment) },
+                            isReported = reportedCommentIds.contains(comment.id)
                         )
                         Divider(color = Color(0xFF202020), thickness = 0.5.dp, modifier = Modifier.padding(start = 44.dp))
                     }

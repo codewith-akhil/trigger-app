@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,6 +24,8 @@ import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -42,6 +46,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.example.R
 import com.example.di.AppServiceContainer
 import com.example.model.FeedPost
 import com.example.model.PostComment
@@ -156,34 +161,83 @@ fun FeedTabContent(
         }
     }
 
+    var isRefreshing by remember { mutableStateOf(false) }
+
     Box(modifier = modifier.fillMaxSize()) {
-        LazyColumn(
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                coroutineScope.launch {
+                    isRefreshing = true
+                    feedRepository.refreshPosts()
+                    isRefreshing = false
+                    Toast.makeText(context, "Feed refreshed", Toast.LENGTH_SHORT).show()
+                }
+            },
             modifier = Modifier
                 .fillMaxSize()
-                .testTag("feed_posts_lazy_column"),
-            contentPadding = PaddingValues(vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .testTag("feed_pull_to_refresh_box")
         ) {
-            // Stories / Status Header Row at the top of Feed
-            item {
-                FeedTopStoriesBar(
-                    onMyStatusClick = onNavigateToUpload
-                )
-            }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("feed_posts_lazy_column"),
+                contentPadding = PaddingValues(vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Stories / Status Header Row at the top of Feed
+                item {
+                    FeedTopStoriesBar(
+                        onMyStatusClick = onNavigateToUpload,
+                        hasPosts = posts.isNotEmpty(),
+                        onToggleEmptyStateDemo = {
+                            if (posts.isNotEmpty()) {
+                                feedRepository.clearPostsForEmptyStateDemo()
+                                Toast.makeText(context, "Cleared feed to preview Empty State", Toast.LENGTH_SHORT).show()
+                            } else {
+                                feedRepository.seedOrExplorePosts()
+                                Toast.makeText(context, "Loaded feed posts!", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
+                }
 
-            // List of Free / Paid Feed Posts
-            items(posts, key = { it.id }) { post ->
-                InstagramFeedCard(
-                    post = post,
-                    onPostClick = { onNavigateToPostView(post.id) },
-                    onLikeClick = { feedRepository.toggleLike(post.id) },
-                    onCommentClick = { activeCommentPostId = post.id },
-                    onPayAndWatchClick = { onNavigateToPaymentOverview(post.id) }
-                )
-            }
+                // Empty State UI when no posts are available
+                if (posts.isEmpty()) {
+                    item {
+                        FeedEmptyState(
+                            onStartExploring = {
+                                feedRepository.seedOrExplorePosts()
+                                Toast.makeText(context, "Welcome! Loaded fresh posts for you to explore.", Toast.LENGTH_SHORT).show()
+                            },
+                            onRefresh = {
+                                coroutineScope.launch {
+                                    isRefreshing = true
+                                    feedRepository.refreshPosts()
+                                    isRefreshing = false
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp)
+                        )
+                    }
+                } else {
+                    // List of Free / Paid Feed Posts
+                    items(posts, key = { it.id }) { post ->
+                        InstagramFeedCard(
+                            post = post,
+                            onPostClick = { onNavigateToPostView(post.id) },
+                            onLikeClick = { feedRepository.toggleLike(post.id) },
+                            onCommentClick = { activeCommentPostId = post.id },
+                            onPayAndWatchClick = { onNavigateToPaymentOverview(post.id) }
+                        )
+                    }
 
-            item {
-                Spacer(modifier = Modifier.height(72.dp))
+                    item {
+                        Spacer(modifier = Modifier.height(72.dp))
+                    }
+                }
             }
         }
 
@@ -249,7 +303,9 @@ fun FeedTabContent(
 // ----------------------------------------------------------------------------
 @Composable
 fun FeedTopStoriesBar(
-    onMyStatusClick: () -> Unit
+    onMyStatusClick: () -> Unit,
+    hasPosts: Boolean = true,
+    onToggleEmptyStateDemo: (() -> Unit)? = null
 ) {
     Column(
         modifier = Modifier
@@ -336,8 +392,160 @@ fun FeedTopStoriesBar(
                     Text(name, fontSize = 12.sp, color = Color(0xFF111B21))
                 }
             }
+
+            // Quick explore / demo toggle item
+            if (onToggleEmptyStateDemo != null) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .clickable { onToggleEmptyStateDemo() }
+                        .testTag("feed_stories_explore_btn")
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(62.dp)
+                            .border(2.dp, Brush.sweepGradient(listOf(AccentGreen, Color(0xFF00C6FF), AccentGreen)), CircleShape)
+                            .padding(3.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFE8F5E9)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Explore,
+                            contentDescription = "Explore",
+                            tint = AccentGreen,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (hasPosts) "Explore" else "Discover",
+                        fontSize = 12.sp,
+                        color = Color(0xFF111B21),
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
         }
         Divider(color = Color(0xFFEFEFEF), thickness = 0.8.dp, modifier = Modifier.padding(top = 10.dp))
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Friendly Empty State UI for Feed Page
+// ----------------------------------------------------------------------------
+@Composable
+fun FeedEmptyState(
+    onStartExploring: () -> Unit,
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 20.dp)
+            .testTag("feed_empty_state_container"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        // Friendly illustration card
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFFF7FBF8),
+            shadowElevation = 3.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE0EFE5)),
+            modifier = Modifier
+                .size(240.dp)
+                .testTag("feed_empty_state_illustration")
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.img_empty_feed),
+                    contentDescription = "Friendly explorer illustration for empty feed",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(24.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(22.dp))
+
+        Text(
+            text = "No Posts Available Yet",
+            fontSize = 21.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF111B21),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Your feed is quiet right now. Discover exciting posts, creator updates, and vibrant media waiting in the community!",
+            fontSize = 14.sp,
+            color = Color(0xFF667781),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            lineHeight = 20.sp,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // 'Start Exploring' Button
+        Button(
+            onClick = onStartExploring,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = TriggerFabGreen,
+                contentColor = Color.White
+            ),
+            shape = RoundedCornerShape(14.dp),
+            elevation = ButtonDefaults.buttonElevation(
+                defaultElevation = 3.dp,
+                pressedElevation = 1.dp
+            ),
+            contentPadding = PaddingValues(horizontal = 28.dp, vertical = 13.dp),
+            modifier = Modifier
+                .fillMaxWidth(0.82f)
+                .height(50.dp)
+                .testTag("start_exploring_button")
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Explore,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Start Exploring",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        TextButton(
+            onClick = onRefresh,
+            colors = ButtonDefaults.textButtonColors(contentColor = TriggerFabGreen),
+            modifier = Modifier.testTag("pull_to_refresh_hint_button")
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Refresh,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "Pull down to refresh feed",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
     }
 }
 

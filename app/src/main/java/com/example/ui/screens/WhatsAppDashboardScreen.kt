@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -78,11 +79,6 @@ fun WhatsAppDashboardScreen(
     var selectedTab by remember {
         mutableStateOf(if (com.example.StreamDeepLink.pendingStreamId != null) DashboardTab.STREAM else DashboardTab.CHATS)
     }
-    // Reactive flip: a stream link delivered while the app was already open
-    // (onNewIntent) jumps to the Stream tab even if the dashboard was on Chats.
-    LaunchedEffect(com.example.StreamDeepLink.pendingStreamId) {
-        if (com.example.StreamDeepLink.pendingStreamId != null) selectedTab = DashboardTab.STREAM
-    }
     var showTopMenu by remember { mutableStateOf(false) }
     var showNewChatDialog by remember { mutableStateOf(false) }
     var showStatusStoryDialog by remember { mutableStateOf<String?>(null) }
@@ -91,6 +87,51 @@ fun WhatsAppDashboardScreen(
     var showActiveCallDialog by remember { mutableStateOf(false) }
     var activeCallContactName by remember { mutableStateOf("Contact") }
     var activeCallIsVideo by remember { mutableStateOf(false) }
+
+    val tabHistory = remember {
+        mutableStateListOf(if (com.example.StreamDeepLink.pendingStreamId != null) DashboardTab.STREAM else DashboardTab.CHATS)
+    }
+
+    fun navigateToTab(tab: DashboardTab) {
+        if (selectedTab != tab) {
+            tabHistory.add(tab)
+            selectedTab = tab
+        }
+    }
+
+    fun navigateBackTab() {
+        if (tabHistory.size > 1) {
+            tabHistory.removeAt(tabHistory.lastIndex)
+            selectedTab = tabHistory.lastOrNull() ?: DashboardTab.CHATS
+        } else {
+            selectedTab = DashboardTab.CHATS
+        }
+    }
+
+    // Intercept back navigation: dismiss sheets/dialogs or return to previously accessed tab/page
+    BackHandler(
+        enabled = showTopMenu || showPostMediaPickerSheet || showNewChatDialog ||
+                showStatusStoryDialog != null || showGoLiveDialog || showActiveCallDialog ||
+                selectedTab != DashboardTab.CHATS
+    ) {
+        when {
+            showTopMenu -> showTopMenu = false
+            showPostMediaPickerSheet -> showPostMediaPickerSheet = false
+            showNewChatDialog -> showNewChatDialog = false
+            showStatusStoryDialog != null -> showStatusStoryDialog = null
+            showGoLiveDialog -> showGoLiveDialog = false
+            showActiveCallDialog -> showActiveCallDialog = false
+            selectedTab != DashboardTab.CHATS -> navigateBackTab()
+        }
+    }
+
+    // Reactive flip: a stream link delivered while the app was already open
+    // (onNewIntent) jumps to the Stream tab even if the dashboard was on Chats.
+    LaunchedEffect(com.example.StreamDeepLink.pendingStreamId) {
+        if (com.example.StreamDeepLink.pendingStreamId != null) {
+            navigateToTab(DashboardTab.STREAM)
+        }
+    }
 
     // Bell badge count — refreshes on every dashboard (re)composition, so it
     // also re-derives after returning from the notifications screen.
@@ -151,7 +192,7 @@ fun WhatsAppDashboardScreen(
                         onMenuClick = { showTopMenu = true },
                         showMenu = showTopMenu,
                         onDismissMenu = { showTopMenu = false },
-                        onOpenProfile = { selectedTab = DashboardTab.PROFILE },
+                        onOpenProfile = { navigateToTab(DashboardTab.PROFILE) },
                         onOpenSettings = onOpenSettings,
                         onToggleNetwork = { viewModel.toggleNetworkConnection() }
                     )
@@ -188,7 +229,7 @@ fun WhatsAppDashboardScreen(
                 }
             } else {
                 ProfileTopHeader(
-                    onBack = { selectedTab = DashboardTab.CHATS }
+                    onBack = { navigateBackTab() }
                 )
             }
         },
@@ -196,7 +237,7 @@ fun WhatsAppDashboardScreen(
             WhatsAppBottomNavBar(
                 selectedTab = selectedTab,
                 unreadChatsCount = totalUnread,
-                onTabSelected = { selectedTab = it }
+                onTabSelected = { navigateToTab(it) }
             )
         },
         floatingActionButton = {
@@ -355,7 +396,7 @@ fun WhatsAppDashboardScreen(
 
                 DashboardTab.PROFILE -> {
                     ProfileScreen(
-                        onBack = { selectedTab = DashboardTab.CHATS },
+                        onBack = { navigateBackTab() },
                         // Full logout chain + navigation live in the NavHost
                         // lambda (the old code piggybacked on the removed
                         // "Restart Onboarding Flow" handler and skipped cleanup).
