@@ -73,6 +73,8 @@ object AppServiceContainer {
         private set
     lateinit var secretVaultService: com.example.service.SecretVaultService
         private set
+    lateinit var feedRepository: com.example.service.FeedRepository
+        private set
     lateinit var storageManager: TriggerStorageManager
         private set
 
@@ -227,6 +229,7 @@ object AppServiceContainer {
         walletService = com.example.service.WalletService(context)
         razorpayPaymentService = com.example.service.RazorpayPaymentService()
         secretVaultService = com.example.service.SecretVaultService(context)
+        feedRepository = com.example.service.FeedRepository(this.context)
 
         initialized = true
     }

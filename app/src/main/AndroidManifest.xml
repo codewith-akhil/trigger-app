@@ -21,6 +21,9 @@
     <!-- Incoming-call full-screen intent: lets a ringing call present
          head-up / over the lock screen on modern Android. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
     <!-- Declare camera + microphone as optional so the app installs on devices
          without them (e.g. ChromeOS tablets). Required=false means the app

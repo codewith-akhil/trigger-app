@@ -49,6 +49,24 @@ object TriggerDestinations {
     const val STREAM_HISTORY = "stream_history"
     const val WALLET = "wallet"
     const val SECRET_VAULT = "secret_vault"
+    const val POST_UPLOAD = "post_upload/{mediaType}"
+    fun postUpload(mediaType: String = "photo") = "post_upload/$mediaType"
+
+    const val POST_VIEW = "post_view/{postId}"
+    fun postView(postId: String) = "post_view/$postId"
+
+    const val PAYMENT_OVERVIEW = "payment_overview/{postId}"
+    fun paymentOverview(postId: String) = "payment_overview/$postId"
+
+    const val PAYMENT_VALIDATION = "payment_validation/{postId}?orderId={orderId}&paymentId={paymentId}&signature={signature}&status={status}&error={error}"
+    fun paymentValidation(
+        postId: String,
+        orderId: String = "",
+        paymentId: String = "",
+        signature: String = "",
+        status: String = "success",
+        error: String = ""
+    ) = "payment_validation/$postId?orderId=${android.net.Uri.encode(orderId)}&paymentId=${android.net.Uri.encode(paymentId)}&signature=${android.net.Uri.encode(signature)}&status=${android.net.Uri.encode(status)}&error=${android.net.Uri.encode(error)}"
     // (The dead HOME route + TriggerHomeScreen — with its unreachable camera
     // icon and restart-onboarding hook — were removed entirely.)
 }
@@ -322,6 +340,15 @@ fun TriggerAppNavHost(
                 onNavigateToStreamHistory = {
                     navController.navigate(TriggerDestinations.STREAM_HISTORY)
                 },
+                onNavigateToPostUpload = { mediaType ->
+                    navController.navigate(TriggerDestinations.postUpload(mediaType))
+                },
+                onNavigateToPostView = { postId ->
+                    navController.navigate(TriggerDestinations.postView(postId))
+                },
+                onNavigateToPaymentOverview = { postId ->
+                    navController.navigate(TriggerDestinations.paymentOverview(postId))
+                },
                 onLogout = {
                     // The dashboard "Restart Onboarding Flow" menu item was
                     // removed; logout keeps the full-cleanup chain (same as the
@@ -582,6 +609,93 @@ fun TriggerAppNavHost(
                         avatarUrl = null
                     )
                     navController.navigate(TriggerDestinations.USER_PROFILE)
+                }
+            )
+        }
+
+        composable(TriggerDestinations.POST_UPLOAD) { backStackEntry ->
+            val mediaType = backStackEntry.arguments?.getString("mediaType") ?: "photo"
+            PostUploadScreen(
+                initialMediaType = mediaType,
+                onBack = {
+                    navController.popBackStack()
+                },
+                onPostCreatedSuccessfully = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(TriggerDestinations.POST_VIEW) { backStackEntry ->
+            val postId = backStackEntry.arguments?.getString("postId").orEmpty()
+            PostViewScreen(
+                postId = postId,
+                onBack = {
+                    navController.popBackStack()
+                },
+                onNavigateToPaymentOverview = { id ->
+                    navController.navigate(TriggerDestinations.paymentOverview(id))
+                }
+            )
+        }
+
+        composable(TriggerDestinations.PAYMENT_OVERVIEW) { backStackEntry ->
+            val postId = backStackEntry.arguments?.getString("postId").orEmpty()
+            PaymentOverviewScreen(
+                postId = postId,
+                onBack = {
+                    navController.popBackStack()
+                },
+                onNavigateToValidation = { orderId, paymentId, signature, status, error ->
+                    navController.navigate(
+                        TriggerDestinations.paymentValidation(
+                            postId = postId,
+                            orderId = orderId,
+                            paymentId = paymentId,
+                            signature = signature,
+                            status = status,
+                            error = error.orEmpty()
+                        )
+                    )
+                }
+            )
+        }
+
+        composable(
+            route = TriggerDestinations.PAYMENT_VALIDATION,
+            arguments = listOf(
+                androidx.navigation.navArgument("postId") { type = androidx.navigation.NavType.StringType },
+                androidx.navigation.navArgument("orderId") { type = androidx.navigation.NavType.StringType; defaultValue = "" },
+                androidx.navigation.navArgument("paymentId") { type = androidx.navigation.NavType.StringType; defaultValue = "" },
+                androidx.navigation.navArgument("signature") { type = androidx.navigation.NavType.StringType; defaultValue = "" },
+                androidx.navigation.navArgument("status") { type = androidx.navigation.NavType.StringType; defaultValue = "success" },
+                androidx.navigation.navArgument("error") { type = androidx.navigation.NavType.StringType; defaultValue = "" }
+            )
+        ) { backStackEntry ->
+            val postId = backStackEntry.arguments?.getString("postId").orEmpty()
+            val orderId = backStackEntry.arguments?.getString("orderId").orEmpty()
+            val paymentId = backStackEntry.arguments?.getString("paymentId").orEmpty()
+            val signature = backStackEntry.arguments?.getString("signature").orEmpty()
+            val status = backStackEntry.arguments?.getString("status") ?: "success"
+            val error = backStackEntry.arguments?.getString("error")?.takeIf { it.isNotBlank() }
+
+            PaymentValidationScreen(
+                postId = postId,
+                orderId = orderId,
+                paymentId = paymentId,
+                signature = signature,
+                initialStatus = status,
+                errorMessage = error,
+                onNavigateToPostView = { id ->
+                    navController.navigate(TriggerDestinations.postView(id)) {
+                        popUpTo(TriggerDestinations.DASHBOARD)
+                    }
+                },
+                onNavigateToFeed = {
+                    navController.popBackStack(TriggerDestinations.DASHBOARD, inclusive = false)
+                },
+                onRetryPayment = { id ->
+                    navController.popBackStack()
                 }
             )
         }

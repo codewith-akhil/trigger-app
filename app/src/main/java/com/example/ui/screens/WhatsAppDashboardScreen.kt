@@ -56,6 +56,9 @@ fun WhatsAppDashboardScreen(
     onOpenNotifications: () -> Unit = {},
     onNavigateToScheduleStream: () -> Unit = {},
     onNavigateToStreamHistory: () -> Unit = {},
+    onNavigateToPostUpload: (mediaType: String) -> Unit = {},
+    onNavigateToPostView: (postId: String) -> Unit = {},
+    onNavigateToPaymentOverview: (postId: String) -> Unit = {},
     // Full cleanup (presence offline -> realtime disconnect -> server signOut
     // -> Room/vault/wallet wipe) THEN navigate — owned by the NavHost lambda.
     onLogout: () -> Unit = {}
@@ -83,6 +86,7 @@ fun WhatsAppDashboardScreen(
     var showTopMenu by remember { mutableStateOf(false) }
     var showNewChatDialog by remember { mutableStateOf(false) }
     var showStatusStoryDialog by remember { mutableStateOf<String?>(null) }
+    var showPostMediaPickerSheet by remember { mutableStateOf(false) }
     var showGoLiveDialog by remember { mutableStateOf(false) }
     var showActiveCallDialog by remember { mutableStateOf(false) }
     var activeCallContactName by remember { mutableStateOf("Contact") }
@@ -136,9 +140,10 @@ fun WhatsAppDashboardScreen(
         topBar = {
             if (selectedTab != DashboardTab.PROFILE) {
                 val isStreamTab = selectedTab == DashboardTab.STREAM
+                val isFeedTab = selectedTab == DashboardTab.UPDATES
                 Column {
                     WhatsAppTopHeader(
-                        title = if (isStreamTab) "Live Stream" else "Trigger App",
+                        title = if (isStreamTab) "Live Stream" else if (isFeedTab) "Feed" else "Trigger App",
                         isStreamHeader = isStreamTab,
                         onNewStreamClick = onNavigateToScheduleStream,
                         unreadNotifications = notificationsUnread,
@@ -209,6 +214,22 @@ fun WhatsAppDashboardScreen(
                             imageVector = Icons.Filled.AddComment,
                             contentDescription = "New Chat",
                             modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+                DashboardTab.UPDATES -> {
+                    FloatingActionButton(
+                        onClick = { showPostMediaPickerSheet = true },
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = TriggerFabGreen,
+                        contentColor = Color.White,
+                        elevation = FloatingActionButtonDefaults.elevation(3.dp),
+                        modifier = Modifier.testTag("new_post_fab")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Add,
+                            contentDescription = "Create Post",
+                            modifier = Modifier.size(26.dp)
                         )
                     }
                 }
@@ -304,9 +325,10 @@ fun WhatsAppDashboardScreen(
                 }
 
                 DashboardTab.UPDATES -> {
-                    UpdatesTabContent(
-                        onViewStatus = { name -> showStatusStoryDialog = name },
-                        onNewChat = { onOpenNewMessage() }
+                    FeedTabContent(
+                        onNavigateToUpload = { showPostMediaPickerSheet = true },
+                        onNavigateToPostView = onNavigateToPostView,
+                        onNavigateToPaymentOverview = onNavigateToPaymentOverview
                     )
                 }
 
@@ -342,6 +364,27 @@ fun WhatsAppDashboardScreen(
                     )
                 }
             }
+
+            // Bottom-left '+' Icon for posting (above navbar on the Feed page)
+            if (selectedTab == DashboardTab.UPDATES) {
+                FloatingActionButton(
+                    onClick = { showPostMediaPickerSheet = true },
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 20.dp, bottom = 20.dp)
+                        .testTag("feed_bottom_left_add_post_fab"),
+                    containerColor = TriggerFabGreen,
+                    contentColor = Color.White,
+                    shape = CircleShape,
+                    elevation = FloatingActionButtonDefaults.elevation(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = "Create Post",
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
         }
     }
 
@@ -372,6 +415,145 @@ fun WhatsAppDashboardScreen(
         AgoraGoLiveDialog(
             onDismiss = { showGoLiveDialog = false }
         )
+    }
+
+    // Photo / Video Selection Sheet for Post Upload
+    if (showPostMediaPickerSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showPostMediaPickerSheet = false },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+            ) {
+                Text(
+                    text = "Create New Post",
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF111B21),
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+                Text(
+                    text = "Select photos or video from gallery to begin cropping & customizing your post",
+                    fontSize = 13.sp,
+                    color = Color(0xFF667781),
+                    modifier = Modifier.padding(bottom = 20.dp)
+                )
+
+                // Option 1: Photo / Multiple Photos (4:5 Crop)
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable {
+                            showPostMediaPickerSheet = false
+                            onNavigateToPostUpload("photo")
+                        },
+                    color = Color(0xFFF7F8FA),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE5E9EC))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(TriggerFabGreen.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.PhotoLibrary,
+                                contentDescription = "Photos",
+                                tint = TriggerFabGreen,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Photo Post (Single / Multiple)",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF111B21)
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Instagram model 4:5 aspect ratio crop with carousel support",
+                                fontSize = 12.sp,
+                                color = Color(0xFF667781)
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            tint = Color.Gray
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Option 2: Single Video (9:16 Inbuilt Media Size)
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable {
+                            showPostMediaPickerSheet = false
+                            onNavigateToPostUpload("video")
+                        },
+                    color = Color(0xFFF7F8FA),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE5E9EC))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFE65100).copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.VideoLibrary,
+                                contentDescription = "Video",
+                                tint = Color(0xFFE65100),
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Video Post (Single Video)",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF111B21)
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "9:16 vertical view on black background media canvas",
+                                fontSize = 12.sp,
+                                color = Color(0xFF667781)
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            tint = Color.Gray
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+        }
     }
 
     // New Chat modal sheet
@@ -1004,14 +1186,14 @@ fun WhatsAppBottomNavBar(
                     onClick = { onTabSelected(DashboardTab.CHATS) }
                 )
 
-                // Tab 2: Updates
+                // Tab 2: Feed
                 BottomNavItem(
-                    title = "Updates",
+                    title = "Feed",
                     isSelected = selectedTab == DashboardTab.UPDATES,
                     icon = { isSelected ->
                         Icon(
-                            imageVector = if (isSelected) Icons.Filled.Update else Icons.Outlined.Update,
-                            contentDescription = "Updates",
+                            imageVector = if (isSelected) Icons.Filled.DynamicFeed else Icons.Outlined.DynamicFeed,
+                            contentDescription = "Feed",
                             modifier = Modifier.size(22.dp)
                         )
                     },
