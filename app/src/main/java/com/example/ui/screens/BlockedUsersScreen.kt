@@ -23,7 +23,7 @@ import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.AlertDialog
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
@@ -302,15 +302,15 @@ fun BlockedUsersScreen(
 
     pendingUnblock?.let { target ->
         val displayName = target.displayName.ifBlank { target.blockedIdentifier }
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { if (!isUnblocking) pendingUnblock = null },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "Unblock $displayName?",
                     color = BlockedTextPrimary,
-                    fontSize = 16.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
                 )
             },

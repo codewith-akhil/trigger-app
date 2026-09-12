@@ -668,7 +668,7 @@ private fun FeedEmptyState(onCreatePost: () -> Unit) {
         Text("No posts yet", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color(0xFF111B21))
         Spacer(Modifier.height(6.dp))
         Text(
-            "Be the first to share something. Crop a photo to 4:5 or a video to 9:16 and post it.",
+            "Share photos or videos with your followers.",
             fontSize = 13.sp,
             color = Color(0xFF667781),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -792,17 +792,6 @@ fun FeedTopStoriesBar(
                 }
                 Spacer(Modifier.height(4.dp))
                 Text("Your post", fontSize = 11.sp, color = Color(0xFF37474F), fontWeight = FontWeight.Medium)
-            }
-
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    "Posts you share appear here — newest always on top.",
-                    fontSize = 11.sp,
-                    color = Color(0xFF8696A0),
-                    modifier = Modifier.width(180.dp)
-                )
             }
         }
     }

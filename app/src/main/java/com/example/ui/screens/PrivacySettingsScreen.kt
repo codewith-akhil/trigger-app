@@ -9,6 +9,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -201,50 +202,60 @@ fun PrivacySettingsScreen(
         }
     }
 
-    // Modal Selection Dialog for options — tapping an option applies it and
-    // closes the dialog (no redundant Done button).
+    // Modal Selection Dialog for options - tightly wrapped, no dead space
     if (showPickerTitle != null) {
-        AlertDialog(
-            onDismissRequest = { showPickerTitle = null },
-            containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
-            title = {
-                Text(
-                    showPickerTitle.orEmpty(),
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary
-                )
-            },
-            text = {
-                Column(modifier = Modifier.widthIn(max = 340.dp)) {
-                    pickerOptions.forEach { opt ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onSelectedPickerOption(opt)
-                                    showPickerTitle = null
-                                }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = opt == pickerCurrentValue,
-                                onClick = {
-                                    onSelectedPickerOption(opt)
-                                    showPickerTitle = null
-                                },
-                                colors = RadioButtonDefaults.colors(selectedColor = SwitchGreen)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = opt, fontSize = 15.sp, color = TextPrimary)
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showPickerTitle = null }
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color.White,
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .wrapContentHeight()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp)
+                ) {
+                    Text(
+                        showPickerTitle.orEmpty(),
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        pickerOptions.forEach { opt ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        onSelectedPickerOption(opt)
+                                        showPickerTitle = null
+                                    }
+                                    .padding(vertical = 8.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = opt == pickerCurrentValue,
+                                    onClick = {
+                                        onSelectedPickerOption(opt)
+                                        showPickerTitle = null
+                                    },
+                                    colors = RadioButtonDefaults.colors(selectedColor = SwitchGreen)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(text = opt, fontSize = 15.sp, color = TextPrimary)
+                            }
                         }
                     }
                 }
-            },
-            confirmButton = {}
-        )
+            }
+        }
     }
 }
 

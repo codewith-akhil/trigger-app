@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -20,7 +21,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -29,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.di.AppServiceContainer
 import com.example.service.supabase.SupabaseResult
+import com.example.ui.components.TriggerAlertDialog
 import com.example.ui.components.TriggerTopHeader
 import com.example.ui.theme.*
 import com.example.util.optStringOrNull
@@ -299,26 +303,67 @@ fun NewMessageScreen(
                 }
             }
 
-            // Search bar
+            // Search bar - standard, normal size capsule
             item {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search by username, name, or phone") },
-                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = TriggerTextSecondary) },
-                    singleLine = true,
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
                     shape = RoundedCornerShape(24.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = TriggerGreenAccent,
-                        unfocusedBorderColor = TriggerDivider,
-                        cursorColor = TriggerGreenAccent
-                    ),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Text,
-                        imeAction = ImeAction.Search
-                    ),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-                )
+                    color = Color(0xFFF0F2F5)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = "Search",
+                            tint = TriggerTextSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (searchQuery.isEmpty()) {
+                                Text(
+                                    text = "Search by username, name, or phone",
+                                    color = TriggerTextSecondary,
+                                    fontSize = 14.5.sp
+                                )
+                            }
+                            BasicTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                textStyle = TextStyle(
+                                    color = TriggerTextPrimary,
+                                    fontSize = 14.5.sp
+                                ),
+                                cursorBrush = SolidColor(TriggerGreenAccent),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Text,
+                                    imeAction = ImeAction.Search
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(
+                                onClick = { searchQuery = "" },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Clear",
+                                    tint = TriggerTextSecondary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             // Search results
@@ -470,26 +515,20 @@ fun NewMessageScreen(
     showSendDialog?.let { user ->
         var messageText by remember { mutableStateOf("") }
         var isSending by remember { mutableStateOf(false) }
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { if (!isSending) showSendDialog = null },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text("Message request to ${user.name}", fontWeight = FontWeight.Bold,
-                    color = TriggerTextPrimary, fontSize = 16.sp)
+                    color = TriggerTextPrimary, fontSize = 17.sp)
             },
             text = {
                 Column {
                     if (user.username != null) {
                         Text("@${user.username}", color = TriggerTextSecondary, fontSize = 13.sp)
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                     }
-                    Text(
-                        "They can read your messages and accept or decline. " +
-                            "You can send up to 3 messages until they accept.",
-                        color = TriggerTextSecondary, fontSize = 12.sp
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
                     OutlinedTextField(
                         value = messageText,
                         onValueChange = { if (it.length <= 500) messageText = it },

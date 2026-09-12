@@ -6,9 +6,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -389,66 +391,77 @@ fun ChatsSettingsScreen(
         }
     }
 
-    // Font size picker
+    // Font size picker - compact wrapped dialog
     if (showFontSizeDialog) {
-        AlertDialog(
-            onDismissRequest = { showFontSizeDialog = false },
-            containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
-            title = {
-                Text("Font size", fontWeight = FontWeight.Bold, color = TextPrimary)
-            },
-            text = {
-                Column {
-                    listOf("Small", "Medium", "Large").forEach { size ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    fontSizeChoice = size
-                                    showFontSizeDialog = false
-                                    val apiValue = when (size) {
-                                        "Small" -> "small"
-                                        "Large" -> "large"
-                                        else -> "medium"
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showFontSizeDialog = false }
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color.White,
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .wrapContentHeight()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp)
+                ) {
+                    Text("Font size", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = TextPrimary)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        listOf("Small", "Medium", "Large").forEach { size ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        fontSizeChoice = size
+                                        showFontSizeDialog = false
+                                        val apiValue = when (size) {
+                                            "Small" -> "small"
+                                            "Large" -> "large"
+                                            else -> "medium"
+                                        }
+                                        persistSetting(JSONObject().put("fontSize", apiValue))
                                     }
-                                    persistSetting(JSONObject().put("fontSize", apiValue))
-                                }
-                                .padding(vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = (fontSizeChoice == size),
-                                onClick = {
-                                    fontSizeChoice = size
-                                    showFontSizeDialog = false
-                                    val apiValue = when (size) {
-                                        "Small" -> "small"
-                                        "Large" -> "large"
-                                        else -> "medium"
-                                    }
-                                    persistSetting(JSONObject().put("fontSize", apiValue))
-                                },
-                                colors = RadioButtonDefaults.colors(selectedColor = SwitchGreen)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = size, fontSize = 15.sp, color = TextPrimary)
+                                    .padding(vertical = 8.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = (fontSizeChoice == size),
+                                    onClick = {
+                                        fontSizeChoice = size
+                                        showFontSizeDialog = false
+                                        val apiValue = when (size) {
+                                            "Small" -> "small"
+                                            "Large" -> "large"
+                                            else -> "medium"
+                                        }
+                                        persistSetting(JSONObject().put("fontSize", apiValue))
+                                    },
+                                    colors = RadioButtonDefaults.colors(selectedColor = SwitchGreen)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(text = size, fontSize = 15.sp, color = TextPrimary)
+                            }
                         }
                     }
                 }
-            },
-            confirmButton = {}
-        )
+            }
+        }
     }
 
     // Clear chats confirmation
     if (showClearChatsDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showClearChatsDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
-                Text("Clear all chats?", fontWeight = FontWeight.Bold, color = Color(0xFFD32F2F))
+                Text("Clear all chats?", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color(0xFFD32F2F))
             },
             text = {
                 Text(

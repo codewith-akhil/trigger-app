@@ -14,6 +14,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,7 +58,7 @@ fun ChatMediaViewer(
     val viewOnce = message.isViewOnce
 
     var isStarred by remember { mutableStateOf(message.isStarred) }
-    var replyText by remember { mutableStateOf("") }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
@@ -74,7 +75,7 @@ fun ChatMediaViewer(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = 64.dp, bottom = 120.dp)
+                .padding(top = 64.dp, bottom = if (message.text.isNotBlank()) 56.dp else 16.dp)
                 .pointerInput(Unit) {
                     if (message.type != MessageType.VIDEO) {
                         detectTransformGestures { _, pan, zoom, _ ->
@@ -206,7 +207,7 @@ fun ChatMediaViewer(
                     )
                 }
 
-                IconButton(onClick = onDelete) {
+                IconButton(onClick = { showDeleteConfirmDialog = true }) {
                     Icon(
                         imageVector = Icons.Filled.Delete,
                         contentDescription = "Delete",
@@ -216,114 +217,62 @@ fun ChatMediaViewer(
             }
         }
 
-        // Bottom section: Caption + Quick Reactions + Reply bar (Screenshots 6 & 7)
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                // Lift the reply bar above the IME — previously the keyboard
-                // covered it while typing.
-                .imePadding()
-                .background(Color.Black.copy(alpha = 0.75f))
-                .padding(horizontal = 12.dp, vertical = 10.dp)
-        ) {
-            // Optional Caption text
-            if (message.text.isNotBlank()) {
+        // Optional Caption text (if present)
+        if (message.text.isNotBlank()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.75f))
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
                 Text(
                     text = message.text,
                     color = Color.White,
-                    fontSize = 14.5.sp,
-                    modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
+                    fontSize = 14.5.sp
                 )
             }
+        }
 
-            if (!viewOnce) {
-            // Quick emoji reactions row
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val quickEmojis = listOf("❤️", "😂", "😮", "😢", "🙏", "👏")
-                quickEmojis.forEach { emoji ->
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.12f))
-                            .clickable {
-                                onReact(emoji)
-                                onClose()
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(text = emoji, fontSize = 20.sp)
-                    }
-                }
-            }
-
-            // Reply input bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Color(0xFF1F2C34))
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.SentimentSatisfied,
-                    contentDescription = "Emoji",
-                    tint = Color(0xFF8696A0),
-                    modifier = Modifier.size(24.dp)
-                )
-
-                Spacer(modifier = Modifier.width(10.dp))
-
-                Box(modifier = Modifier.weight(1f)) {
-                    if (replyText.isEmpty()) {
-                        Text(
-                            text = "Reply...",
-                            color = Color(0xFF8696A0),
-                            fontSize = 15.sp
-                        )
-                    }
-                    BasicTextField(
-                        value = replyText,
-                        onValueChange = { replyText = it },
-                        textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
-                        cursorBrush = SolidColor(TriggerFabGreen),
-                        modifier = Modifier.fillMaxWidth()
+        // Delete confirmation dialog
+        if (showDeleteConfirmDialog) {
+            TriggerAlertDialog(
+                onDismissRequest = { showDeleteConfirmDialog = false },
+                containerColor = Color.White,
+                shape = RoundedCornerShape(20.dp),
+                title = {
+                    Text(
+                        text = "Delete media?",
+                        color = Color(0xFF111B21),
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
                     )
-                }
-
-                if (replyText.isNotBlank()) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(TriggerFabGreen)
-                            .clickable {
-                                if (replyText.isNotBlank()) {
-                                    onSendReply(replyText)
-                                    onClose()
-                                }
-                            },
-                        contentAlignment = Alignment.Center
+                },
+                text = {
+                    Text(
+                        text = "Are you sure you want to delete this media? This action cannot be undone.",
+                        color = Color(0xFF667781),
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showDeleteConfirmDialog = false
+                            onDelete()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEA4335))
                     ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Send",
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Text("Delete", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                        Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
                     }
                 }
-            }
-            } // if (!viewOnce) — reactions + reply are hidden in view-once mode
+            )
         }
     }
 }

@@ -179,13 +179,6 @@ fun StreamHistoryScreen(
                     color = TextMain,
                     textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "Schedule a stream to see it appear here after it ends.",
-                    fontSize = 13.sp,
-                    color = TextSub,
-                    textAlign = TextAlign.Center
-                )
                 Spacer(modifier = Modifier.height(20.dp))
                 Button(
                     onClick = onScheduleNew,

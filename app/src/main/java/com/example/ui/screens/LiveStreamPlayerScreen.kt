@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -535,10 +536,12 @@ fun LiveStreamPlayerScreen(
 
     // Host End Stream Confirmation Dialog
     if (showEndConfirmDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showEndConfirmDialog = false },
-            title = { Text("End Live Broadcast?") },
-            text = { Text("Ending the broadcast will close the stream for all viewers.") },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(20.dp),
+            title = { Text("End Live Broadcast?", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color(0xFF111B21)) },
+            text = { Text("Ending the broadcast will close the stream for all viewers.", fontSize = 14.sp, color = Color(0xFF667781)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -552,7 +555,7 @@ fun LiveStreamPlayerScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showEndConfirmDialog = false }) {
-                    Text("Cancel")
+                    Text("Cancel", color = Color(0xFF667781))
                 }
             }
         )

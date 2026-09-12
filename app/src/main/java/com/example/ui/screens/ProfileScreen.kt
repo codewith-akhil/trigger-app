@@ -49,9 +49,9 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -937,14 +937,14 @@ fun ProfileScreen(
 
     // Delete profile photo confirmation (compact)
     if (showDeletePhotoConfirm) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showDeletePhotoConfirm = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "Delete profile photo?",
-                    fontSize = 16.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     color = TriggerTextPrimary
                 )
@@ -982,7 +982,7 @@ fun ProfileScreen(
     // Logout confirmation dialog
     // ------------------------------------------------------------------------
     if (showLogoutDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showLogoutDialog = false },
             containerColor = Color.White,
             shape = RoundedCornerShape(20.dp),
@@ -990,7 +990,7 @@ fun ProfileScreen(
                 Text(
                     text = "Log out of Trigger App?",
                     fontWeight = FontWeight.Bold,
-                    fontSize = 19.sp,
+                    fontSize = 18.sp,
                     color = TriggerTextPrimary
                 )
             },
@@ -1113,11 +1113,11 @@ fun ProfileScreen(
     // ------------------------------------------------------------------------
     if (showEditGenderDialog) {
         var selectedGender by remember { mutableStateOf(profile.gender ?: "") }
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { if (!isGenderSaving) showEditGenderDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
-            title = { Text("Select Gender", color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
+            shape = RoundedCornerShape(20.dp),
+            title = { Text("Select Gender", color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp) },
             text = {
                 Column {
                     if (genders.isEmpty()) {
@@ -1197,11 +1197,11 @@ fun ProfileScreen(
         var searchQuery by remember { mutableStateOf("") }
         var selectedCountry by remember { mutableStateOf<Pair<String, String>?>(null) }
         val filtered = if (searchQuery.isBlank()) countries else countries.filter { it.second.contains(searchQuery, ignoreCase = true) || it.first.contains(searchQuery, ignoreCase = true) }
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { if (!isCountrySaving) showEditCountryDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
-            title = { Text("Select Country", color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
+            shape = RoundedCornerShape(20.dp),
+            title = { Text("Select Country", color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp) },
             text = {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     if (countries.isEmpty()) {
@@ -1450,12 +1450,12 @@ fun ProfileEditDialog(
     var textValue by remember { mutableStateOf(initialValue) }
     val liveError = validator?.invoke(textValue)
 
-    AlertDialog(
+    TriggerAlertDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
         containerColor = Color.White,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         title = {
-            Text(text = title, color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text(text = title, color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
         },
         text = {
             Column {
@@ -1529,12 +1529,12 @@ fun AboutEditDialog(
 ) {
     var textValue by remember { mutableStateOf(initialValue) }
 
-    AlertDialog(
+    TriggerAlertDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
         containerColor = Color.White,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         title = {
-            Text(text = "About", color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text(text = "About", color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
         },
         text = {
             Column {
@@ -1639,12 +1639,12 @@ fun UsernameEditDialog(
         cleanUsername.isNotEmpty() &&
         availability == UsernameAvailability.Available
 
-    AlertDialog(
+    TriggerAlertDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
         containerColor = Color.White,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         title = {
-            Text(text = "Create username", color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text(text = "Create username", color = TriggerTextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
         },
         text = {
             Column {

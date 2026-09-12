@@ -27,6 +27,8 @@ Designed with authentic styling inspired by modern communication platforms like 
   - [📅 Schedule Stream & Audience Slots](#-schedule-stream--audience-slots)
   - [📜 Stream History & Analytics](#-stream-history--analytics)
   - [💳 Trigger Wallet, Bank Details & Withdrawals](#-trigger-wallet-bank-details--withdrawals)
+  - [🛍️ Paid Posts, Razorpay Gateway & Validation](#-paid-posts-razorpay-gateway--validation)
+  - [🎨 Comprehensive UI/UX Modernization & Design System](#-comprehensive-uiux-modernization--design-system)
   - [🛡️ Secret Vault (6-Digit PIN Protected)](#-secret-vault-6-digit-pin-protected)
   - [👤 User Profile Management](#-user-profile-management)
   - [👥 Contact Picker & New Chat](#-contact-picker--new-chat)
@@ -114,6 +116,18 @@ Designed with authentic styling inspired by modern communication platforms like 
   - **Live Balances**: Current Available Balance, Total Earned, and Pending Withdrawals.
   - **Bank & Payout Method Update**: Secure modal to configure and save Bank Name, Account Number, Account Holder Name, and SWIFT / IFSC / Routing code, plus PayPal / UPI ID.
   - **Instant Withdrawal Engine**: Enter withdrawal amount, select saved payout method, and initiate bank payout with real-time balance validation and payout record logging.
+
+### 🛍️ Paid Posts, Razorpay Gateway & Validation
+- **Exclusive Feed Content Monetization**:
+  - **Post View Screen (`PostViewScreen.kt`)**: Full-screen black canvas with ExoPlayer video looping, photo gallery carousel, double-tap to like, and Instagram-style threaded comments with per-comment heart likes and quick emoji reaction bar.
+  - **Payment Overview Screen (`PaymentOverviewScreen.kt`)**: Transparent itemized breakdown of creator fee, convenience charge, GST, and 256-bit SSL encrypted checkout badge. Launches Razorpay SDK.
+  - **Payment Validation Screen (`PaymentValidationScreen.kt`)**: Asynchronously validates signature, unblurs and unlocks media permanently, and issues a digital transaction receipt.
+
+### 🎨 Comprehensive UI/UX Modernization & Design System
+- **TriggerAlertDialog Standardization**: Built a centralized, modern dialog system with 20dp corners, max 360dp width, balanced padding, and 17sp bold title typography. 100% of dialogs across 17+ screens migrated from generic platform dialogs.
+- **Unified Brand Header**: All top bars styled with Trigger green (`#008069`), crisp white typography, and white navigation/action icons.
+- **Feed Crop Editor Overhaul**: Full multi-touch pan, pinch-to-zoom, 90° rotation, and aspect ratio presets (Original, 1:1, 4:5, 16:9).
+- **Search & Navigation Polish**: Sleek 40dp search input container and refined bottom navigation bar icons.
 
 ### 🛡️ Secret Vault (6-Digit PIN Protected)
 - **Secret Vault Screen (`SecretVaultScreen.kt`)**:

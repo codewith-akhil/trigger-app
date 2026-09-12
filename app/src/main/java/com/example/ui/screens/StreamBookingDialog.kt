@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -148,7 +149,7 @@ fun StreamBookingDialog(
         }
     }
 
-    AlertDialog(
+    TriggerAlertDialog(
         onDismissRequest = { if (!isProcessing) onDismiss() },
         containerColor = Color.White,
         shape = RoundedCornerShape(20.dp),

@@ -42,6 +42,7 @@ import androidx.compose.material.icons.outlined.EmojiEmotions
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.*
+import com.example.ui.components.TriggerAlertDialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -1613,15 +1614,15 @@ fun ChatScreen(
 
     // Block Contact alert dialog (compact style)
     if (showBlockDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showBlockDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "Block $contactName?",
                     color = Color(0xFF111B21),
-                    fontSize = 16.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
                 )
             },
@@ -1654,15 +1655,15 @@ fun ChatScreen(
 
     // Unblock Contact alert dialog (compact style)
     if (showUnblockDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showUnblockDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "Unblock $contactName?",
                     color = Color(0xFF111B21),
-                    fontSize = 16.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
                 )
             },
@@ -1695,14 +1696,16 @@ fun ChatScreen(
 
     // Clear Chat alert dialog
     if (showClearChatDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showClearChatDialog = false },
             containerColor = Color.White,
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "Clear this chat?",
                     color = Color(0xFF111B21),
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
                 )
             },
             text = {
@@ -1738,10 +1741,10 @@ fun ChatScreen(
         val selectedMessages = messages.filter { selectedIds.contains(it.id) }
         val canDeleteForEveryone = selectedMessages.isNotEmpty() && selectedMessages.all { it.isOutgoing }
         var alsoDeleteForEveryone by remember(showDeleteDialog) { mutableStateOf(false) }
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "DELETE MESSAGE",
@@ -1805,14 +1808,16 @@ fun ChatScreen(
 
     // Archive chat confirm dialog
     if (showArchiveConfirmDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showArchiveConfirmDialog = false },
             containerColor = Color.White,
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = if (conversationArchived) "Unarchive chat?" else "Archive chat?",
                     color = Color(0xFF111B21),
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
                 )
             },
             text = {
@@ -2696,15 +2701,15 @@ fun VaultPinGateDialog(
         if (pin.length < 6) pin += d
     }
 
-    AlertDialog(
+    TriggerAlertDialog(
         onDismissRequest = { if (!verifying) onDismiss() },
         containerColor = Color.White,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         title = {
             Text(
                 text = "Enter vault PIN",
                 color = Color(0xFF111B21),
-                fontSize = 16.sp,
+                fontSize = 17.sp,
                 fontWeight = FontWeight.Bold
             )
         },

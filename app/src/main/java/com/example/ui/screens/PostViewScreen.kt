@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.*
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -932,11 +933,9 @@ fun CommentReportDialog(
     var additionalDetails by remember { mutableStateOf("") }
     var isSubmitting by remember { mutableStateOf(false) }
 
-    AlertDialog(
+    TriggerAlertDialog(
         onDismissRequest = { if (!isSubmitting) onDismiss() },
         containerColor = Color(0xFF1E1E1E),
-        titleContentColor = Color.White,
-        textContentColor = Color(0xFFDCDCDC),
         shape = RoundedCornerShape(20.dp),
         icon = {
             Box(

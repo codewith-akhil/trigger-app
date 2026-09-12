@@ -33,6 +33,7 @@ import coil.compose.AsyncImage
 import com.example.di.AppServiceContainer
 import com.example.service.supabase.SupabaseResult
 import com.example.ui.components.ProfilePhotoViewer
+import com.example.ui.components.TriggerAlertDialog
 import com.example.ui.components.TriggerBottomNavInset
 import com.example.ui.components.TriggerTopHeader
 import com.example.util.optStringOrNull
@@ -551,16 +552,16 @@ fun UserProfileScreen(
         var messageText by remember { mutableStateOf("") }
         var isSending by remember { mutableStateOf(false) }
 
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { if (!isSending) showMessageRequestDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "Message request to $currentName",
                     fontWeight = FontWeight.Bold,
                     color = TriggerTextPrimary,
-                    fontSize = 16.sp
+                    fontSize = 17.sp
                 )
             },
             text = {
@@ -665,15 +666,15 @@ fun UserProfileScreen(
 
     // Dialog: Block Confirmation (compact)
     if (showBlockDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showBlockDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     "Block $currentName?",
                     fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
+                    fontSize = 17.sp,
                     color = TriggerTextPrimary
                 )
             },
@@ -706,15 +707,15 @@ fun UserProfileScreen(
 
     // Dialog: Unblock Confirmation (compact)
     if (showUnblockDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showUnblockDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     "Unblock $currentName?",
                     fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
+                    fontSize = 17.sp,
                     color = TriggerTextPrimary
                 )
             },
@@ -749,10 +750,10 @@ fun UserProfileScreen(
     if (showReportDialog) {
         var reportAndBlock by remember { mutableStateOf(false) }
 
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showReportDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     "Report $currentName",

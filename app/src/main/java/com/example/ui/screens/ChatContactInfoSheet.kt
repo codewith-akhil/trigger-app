@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -581,14 +582,16 @@ fun ChatContactInfoSheet(
 
     // Clear Chat alert dialog
     if (showClearChatDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showClearChatDialog = false },
             containerColor = Color.White,
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "Clear this chat?",
                     color = Color(0xFF111B21),
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
                 )
             },
             text = {
@@ -620,16 +623,16 @@ fun ChatContactInfoSheet(
 
     // Block Contact alert dialog — compact WhatsApp-style card
     if (showBlockDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showBlockDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "Block $contactName?",
                     color = Color(0xFF111B21),
                     fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
+                    fontSize = 17.sp
                 )
             },
             text = {
@@ -640,22 +643,21 @@ fun ChatContactInfoSheet(
                 )
             },
             confirmButton = {
-                Row {
-                    TextButton(onClick = { showBlockDialog = false }) {
-                        Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
-                    }
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Button(
-                        onClick = {
-                            showBlockDialog = false
-                            onBlockContact()
-                            onClose()
-                        },
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEA4335))
-                    ) {
-                        Text("Block", color = Color.White, fontWeight = FontWeight.Bold)
-                    }
+                Button(
+                    onClick = {
+                        showBlockDialog = false
+                        onBlockContact()
+                        onClose()
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEA4335))
+                ) {
+                    Text("Block", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBlockDialog = false }) {
+                    Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
                 }
             }
         )
@@ -663,16 +665,16 @@ fun ChatContactInfoSheet(
 
     // Unblock Contact alert dialog — compact WhatsApp-style card
     if (showUnblockDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showUnblockDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "Unblock $contactName?",
                     color = Color(0xFF111B21),
                     fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
+                    fontSize = 17.sp
                 )
             },
             text = {
@@ -683,21 +685,20 @@ fun ChatContactInfoSheet(
                 )
             },
             confirmButton = {
-                Row {
-                    TextButton(onClick = { showUnblockDialog = false }) {
-                        Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
-                    }
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Button(
-                        onClick = {
-                            showUnblockDialog = false
-                            onUnblockContact()
-                        },
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = WhatsAppFabGreen)
-                    ) {
-                        Text("Unblock", color = Color.White, fontWeight = FontWeight.Bold)
-                    }
+                Button(
+                    onClick = {
+                        showUnblockDialog = false
+                        onUnblockContact()
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = WhatsAppFabGreen)
+                ) {
+                    Text("Unblock", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUnblockDialog = false }) {
+                    Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
                 }
             }
         )
@@ -706,14 +707,16 @@ fun ChatContactInfoSheet(
     // Mute Notifications options dialog
     if (showMuteDialog) {
         var selectedDuration by remember { mutableStateOf("8 hours") }
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showMuteDialog = false },
             containerColor = Color.White,
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "Mute notifications for...",
                     color = Color(0xFF111B21),
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
                 )
             },
             text = {
@@ -765,10 +768,10 @@ fun ChatContactInfoSheet(
     // checkbox + Cancel/Report text buttons). No icon, no free-text field.
     if (showReportDialog) {
         var reportAndBlock by remember { mutableStateOf(false) }
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showReportDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "Report $contactName",
@@ -807,19 +810,19 @@ fun ChatContactInfoSheet(
                 }
             },
             confirmButton = {
-                Row {
-                    TextButton(onClick = { showReportDialog = false }) {
-                        Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
+                TextButton(
+                    onClick = {
+                        if (reportAndBlock) onBlockContact()
+                        onReportUser("Reported from chat info")
+                        showReportDialog = false
                     }
-                    TextButton(
-                        onClick = {
-                            if (reportAndBlock) onBlockContact()
-                            onReportUser("Reported from chat info")
-                            showReportDialog = false
-                        }
-                    ) {
-                        Text("Report", color = Color(0xFF008069), fontWeight = FontWeight.Bold)
-                    }
+                ) {
+                    Text("Report", color = Color(0xFF008069), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReportDialog = false }) {
+                    Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
                 }
             }
         )

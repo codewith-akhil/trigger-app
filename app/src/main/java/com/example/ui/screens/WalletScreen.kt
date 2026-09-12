@@ -14,6 +14,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -621,12 +622,12 @@ fun WithdrawDialog(
     }
     val hasAnyDestination = destinations.isNotEmpty()
 
-    AlertDialog(
+    TriggerAlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Color.White,
         shape = RoundedCornerShape(20.dp),
         title = {
-            Text("Withdraw Funds", fontWeight = FontWeight.Bold, color = TextMain)
+            Text("Withdraw Funds", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextMain)
         },
         text = {
             Column {
@@ -753,12 +754,12 @@ fun EditBankDetailsDialog(
     val isSwiftValid = swift.trim().length <= 11
     val isFormValid = isNameValid && isBankValid && isAcctValid && isIfscValid && isSwiftValid
 
-    AlertDialog(
+    TriggerAlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Color.White,
         shape = RoundedCornerShape(20.dp),
         title = {
-            Text("Update Bank Details", fontWeight = FontWeight.Bold, color = TextMain)
+            Text("Update Bank Details", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextMain)
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -851,12 +852,12 @@ fun EditPayoutDetailsDialog(
     val isPrimaryValid = primary.isNotBlank()
     val isFormValid = isUpiValid && isPaypalValid && isPrimaryValid
 
-    AlertDialog(
+    TriggerAlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Color.White,
         shape = RoundedCornerShape(20.dp),
         title = {
-            Text("Update Payout Details", fontWeight = FontWeight.Bold, color = TextMain)
+            Text("Update Payout Details", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextMain)
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -925,12 +926,12 @@ fun TopUpDialog(
     val amount = amountText.toDoubleOrNull() ?: 0.0
     val isValid = amount >= 1.0
 
-    AlertDialog(
+    TriggerAlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Color.White,
         shape = RoundedCornerShape(20.dp),
         title = {
-            Text("Add Money to Wallet", fontWeight = FontWeight.Bold, color = TextMain)
+            Text("Add Money to Wallet", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextMain)
         },
         text = {
             Column {

@@ -401,42 +401,53 @@ fun StorageSettingsScreen(
     }
 
     if (mediaDialogTitle != null) {
-        AlertDialog(
-            onDismissRequest = { mediaDialogTitle = null },
-            containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
-            title = {
-                Text(mediaDialogTitle.orEmpty(), fontWeight = FontWeight.Bold, color = TextPrimary)
-            },
-            text = {
-                Column {
-                    mediaDialogOptions.forEach { opt ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onMediaOptionSelected(opt)
-                                    mediaDialogTitle = null
-                                }
-                                .padding(vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = (opt == mobileDataMedia || opt == wifiMedia || opt == roamingMedia),
-                                onClick = {
-                                    onMediaOptionSelected(opt)
-                                    mediaDialogTitle = null
-                                },
-                                colors = RadioButtonDefaults.colors(selectedColor = SwitchGreen)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = opt, fontSize = 15.sp, color = TextPrimary)
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { mediaDialogTitle = null }
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color.White,
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .wrapContentHeight()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp)
+                ) {
+                    Text(mediaDialogTitle.orEmpty(), fontWeight = FontWeight.Bold, fontSize = 18.sp, color = TextPrimary)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        mediaDialogOptions.forEach { opt ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        onMediaOptionSelected(opt)
+                                        mediaDialogTitle = null
+                                    }
+                                    .padding(vertical = 8.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = (opt == mobileDataMedia || opt == wifiMedia || opt == roamingMedia),
+                                    onClick = {
+                                        onMediaOptionSelected(opt)
+                                        mediaDialogTitle = null
+                                    },
+                                    colors = RadioButtonDefaults.colors(selectedColor = SwitchGreen)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(text = opt, fontSize = 15.sp, color = TextPrimary)
+                            }
                         }
                     }
                 }
-            },
-            confirmButton = {}
-        )
+            }
+        }
     }
 }
 

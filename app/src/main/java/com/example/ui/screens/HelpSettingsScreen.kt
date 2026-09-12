@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -222,12 +223,12 @@ fun HelpSettingsScreen(
 
     // FAQ Dialog
     if (showFaqDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showFaqDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
-                Text("Frequently Asked Questions", fontWeight = FontWeight.Bold, color = TextPrimary)
+                Text("Frequently Asked Questions", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextPrimary)
             },
             text = {
                 Column(
@@ -272,14 +273,14 @@ fun HelpSettingsScreen(
         var isSending by remember { mutableStateOf(false) }
         var errorMessage by remember { mutableStateOf<String?>(null) }
 
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = {
                 if (!isSending) showContactDialog = false
             },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
-                Text("Contact Support", fontWeight = FontWeight.Bold, color = TextPrimary)
+                Text("Contact Support", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextPrimary)
             },
             text = {
                 Column {
@@ -362,12 +363,12 @@ fun HelpSettingsScreen(
 
     // Terms Dialog
     if (showTermsDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showTermsDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
-                Text("Terms & Privacy Policy", fontWeight = FontWeight.Bold, color = TextPrimary)
+                Text("Terms & Privacy Policy", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextPrimary)
             },
             text = {
                 Text(
@@ -389,12 +390,12 @@ fun HelpSettingsScreen(
 
     // App Info Dialog
     if (showAppInfoDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showAppInfoDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
-                Text("Trigger App", fontWeight = FontWeight.Bold, color = ScreenGreenHeader)
+                Text("Trigger App", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = ScreenGreenHeader)
             },
             text = {
                 Column {

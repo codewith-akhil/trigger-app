@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -302,42 +303,53 @@ fun NotificationsSettingsScreen(
     }
 
     if (tonePickerTitle != null) {
-        AlertDialog(
-            onDismissRequest = { tonePickerTitle = null },
-            containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
-            title = {
-                Text(tonePickerTitle.orEmpty(), fontWeight = FontWeight.Bold, color = TextPrimary)
-            },
-            text = {
-                Column {
-                    toneOptions.forEach { opt ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onToneSelected(opt)
-                                    tonePickerTitle = null
-                                }
-                                .padding(vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = (opt == messageTone || opt == messageVibrate || opt == groupTone || opt == callRingtone),
-                                onClick = {
-                                    onToneSelected(opt)
-                                    tonePickerTitle = null
-                                },
-                                colors = RadioButtonDefaults.colors(selectedColor = SwitchGreen)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = opt, fontSize = 15.sp, color = TextPrimary)
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { tonePickerTitle = null }
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color.White,
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .wrapContentHeight()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp)
+                ) {
+                    Text(tonePickerTitle.orEmpty(), fontWeight = FontWeight.Bold, fontSize = 18.sp, color = TextPrimary)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        toneOptions.forEach { opt ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        onToneSelected(opt)
+                                        tonePickerTitle = null
+                                    }
+                                    .padding(vertical = 8.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = (opt == messageTone || opt == messageVibrate || opt == groupTone || opt == callRingtone),
+                                    onClick = {
+                                        onToneSelected(opt)
+                                        tonePickerTitle = null
+                                    },
+                                    colors = RadioButtonDefaults.colors(selectedColor = SwitchGreen)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(text = opt, fontSize = 15.sp, color = TextPrimary)
+                            }
                         }
                     }
                 }
-            },
-            confirmButton = {}
-        )
+            }
+        }
     }
 }
 

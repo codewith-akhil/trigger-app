@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -738,15 +739,16 @@ fun WhatsAppDashboardScreen(
 
     // Status story preview dialog
     if (showStatusStoryDialog != null) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showStatusStoryDialog = null },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "${showStatusStoryDialog}'s Status",
                     color = GeometricTextDark,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
                 )
             },
             text = {
@@ -809,9 +811,9 @@ fun WhatsAppTopHeader(
     onOpenSettings: () -> Unit = {},
     onToggleNetwork: () -> Unit = {}
 ) {
-    val headerBgColor = if (isStreamHeader) TriggerHeaderGreen else Color.White
-    val titleColor = if (isStreamHeader) Color.White else TriggerHeaderGreen
-    val iconColor = if (isStreamHeader) Color.White else Color(0xFF111B21)
+    val headerBgColor = TriggerHeaderGreen
+    val titleColor = Color.White
+    val iconColor = Color.White
 
     Surface(
         color = headerBgColor,
@@ -876,13 +878,13 @@ fun WhatsAppTopHeader(
                                 .align(Alignment.TopEnd)
                                 .padding(top = 3.dp, end = 2.dp)
                                 .defaultMinSize(minWidth = 17.dp, minHeight = 17.dp)
-                                .background(WhatsAppFabGreen, RoundedCornerShape(8.5.dp))
+                                .background(Color.White, RoundedCornerShape(8.5.dp))
                                 .padding(horizontal = 4.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = if (unreadNotifications > 9) "9+" else unreadNotifications.toString(),
-                                color = Color.White,
+                                color = TriggerHeaderGreen,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -1285,7 +1287,7 @@ fun WhatsAppBottomNavBar(
                     badgeCount = unreadChatsCount,
                     icon = { isSelected ->
                         Icon(
-                            imageVector = if (isSelected) Icons.Filled.Chat else Icons.Outlined.Chat,
+                            imageVector = if (isSelected) Icons.Filled.Forum else Icons.Outlined.Forum,
                             contentDescription = "Chats",
                             modifier = Modifier.size(22.dp)
                         )
@@ -1299,7 +1301,7 @@ fun WhatsAppBottomNavBar(
                     isSelected = selectedTab == DashboardTab.UPDATES,
                     icon = { isSelected ->
                         Icon(
-                            imageVector = if (isSelected) Icons.Filled.DynamicFeed else Icons.Outlined.DynamicFeed,
+                            imageVector = if (isSelected) Icons.Filled.Explore else Icons.Outlined.Explore,
                             contentDescription = "Feed",
                             modifier = Modifier.size(22.dp)
                         )
@@ -1313,7 +1315,7 @@ fun WhatsAppBottomNavBar(
                     isSelected = selectedTab == DashboardTab.STREAM,
                     icon = { isSelected ->
                         Icon(
-                            imageVector = if (isSelected) Icons.Filled.LiveTv else Icons.Outlined.LiveTv,
+                            imageVector = if (isSelected) Icons.Filled.Videocam else Icons.Outlined.Videocam,
                             contentDescription = "Stream",
                             modifier = Modifier.size(22.dp)
                         )
@@ -1327,7 +1329,7 @@ fun WhatsAppBottomNavBar(
                     isSelected = selectedTab == DashboardTab.CALLS,
                     icon = { isSelected ->
                         Icon(
-                            imageVector = if (isSelected) Icons.Filled.Call else Icons.Outlined.Call,
+                            imageVector = if (isSelected) Icons.Filled.Phone else Icons.Outlined.Phone,
                             contentDescription = "Calls",
                             modifier = Modifier.size(22.dp)
                         )
@@ -1341,7 +1343,7 @@ fun WhatsAppBottomNavBar(
                     isSelected = selectedTab == DashboardTab.PROFILE,
                     icon = { isSelected ->
                         Icon(
-                            imageVector = if (isSelected) Icons.Filled.Person else Icons.Outlined.Person,
+                            imageVector = if (isSelected) Icons.Filled.AccountCircle else Icons.Outlined.AccountCircle,
                             contentDescription = "Profile",
                             modifier = Modifier.size(22.dp)
                         )
@@ -1973,8 +1975,6 @@ fun StreamTabContent(
                                 Icon(Icons.Filled.History, contentDescription = null, tint = Color(0xFF667781), modifier = Modifier.size(40.dp))
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text("No Previous Streams", fontWeight = FontWeight.Bold, color = GeometricTextDark)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text("Your completed and ended streaming broadcasts will appear here.", fontSize = 12.sp, color = Color(0xFF667781))
                                 Spacer(modifier = Modifier.height(14.dp))
                                 Button(
                                     onClick = onNavigateToScheduleStream,
@@ -2100,8 +2100,6 @@ fun StreamTabContent(
                                 Icon(Icons.Filled.History, contentDescription = null, tint = Color(0xFF667781), modifier = Modifier.size(40.dp))
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text("No Broadcast History", fontWeight = FontWeight.Bold, color = GeometricTextDark)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text("Completed broadcasts will appear here.", fontSize = 12.sp, color = Color(0xFF667781))
                             }
                         }
                     }

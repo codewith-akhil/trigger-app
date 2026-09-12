@@ -486,7 +486,7 @@ fun SendLocationScreen(
 
             // ------------------ Top App Bar ------------------
             Surface(
-                color = Color(0xFF0F171D),
+                color = Color(0xFF008069),
                 shadowElevation = 0.dp
             ) {
                 Row(

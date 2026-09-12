@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -742,7 +743,7 @@ fun ScheduleStreamScreen(
 
     // Success Confirmation Dialog
     if (showSuccessDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = {
                 showSuccessDialog = false
                 onStreamScheduled(streamName)
@@ -753,7 +754,7 @@ fun ScheduleStreamScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = AccentGreen, modifier = Modifier.size(28.dp))
                     Spacer(modifier = Modifier.width(10.dp))
-                    Text("Stream Scheduled!", fontWeight = FontWeight.Bold, color = TextMain)
+                    Text("Stream Scheduled!", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = TextMain)
                 }
             },
             text = {

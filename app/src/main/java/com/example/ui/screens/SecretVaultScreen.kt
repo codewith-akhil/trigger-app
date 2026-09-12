@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -556,14 +557,14 @@ fun VaultOtpUnlockDialog(
 
     val emailLine = maskedEmail ?: "your registered email"
 
-    AlertDialog(
+    TriggerAlertDialog(
         onDismissRequest = { if (!sending && !verifyingOtp) onDismiss() },
         containerColor = Color.White,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         title = {
             Text(
                 text = "Unlock via Email",
-                fontSize = 16.sp,
+                fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
                 color = DialogTitleDark
             )
@@ -1084,14 +1085,14 @@ fun VaultGalleryScreen(
 
     // Long-press (or preview) delete → compact confirm dialog.
     pendingDelete?.let { item ->
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { pendingDelete = null },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = "Delete from vault?",
-                    fontSize = 16.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     color = DialogTitleDark
                 )
@@ -1248,10 +1249,10 @@ fun VaultMediaPreviewDialog(
         }
     }
 
-    AlertDialog(
+    TriggerAlertDialog(
         onDismissRequest = onDismiss,
         containerColor = CardDark,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         title = {
             Row(
                 modifier = Modifier.fillMaxWidth(),

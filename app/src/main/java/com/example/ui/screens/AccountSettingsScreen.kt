@@ -8,6 +8,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import com.example.ui.components.TriggerAlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -201,14 +202,15 @@ fun AccountSettingsScreen(
 
     // Two-Step Verification Dialog
     if (showTwoStepDialog) {
-        AlertDialog(
+        TriggerAlertDialog(
             onDismissRequest = { showTwoStepDialog = false },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     text = if (twoStepEnabled) "Disable Two-Step PIN?" else "Enable Two-Step Verification",
                     fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp,
                     color = TextPrimary
                 )
             },
