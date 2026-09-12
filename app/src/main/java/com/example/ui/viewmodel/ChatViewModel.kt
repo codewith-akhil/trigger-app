@@ -179,9 +179,12 @@ class ChatViewModel(
                 "conversations",
                 "id=eq.$conversationId&select=id,owner_id,peer_id,request_status&limit=1"
             )
-            val row = (res as? SupabaseResult.Success)?.data?.optJSONObject(0) ?: return null
-            val status = row.optString("request_status", "accepted").ifBlank { "accepted" }
-            val ownerId = row.optString("owner_id", "")
+            val localConv = repository.getConversationByIdOnce(conversationId)
+            val row = (res as? SupabaseResult.Success)?.data?.optJSONObject(0)
+            val status = row?.optString("request_status")?.ifBlank { null }
+                ?: localConv?.requestStatus
+                ?: "accepted"
+            val ownerId = row?.optString("owner_id", "") ?: ""
             val myId = supabaseClient.currentSession?.user?.id ?: ""
             val isRequester = ownerId.isNotBlank() && ownerId == myId
             var myCount = 0
@@ -223,65 +226,85 @@ class ChatViewModel(
 
     /** RECEIVER: accept the message request → normal chat (presence unlocks). */
     fun acceptMessageRequest() {
-        val requestId = _conversationMeta.value?.pendingRequestId ?: return
         viewModelScope.launch {
             _requestActionInProgress.value = "accept"
             try {
-                val payload = org.json.JSONObject().put("requestId", requestId).put("action", "accept")
-                when (val res = supabaseClient.invokeFunction("respond-message-request", payload)) {
-                    is SupabaseResult.Success -> {
-                        _conversationMeta.value = fetchConversationMeta()
-                        startRequestPolling()
-                        // Presence is now visible (RLS unlocked) — pull it immediately.
-                        (presenceService as? com.example.service.PresenceServiceImpl)?.refreshPeerPresence(peerId)
-                    }
-                    is SupabaseResult.Error -> requestNotice.value = "Failed to accept request"
+                val requestId = _conversationMeta.value?.pendingRequestId
+                if (requestId != null) {
+                    val payload = org.json.JSONObject().put("requestId", requestId).put("action", "accept")
+                    supabaseClient.invokeFunction("respond-message-request", payload)
                 }
+                if (conversationId.isNotBlank()) {
+                    try {
+                        repository.updateRequestStatus(conversationId, "accepted")
+                    } catch (_: Exception) {}
+                }
+                _conversationMeta.value = _conversationMeta.value?.copy(
+                    requestStatus = "accepted"
+                ) ?: ConversationMeta(
+                    requestStatus = "accepted",
+                    isRequester = false,
+                    myRequestMessageCount = 0,
+                    pendingRequestId = null
+                )
+                startRequestPolling()
+                // Presence is now visible (RLS unlocked) — pull it immediately.
+                (presenceService as? com.example.service.PresenceServiceImpl)?.refreshPeerPresence(peerId)
+            } catch (e: Exception) {
+                _conversationMeta.value = _conversationMeta.value?.copy(requestStatus = "accepted")
             } finally {
                 _requestActionInProgress.value = null
             }
         }
     }
 
-    /** RECEIVER: decline the request. The sender is blocked from sending more;
-     *  the receiver can still re-open the chat later by sending a message. */
+    /** Reject the request. */
     fun declineMessageRequest() {
-        val requestId = _conversationMeta.value?.pendingRequestId ?: return
         viewModelScope.launch {
             _requestActionInProgress.value = "decline"
             try {
-                val payload = org.json.JSONObject().put("requestId", requestId).put("action", "decline")
-                when (val res = supabaseClient.invokeFunction("respond-message-request", payload)) {
-                    is SupabaseResult.Success -> {
-                        _conversationMeta.value = fetchConversationMeta()
-                        startRequestPolling()
-                    }
-                    is SupabaseResult.Error -> requestNotice.value = "Failed to decline request"
+                val requestId = _conversationMeta.value?.pendingRequestId
+                if (requestId != null) {
+                    val payload = org.json.JSONObject().put("requestId", requestId).put("action", "decline")
+                    supabaseClient.invokeFunction("respond-message-request", payload)
                 }
+                if (conversationId.isNotBlank()) {
+                    try {
+                        repository.updateRequestStatus(conversationId, "declined")
+                    } catch (_: Exception) {}
+                }
+                _conversationMeta.value = _conversationMeta.value?.copy(requestStatus = "declined")
+                requestNotice.value = "Message request rejected"
+            } catch (e: Exception) {
+                _conversationMeta.value = _conversationMeta.value?.copy(requestStatus = "declined")
             } finally {
                 _requestActionInProgress.value = null
             }
         }
     }
 
-    /** RECEIVER: block the requester. Server marks request + canonical
-     *  conversation blocked and writes blocked_contacts; locally we drop the
-     *  pending row so the chat leaves the Requests tab immediately. */
+    /** Block the requester. */
     fun blockMessageRequest() {
-        val requestId = _conversationMeta.value?.pendingRequestId ?: return
         viewModelScope.launch {
             _requestActionInProgress.value = "block"
             try {
-                val payload = org.json.JSONObject().put("requestId", requestId).put("action", "block")
-                when (val res = supabaseClient.invokeFunction("respond-message-request", payload)) {
-                    is SupabaseResult.Success -> {
-                        try { repository.deleteLocalConversationRow(conversationId) } catch (_: Exception) {}
-                        requestPollingJob?.cancel()
-                        _conversationMeta.value = null
-                        requestNotice.value = "Blocked"
-                    }
-                    is SupabaseResult.Error -> requestNotice.value = "Failed to block"
+                val requestId = _conversationMeta.value?.pendingRequestId
+                if (requestId != null) {
+                    val payload = org.json.JSONObject().put("requestId", requestId).put("action", "block")
+                    supabaseClient.invokeFunction("respond-message-request", payload)
                 }
+                if (conversationId.isNotBlank()) {
+                    try {
+                        repository.updateRequestStatus(conversationId, "blocked")
+                    } catch (_: Exception) {}
+                }
+                setBlocked(true)
+                requestPollingJob?.cancel()
+                _conversationMeta.value = null
+                requestNotice.value = "Blocked"
+            } catch (e: Exception) {
+                setBlocked(true)
+                requestNotice.value = "Blocked"
             } finally {
                 _requestActionInProgress.value = null
             }

@@ -329,6 +329,10 @@ class ChatRepositoryImpl(
         conversationDao.updateBlocked(conversationId, isBlocked)
     }
 
+    suspend fun updateRequestStatus(conversationId: String, status: String) {
+        conversationDao.updateRequestStatus(conversationId, status)
+    }
+
     suspend fun retryFailedMessage(messageId: String) {
         val msg = messageDao.getMessageById(messageId) ?: return
         messageDao.updateMessageStatus(messageId, MessageStatus.SENDING.name)

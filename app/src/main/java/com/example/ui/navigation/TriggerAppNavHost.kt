@@ -125,6 +125,9 @@ fun TriggerAppNavHost(
     var activeUserProfileUser by remember {
         mutableStateOf<com.example.ui.screens.UserSearchResult?>(null)
     }
+    var activePostUploadMediaUri by remember {
+        mutableStateOf<android.net.Uri?>(null)
+    }
 
     // Android 13+ requires a RUNTIME request for POST_NOTIFICATIONS. The
     // landing dialog previously just navigated without ever requesting.
@@ -341,7 +344,8 @@ fun TriggerAppNavHost(
                 onNavigateToStreamHistory = {
                     navController.navigate(TriggerDestinations.STREAM_HISTORY)
                 },
-                onNavigateToPostUpload = { mediaType ->
+                onNavigateToPostUpload = { mediaType, uri ->
+                    activePostUploadMediaUri = uri
                     navController.navigate(TriggerDestinations.postUpload(mediaType))
                 },
                 onNavigateToEditDraft = { postId ->
@@ -633,10 +637,13 @@ fun TriggerAppNavHost(
             PostUploadScreen(
                 initialMediaType = mediaType,
                 draftId = draftId.takeIf { it.isNotBlank() },
+                initialMediaUri = activePostUploadMediaUri,
                 onBack = {
+                    activePostUploadMediaUri = null
                     navController.popBackStack()
                 },
                 onPostCreatedSuccessfully = {
+                    activePostUploadMediaUri = null
                     navController.popBackStack()
                 }
             )

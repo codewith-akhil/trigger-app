@@ -12,8 +12,27 @@ object BackendConfig {
      */
     const val USER_SAFE_CONFIG_ERROR = "Connection error. Please try again later."
     // Supabase Credentials
-    val SUPABASE_URL: String = BuildConfig.SUPABASE_URL.trimEnd('/')
-    val SUPABASE_ANON_KEY: String = BuildConfig.SUPABASE_ANON_KEY
+    private const val DEFAULT_SUPABASE_URL = "https://uazkcainrajcgxecomly.supabase.co"
+    private const val DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVhemtjYWlucmFqY2d4ZWNvbWx5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg0NTkwMTksImV4cCI6MjEwNDAzNTAxOX0.laoOt2R3T4pdX3J_hp4_yABoeQNxrvlnt6lNDhnkh1o"
+    private const val DEFAULT_AGORA_APP_ID = "b17004d7060b4ee0bf6e50cb931e1bbd"
+
+    val SUPABASE_URL: String = run {
+        val raw = try { BuildConfig.SUPABASE_URL } catch (_: Throwable) { "" }
+        if (raw.isBlank() || raw.contains("placeholder") || raw.contains("your-project")) {
+            DEFAULT_SUPABASE_URL
+        } else {
+            raw
+        }
+    }.trimEnd('/')
+
+    val SUPABASE_ANON_KEY: String = run {
+        val raw = try { BuildConfig.SUPABASE_ANON_KEY } catch (_: Throwable) { "" }
+        if (raw.isBlank() || raw.contains("placeholder") || raw.contains("your-supabase-anon-key") || raw.length < 50) {
+            DEFAULT_SUPABASE_ANON_KEY
+        } else {
+            raw
+        }
+    }
 
     /**
      * True only when REAL Supabase credentials are baked into BuildConfig.
@@ -57,7 +76,14 @@ object BackendConfig {
             }
 
     // Agora WebRTC Credentials (https://console.agora.io/)
-    val AGORA_APP_ID: String = BuildConfig.AGORA_APP_ID
+    val AGORA_APP_ID: String = run {
+        val raw = try { BuildConfig.AGORA_APP_ID } catch (_: Throwable) { "" }
+        if (raw.isBlank() || raw.contains("placeholder") || raw.contains("your-agora-app-id")) {
+            DEFAULT_AGORA_APP_ID
+        } else {
+            raw
+        }
+    }
     val AGORA_TOKEN: String = BuildConfig.AGORA_TOKEN
 
     val isAgoraConfigured: Boolean

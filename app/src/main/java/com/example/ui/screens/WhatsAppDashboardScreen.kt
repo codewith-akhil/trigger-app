@@ -1,6 +1,10 @@
 package com.example.ui.screens
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -38,6 +42,7 @@ import com.example.model.ChatItem
 import com.example.model.ChatRepository
 import com.example.ui.theme.*
 import com.example.util.optStringOrNull
+import kotlinx.coroutines.launch
 
 enum class DashboardTab {
     CHATS, UPDATES, STREAM, CALLS, PROFILE
@@ -57,7 +62,7 @@ fun WhatsAppDashboardScreen(
     onOpenNotifications: () -> Unit = {},
     onNavigateToScheduleStream: () -> Unit = {},
     onNavigateToStreamHistory: () -> Unit = {},
-    onNavigateToPostUpload: (mediaType: String) -> Unit = {},
+    onNavigateToPostUpload: (mediaType: String, mediaUri: Uri?) -> Unit = { _, _ -> },
     onNavigateToEditDraft: (postId: String) -> Unit = {},
     onNavigateToPostView: (postId: String) -> Unit = {},
     onNavigateToPaymentOverview: (postId: String) -> Unit = {},
@@ -88,6 +93,23 @@ fun WhatsAppDashboardScreen(
     var showActiveCallDialog by remember { mutableStateOf(false) }
     var activeCallContactName by remember { mutableStateOf("Contact") }
     var activeCallIsVideo by remember { mutableStateOf(false) }
+
+    // Direct Photo & Video pickers for creating posts
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            onNavigateToPostUpload("photo", uri)
+        }
+    }
+
+    val videoPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            onNavigateToPostUpload("video", uri)
+        }
+    }
 
     val tabHistory = remember {
         mutableStateListOf(if (com.example.StreamDeepLink.pendingStreamId != null) DashboardTab.STREAM else DashboardTab.CHATS)
@@ -262,16 +284,16 @@ fun WhatsAppDashboardScreen(
                 DashboardTab.UPDATES -> {
                     FloatingActionButton(
                         onClick = { showPostMediaPickerSheet = true },
-                        shape = RoundedCornerShape(16.dp),
+                        shape = CircleShape,
                         containerColor = TriggerFabGreen,
                         contentColor = Color.White,
-                        elevation = FloatingActionButtonDefaults.elevation(3.dp),
+                        elevation = FloatingActionButtonDefaults.elevation(6.dp),
                         modifier = Modifier.testTag("new_post_fab")
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Add,
                             contentDescription = "Create Post",
-                            modifier = Modifier.size(26.dp)
+                            modifier = Modifier.size(28.dp)
                         )
                     }
                 }
@@ -407,27 +429,6 @@ fun WhatsAppDashboardScreen(
                     )
                 }
             }
-
-            // Bottom-left '+' Icon for posting (above navbar on the Feed page)
-            if (selectedTab == DashboardTab.UPDATES) {
-                FloatingActionButton(
-                    onClick = { showPostMediaPickerSheet = true },
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(start = 20.dp, bottom = 20.dp)
-                        .testTag("feed_bottom_left_add_post_fab"),
-                    containerColor = TriggerFabGreen,
-                    contentColor = Color.White,
-                    shape = CircleShape,
-                    elevation = FloatingActionButtonDefaults.elevation(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Add,
-                        contentDescription = "Create Post",
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-            }
         }
     }
 
@@ -462,6 +463,10 @@ fun WhatsAppDashboardScreen(
 
     // Photo / Video Selection Sheet for Post Upload
     if (showPostMediaPickerSheet) {
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val coroutineScope = rememberCoroutineScope()
+        var isSeedingGallery by remember { mutableStateOf(false) }
+
         ModalBottomSheet(
             onDismissRequest = { showPostMediaPickerSheet = false },
             containerColor = Color.White,
@@ -470,98 +475,77 @@ fun WhatsAppDashboardScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
+                    .padding(horizontal = 24.dp, vertical = 12.dp)
             ) {
                 Text(
-                    text = "Create New Post",
-                    fontSize = 19.sp,
+                    text = "Create Post",
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF111B21),
-                    modifier = Modifier.padding(bottom = 6.dp)
-                )
-                Text(
-                    text = "Select photos or video from gallery to begin cropping & customizing your post",
-                    fontSize = 13.sp,
-                    color = Color(0xFF667781),
-                    modifier = Modifier.padding(bottom = 20.dp)
+                    modifier = Modifier.padding(bottom = 16.dp)
                 )
 
-                // Option 1: Photo / Multiple Photos (4:5 Crop)
-                Surface(
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable {
-                            showPostMediaPickerSheet = false
-                            onNavigateToPostUpload("photo")
-                        },
-                    color = Color(0xFFF7F8FA),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE5E9EC))
+                        .padding(bottom = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    // Option 1: Photo
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable {
+                                showPostMediaPickerSheet = false
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            }
+                            .padding(horizontal = 24.dp, vertical = 10.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(48.dp)
+                                .size(54.dp)
                                 .clip(CircleShape)
-                                .background(TriggerFabGreen.copy(alpha = 0.15f)),
+                                .background(TriggerFabGreen.copy(alpha = 0.12f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.PhotoLibrary,
-                                contentDescription = "Photos",
+                                contentDescription = "Photo",
                                 tint = TriggerFabGreen,
                                 modifier = Modifier.size(26.dp)
                             )
                         }
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Photo Post (Single / Multiple)",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF111B21)
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "Instagram model 4:5 aspect ratio crop with carousel support",
-                                fontSize = 12.sp,
-                                color = Color(0xFF667781)
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.Filled.ChevronRight,
-                            contentDescription = null,
-                            tint = Color.Gray
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Gallery",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF111B21)
                         )
                     }
-                }
 
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Option 2: Single Video (9:16 Inbuilt Media Size)
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable {
-                            showPostMediaPickerSheet = false
-                            onNavigateToPostUpload("video")
-                        },
-                    color = Color(0xFFF7F8FA),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE5E9EC))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    // Option 2: Video
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable {
+                                showPostMediaPickerSheet = false
+                                videoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                                )
+                            }
+                            .padding(horizontal = 24.dp, vertical = 10.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(48.dp)
+                                .size(54.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFFE65100).copy(alpha = 0.15f)),
+                                .background(Color(0xFFE65100).copy(alpha = 0.12f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
@@ -571,30 +555,110 @@ fun WhatsAppDashboardScreen(
                                 modifier = Modifier.size(26.dp)
                             )
                         }
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Video Post (Single Video)",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF111B21)
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "9:16 vertical view on black background media canvas",
-                                fontSize = 12.sp,
-                                color = Color(0xFF667781)
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.Filled.ChevronRight,
-                            contentDescription = null,
-                            tint = Color.Gray
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Video",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF111B21)
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                HorizontalDivider(color = Color(0xFFF0F2F5), thickness = 1.dp)
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Or choose a test photo",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF54656F)
+                    )
+                    TextButton(
+                        onClick = {
+                            if (!isSeedingGallery) {
+                                isSeedingGallery = true
+                                coroutineScope.launch {
+                                    val count = com.example.util.SampleMediaSeeder.seedToDeviceGallery(context)
+                                    isSeedingGallery = false
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "Saved $count sample photos to device gallery!",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Download,
+                            contentDescription = null,
+                            tint = TriggerFabGreen,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (isSeedingGallery) "Saving…" else "Seed Gallery",
+                            fontSize = 12.sp,
+                            color = TriggerFabGreen,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Horizontal list of sample preset thumbnails
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    com.example.util.SampleMediaSeeder.samplePresets.forEach { preset ->
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .width(84.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    showPostMediaPickerSheet = false
+                                    val uri = com.example.util.SampleMediaSeeder.getPresetUri(context, preset)
+                                    onNavigateToPostUpload("photo", uri)
+                                }
+                                .padding(4.dp)
+                        ) {
+                            Image(
+                                painter = painterResource(id = preset.resId),
+                                contentDescription = preset.title,
+                                modifier = Modifier
+                                    .size(76.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(10.dp)),
+                                contentScale = ContentScale.Crop
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = preset.title,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFF111B21),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
             }
         }
     }

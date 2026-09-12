@@ -64,4 +64,7 @@ interface ConversationDao {
 
     @Query("UPDATE conversations SET isArchived = :isArchived WHERE id = :id")
     suspend fun updateArchived(id: String, isArchived: Boolean)
+
+    @Query("UPDATE conversations SET requestStatus = :status WHERE id = :id")
+    suspend fun updateRequestStatus(id: String, status: String)
 }

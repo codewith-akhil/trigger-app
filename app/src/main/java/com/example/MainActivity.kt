@@ -16,6 +16,9 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.example.ui.navigation.TriggerAppNavHost
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.TriggerDarkBackground
@@ -67,6 +70,12 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         // Enable edge-to-edge so content draws behind the system bars.
         enableEdgeToEdge()
+
+        // Pre-seed sample photos to the Android device gallery so the system Photo Picker
+        // is populated even on fresh emulators.
+        lifecycleScope.launch(Dispatchers.IO) {
+            com.example.util.SampleMediaSeeder.seedToDeviceGallery(this@MainActivity)
+        }
 
         // Set the system status bar and navigation bar to transparent for clean edge-to-edge
         WindowCompat.setDecorFitsSystemWindows(window, false)

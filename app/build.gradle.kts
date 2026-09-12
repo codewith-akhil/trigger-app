@@ -75,6 +75,8 @@ secrets {
   ignoreList.add("FIREBASE_PRIVATE_KEY")
   ignoreList.add("FIREBASE_CLIENT_EMAIL")
   ignoreList.add("SUPABASE_SERVICE_ROLE_KEY")
+  ignoreList.add("SUPABASE_ACCESS_TOKEN")
+  ignoreList.add("DB_PASSWORD")
   ignoreList.add("RAZORPAY_KEY_SECRET")
   ignoreList.add("RAZORPAY_WEBHOOK_SECRET")
   ignoreList.add("RAZORPAY_KEY_ID")

@@ -6,9 +6,13 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -27,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -71,6 +76,7 @@ private enum class UploadStage {
 fun PostUploadScreen(
     initialMediaType: String,
     draftId: String? = null,
+    initialMediaUri: Uri? = null,
     onBack: () -> Unit,
     onPostCreatedSuccessfully: () -> Unit,
     modifier: Modifier = Modifier
@@ -85,7 +91,7 @@ fun PostUploadScreen(
     var stage by remember { mutableStateOf(UploadStage.CROP) }
 
     // picked + cropped media
-    var pickedUri by remember { mutableStateOf<Uri?>(null) }
+    var pickedUri by remember { mutableStateOf<Uri?>(initialMediaUri) }
     var croppedFile by remember { mutableStateOf<File?>(null) }
     var croppedDims by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
@@ -106,22 +112,10 @@ fun PostUploadScreen(
     var uploadProgressPercent by remember { mutableStateOf(0f) }
     var uploadErrorMessage by remember { mutableStateOf<String?>(null) }
 
-    var permissionGranted by remember { mutableStateOf(false) }
-    var autoPicked by remember { mutableStateOf(false) }
+    var autoPicked by remember { mutableStateOf(initialMediaUri != null) }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { grants ->
-        permissionGranted = grants.values.all { it }
-        if (!permissionGranted) {
-            Toast.makeText(context, "Gallery permission is required to select media", Toast.LENGTH_SHORT).show()
-        } else {
-            autoPicked = false // allow picker to open now
-        }
-    }
-
-    val mediaPickerLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
+    val visualMediaPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
             pickedUri = uri
@@ -129,29 +123,20 @@ fun PostUploadScreen(
             croppedDims = null
             draftMediaReplaced = true
             stage = UploadStage.CROP
-        } else if (croppedFile == null && backendPostId == null) {
+        } else if (croppedFile == null && backendPostId == null && pickedUri == null) {
             onBack() // nothing selected and nothing to resume
         } else {
             stage = UploadStage.DETAILS
         }
     }
 
-    fun checkAndPickMedia() {
-        val neededPerms = if (android.os.Build.VERSION.SDK_INT >= 33) {
-            if (isVideoPost) arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
-            else arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+    fun pickMedia() {
+        val request = if (isVideoPost) {
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
         } else {
-            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
         }
-        val allGranted = neededPerms.all {
-            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-        }
-        permissionGranted = allGranted
-        if (allGranted) {
-            mediaPickerLauncher.launch(if (isVideoPost) "video/*" else "image/*")
-        } else {
-            permissionLauncher.launch(neededPerms)
-        }
+        visualMediaPickerLauncher.launch(request)
     }
 
     // Resume an existing draft: prefill from repository, use its media
@@ -179,9 +164,9 @@ fun PostUploadScreen(
 
     LaunchedEffect(Unit) {
         feedRepository.loadCurrencies()
-        if (draftId == null && !autoPicked) {
+        if (draftId == null && pickedUri == null && !autoPicked) {
             autoPicked = true
-            checkAndPickMedia()
+            pickMedia()
         }
     }
 
@@ -405,41 +390,46 @@ fun PostUploadScreen(
             .fillMaxSize()
             .testTag("post_upload_screen"),
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        when (stage) {
-                            UploadStage.CROP -> "Crop Post Media"
-                            UploadStage.DETAILS -> if (resumedDraft != null) "Edit Draft" else "New Post"
-                            UploadStage.UPLOADING -> "Uploading…"
-                            UploadStage.RESULT_SUCCESS -> "Done"
-                            UploadStage.RESULT_ERROR -> "Something went wrong"
-                        },
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        color = Color.White
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = {
-                        when (stage) {
-                            UploadStage.CROP -> onBack()
-                            UploadStage.DETAILS -> stage = UploadStage.CROP
-                            else -> {}
+            if (stage != UploadStage.CROP) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            when (stage) {
+                                UploadStage.CROP -> ""
+                                UploadStage.DETAILS -> if (resumedDraft != null) "Edit Draft" else "New Post"
+                                UploadStage.UPLOADING -> "Uploading…"
+                                UploadStage.RESULT_SUCCESS -> "Done"
+                                UploadStage.RESULT_ERROR -> "Something went wrong"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            color = Color.White
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            when (stage) {
+                                UploadStage.CROP -> onBack()
+                                UploadStage.DETAILS -> {
+                                    if (pickedUri != null) stage = UploadStage.CROP
+                                    else onBack()
+                                }
+                                else -> {}
+                            }
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                         }
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = BrandGreen)
-            )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = BrandGreen)
+                )
+            }
         },
         containerColor = Color(0xFFF7F8FA)
     ) { innerPadding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .then(if (stage != UploadStage.CROP) Modifier.padding(innerPadding) else Modifier)
         ) {
             when (stage) {
                 UploadStage.CROP -> {
@@ -474,17 +464,80 @@ fun PostUploadScreen(
                             }
                         )
                     } else {
-                        Column(
-                            modifier = Modifier.fillMaxSize().padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xFF0B141A)),
+                            contentAlignment = Alignment.Center
                         ) {
-                            CircularProgressIndicator(color = AccentGreen)
-                            Spacer(Modifier.height(12.dp))
-                            Text("Opening your gallery…", color = Color(0xFF54656F))
-                            Spacer(Modifier.height(20.dp))
-                            OutlinedButton(onClick = { checkAndPickMedia() }, shape = RoundedCornerShape(22.dp)) {
-                                Text("Pick ${if (isVideoPost) "a video" else "a photo"}")
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                                modifier = Modifier.padding(24.dp)
+                            ) {
+                                Button(
+                                    onClick = { pickMedia() },
+                                    shape = RoundedCornerShape(22.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                                ) {
+                                    Icon(
+                                        if (isVideoPost) Icons.Filled.VideoLibrary else Icons.Filled.PhotoLibrary,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Select ${if (isVideoPost) "Video" else "Photo"}", color = Color.White)
+                                }
+                                Spacer(Modifier.height(10.dp))
+                                TextButton(onClick = onBack) {
+                                    Text("Cancel", color = Color(0xFF8696A0))
+                                }
+
+                                if (!isVideoPost) {
+                                    Spacer(Modifier.height(20.dp))
+                                    Text(
+                                        "Or try a sample photo:",
+                                        color = Color(0xFF8696A0),
+                                        fontSize = 12.sp
+                                    )
+                                    Spacer(Modifier.height(12.dp))
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                                    ) {
+                                        com.example.util.SampleMediaSeeder.samplePresets.forEach { preset ->
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .clickable {
+                                                        val sampleUri = com.example.util.SampleMediaSeeder.getPresetUri(context, preset)
+                                                        pickedUri = sampleUri
+                                                        croppedDims = null
+                                                        stage = UploadStage.CROP
+                                                    }
+                                                    .padding(2.dp)
+                                            ) {
+                                                Image(
+                                                    painter = painterResource(id = preset.resId),
+                                                    contentDescription = preset.title,
+                                                    modifier = Modifier
+                                                        .size(60.dp)
+                                                        .clip(RoundedCornerShape(8.dp)),
+                                                    contentScale = ContentScale.Crop
+                                                )
+                                                Spacer(Modifier.height(4.dp))
+                                                Text(
+                                                    preset.title,
+                                                    color = Color.White,
+                                                    fontSize = 10.sp,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

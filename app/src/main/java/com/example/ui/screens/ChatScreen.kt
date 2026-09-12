@@ -15,6 +15,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -75,6 +76,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.example.R
@@ -843,18 +846,15 @@ fun ChatScreen(
                         WindowInsets.navigationBars.union(WindowInsets.ime)
                     )
             ) {
-                // Message-request banner — RECEIVER must accept/decline before
-                // the conversation unlocks (replying is blocked server-side too).
-                if (isRequestReceiver) {
-                    MessageRequestReceiverBanner(
+                // Message-request action banner with Accept, Reject, Block buttons
+                if (isRequestPending) {
+                    MessageRequestActionBanner(
                         senderName = contactName,
                         actionInProgress = requestActionInProgress,
                         onAccept = { viewModel.acceptMessageRequest() },
-                        onDecline = { viewModel.declineMessageRequest() },
+                        onReject = { viewModel.declineMessageRequest() },
                         onBlock = { viewModel.blockMessageRequest() }
                     )
-                } else if (isRequestRequester) {
-                    MessageRequestRequesterBanner(messagesSent = conversationMeta?.myRequestMessageCount ?: 0)
                 }
                 // Voice recording failure — surfaced inline (tap to dismiss)
                 // instead of being swallowed silently.
@@ -942,7 +942,7 @@ fun ChatScreen(
                             onCancel = { viewModel.cancelEditing() },
                             onSave = { viewModel.saveEdit() }
                         )
-                    } else if (!isRequestReceiver) {
+                    } else if (!isRequestPending) {
                         ChatComposerBar(
                             text = inputText,
                             isSending = isSending,
@@ -1075,9 +1075,6 @@ fun ChatScreen(
                                 }
                             )
                         }
-                    } else {
-                        // RECEIVER still deciding — composer locked until accept.
-                        MessageRequestComposerLocked()
                     }
                 }
             }
@@ -1295,7 +1292,13 @@ fun ChatScreen(
     if (showAttachmentSheet) {
         ModalBottomSheet(
             onDismissRequest = { showAttachmentSheet = false },
-            containerColor = Color.White
+            containerColor = Color.White,
+            dragHandle = {
+                BottomSheetDefaults.DragHandle(
+                    modifier = Modifier.padding(top = 10.dp, bottom = 4.dp),
+                    color = Color(0xFFD1D7DB)
+                )
+            }
         ) {
             WhatsAppAttachmentSheetContent(
                 onDocumentSelected = {
@@ -1317,10 +1320,6 @@ fun ChatScreen(
                 onLocationSelected = {
                     showAttachmentSheet = false
                     showSendLocationScreen = true
-                },
-                onContactSelected = {
-                    showAttachmentSheet = false
-                    launchContactPicker()
                 },
                 onVaultSelected = {
                     showAttachmentSheet = false
@@ -2585,23 +2584,16 @@ fun WhatsAppAttachmentSheetContent(
     onGallerySelected: () -> Unit,
     onAudioSelected: () -> Unit,
     onLocationSelected: () -> Unit,
-    onContactSelected: () -> Unit,
-    onVaultSelected: () -> Unit = {}
+    onVaultSelected: () -> Unit,
+    onContactSelected: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 20.dp),
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .padding(bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = "Share Content",
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = GeometricTextDark,
-            modifier = Modifier.padding(bottom = 20.dp)
-        )
-
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceAround
@@ -2611,7 +2603,7 @@ fun WhatsAppAttachmentSheetContent(
             AttachmentIconItem(icon = Icons.Filled.Image, label = "Gallery", color = Color(0xFFAC44CF), onClick = onGallerySelected)
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -2619,25 +2611,8 @@ fun WhatsAppAttachmentSheetContent(
         ) {
             AttachmentIconItem(icon = Icons.Filled.Headphones, label = "Audio", color = Color(0xFFE56A38), onClick = onAudioSelected)
             AttachmentIconItem(icon = Icons.Filled.LocationOn, label = "Location", color = Color(0xFF1FA855), onClick = onLocationSelected)
-            AttachmentIconItem(icon = Icons.Filled.Person, label = "Contact", color = Color(0xFF009DE2), onClick = onContactSelected)
+            AttachmentIconItem(icon = Icons.Outlined.Lock, label = "Vault", color = Color(0xFF0F665E), onClick = onVaultSelected)
         }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Third row — media from the PIN-protected Secret Vault
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceAround
-        ) {
-            AttachmentIconItem(
-                icon = Icons.Outlined.Lock,
-                label = "Vault",
-                color = Color(0xFF0F665E),
-                onClick = onVaultSelected
-            )
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
     }
 }
 
@@ -2653,11 +2628,11 @@ fun AttachmentIconItem(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
-            .padding(8.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
         Box(
             modifier = Modifier
-                .size(54.dp)
+                .size(52.dp)
                 .clip(CircleShape)
                 .background(color),
             contentAlignment = Alignment.Center
@@ -2666,10 +2641,10 @@ fun AttachmentIconItem(
                 imageVector = icon,
                 contentDescription = label,
                 tint = Color.White,
-                modifier = Modifier.size(26.dp)
+                modifier = Modifier.size(24.dp)
             )
         }
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = label,
             fontSize = 12.sp,
@@ -3064,54 +3039,59 @@ private fun formatLiveExpiry(expiresAtMillis: Long): String {
 // Message-request banners (Instagram model)
 // ============================================================================
 
-/** RECEIVER: accept / decline / block an incoming message request.
+/** Action banner for pending message requests with Accept, Reject, Block buttons.
  *  [actionInProgress] shows a spinner on the running action and disables all
  *  three buttons until it completes (double-tap safe). */
 @Composable
-private fun MessageRequestReceiverBanner(
+private fun MessageRequestActionBanner(
     senderName: String,
     actionInProgress: String?,
     onAccept: () -> Unit,
-    onDecline: () -> Unit,
+    onReject: () -> Unit,
     onBlock: () -> Unit
 ) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(14.dp),
-        color = Color(0xFFD8FDD2),
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFFF7F8FA),
         shadowElevation = 2.dp
     ) {
-        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Filled.PersonAddAlt1,
-                    contentDescription = null,
-                    tint = Color(0xFF0B614E),
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "$senderName wants to chat with you",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF183B2A),
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Message request from $senderName",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF111B21)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Accept to start chatting, or reject or block to stop receiving messages.",
+                fontSize = 12.sp,
+                color = Color(0xFF667781),
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Button(
                     onClick = onAccept,
                     enabled = actionInProgress == null,
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00A884)),
                     shape = RoundedCornerShape(20.dp),
-                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 6.dp)
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
                 ) {
                     if (actionInProgress == "accept") {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(14.dp),
+                            modifier = Modifier.size(16.dp),
                             color = Color.White,
                             strokeWidth = 2.dp
                         )
@@ -3120,37 +3100,41 @@ private fun MessageRequestReceiverBanner(
                     }
                 }
                 OutlinedButton(
-                    onClick = onDecline,
+                    onClick = onReject,
                     enabled = actionInProgress == null,
                     shape = RoundedCornerShape(20.dp),
-                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 6.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD32F2F))
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD32F2F)),
+                    border = BorderStroke(1.dp, Color(0xFFE57373))
                 ) {
-                    if (actionInProgress == "decline") {
+                    if (actionInProgress == "decline" || actionInProgress == "reject") {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(14.dp),
+                            modifier = Modifier.size(16.dp),
                             color = Color(0xFFD32F2F),
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Text("Decline", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("Reject", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFFD32F2F))
                     }
                 }
                 OutlinedButton(
                     onClick = onBlock,
                     enabled = actionInProgress == null,
                     shape = RoundedCornerShape(20.dp),
-                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 6.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF616161))
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF54656F)),
+                    border = BorderStroke(1.dp, Color(0xFFBEC6CD))
                 ) {
                     if (actionInProgress == "block") {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(14.dp),
-                            color = Color(0xFF616161),
+                            modifier = Modifier.size(16.dp),
+                            color = Color(0xFF54656F),
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Text("Block", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("Block", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF54656F))
                     }
                 }
             }
@@ -3307,70 +3291,103 @@ private fun AutoDeleteDialog(
         DisappearingDuration.DAYS_30,
         DisappearingDuration.OFF
     )
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        containerColor = Color.White,
-        shape = RoundedCornerShape(16.dp),
-        title = {
-            Text(
-                text = "Auto delete messages",
-                color = Color(0xFF111B21),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
-            )
-        },
-        text = {
-            Column {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 28.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = Color.White,
+            shadowElevation = 6.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp)
+            ) {
                 Text(
-                    text = "For more privacy, new messages will automatically delete " +
-                        "from both end after the selected duration",
-                    color = Color(0xFF667781),
-                    fontSize = 13.5.sp,
-                    lineHeight = 18.sp
+                    text = "Auto delete messages",
+                    color = Color(0xFF111B21),
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "For more privacy, new messages will automatically delete from both ends after the selected duration",
+                    color = Color(0xFF667781),
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp
+                )
+                Spacer(modifier = Modifier.height(10.dp))
                 options.forEach { option ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable { onSelect(option) },
+                            .clickable { onSelect(option) }
+                            .padding(horizontal = 4.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         RadioButton(
                             selected = selected == option,
-                            onClick = { onSelect(option) },
-                            colors = RadioButtonDefaults.colors(selectedColor = WhatsAppDeepGreen)
+                            onClick = null,
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = Color(0xFF00A884),
+                                unselectedColor = Color(0xFF667781)
+                            ),
+                            modifier = Modifier.size(20.dp)
                         )
+                        Spacer(modifier = Modifier.width(12.dp))
                         Text(
                             text = option.displayName,
-                            fontSize = 15.sp,
-                            color = Color(0xFF111B21)
+                            fontSize = 14.5.sp,
+                            color = Color(0xFF111B21),
+                            fontWeight = if (selected == option) FontWeight.Medium else FontWeight.Normal
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "CANCEL",
+                            color = Color(0xFF00A884),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.5.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Button(
+                        onClick = onConfirm,
+                        enabled = selected != current,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF00A884),
+                            disabledContainerColor = Color(0xFF00A884).copy(alpha = 0.35f),
+                            contentColor = Color.White,
+                            disabledContentColor = Color.White.copy(alpha = 0.7f)
+                        ),
+                        shape = RoundedCornerShape(20.dp),
+                        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 6.dp),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Text(
+                            text = "UPDATE",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.5.sp
                         )
                     }
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = onConfirm,
-                enabled = selected != current,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = WhatsAppDeepGreen,
-                    disabledContainerColor = WhatsAppDeepGreen.copy(alpha = 0.45f),
-                    contentColor = Color.White,
-                    disabledContentColor = Color.White
-                )
-            ) {
-                Text("UPDATE", color = Color.White, fontWeight = FontWeight.SemiBold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("CANCEL", color = WhatsAppDeepGreen, fontWeight = FontWeight.SemiBold)
-            }
         }
-    )
+    }
 }
 
 /**
