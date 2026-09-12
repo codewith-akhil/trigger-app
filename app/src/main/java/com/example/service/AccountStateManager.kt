@@ -183,6 +183,10 @@ object AccountStateManager {
         try { (AppServiceContainer.presenceService as? PresenceServiceImpl)?.reset() } catch (e: Exception) {
             Log.w(TAG, "PresenceService reset failed: ${e.message}")
         }
+        // Reference/profile caches hold the previous account's view — clear them
+        try { com.example.util.RefDataCache.reset() } catch (e: Exception) {
+            Log.w(TAG, "RefDataCache reset failed: ${e.message}")
+        }
         try { AppServiceContainer.walletService.reset() } catch (e: Exception) {
             Log.w(TAG, "WalletService reset failed: ${e.message}")
         }

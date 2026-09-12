@@ -57,6 +57,7 @@ class MessageServiceImpl(
 
     // Active realtime subscriptions per conversation
     @Volatile private var currentRealtimeFilter: String? = null
+    @Volatile private var realtimeSubscribed = false
     @Volatile private var realtimeCollectorStarted = false
     @Volatile private var activeConversationId: String? = null
 
@@ -81,6 +82,7 @@ class MessageServiceImpl(
      */
     fun reset() {
         currentRealtimeFilter = null
+        realtimeSubscribed = false
         realtimeCollectorStarted = false
         activeConversationId = null
         onLiveLocationEvent = null
@@ -209,22 +211,30 @@ class MessageServiceImpl(
 
     override fun ensureRealtimeSubscription(conversationId: String) {
         activeConversationId = conversationId
-        val filter = "conversation_id=eq.$conversationId"
 
-        // RE-FILTER when the open chat changes: the websocket pinpoints ONE
-        // conversation_id, and the previous early-return left the socket
-        // filtered to the LAST chat — returning to an earlier chat silently
-        // lost all of its live messages (incl. after every reconnect).
-        if (currentRealtimeFilter != filter) {
-            currentRealtimeFilter = filter
+        // Subscribe ONCE for the whole account WITHOUT a per-conversation
+        // filter. The old `conversation_id=eq.<open chat>` filter made the
+        // websocket only deliver rows for the CURRENTLY OPEN chat, which
+        // broke WhatsApp-style receipts app-wide:
+        //   • receiver on the dashboard → INSERTs for other chats never
+        //     arrived → mark-messages-delivered never ran → senders saw a
+        //     single ✓ forever;
+        //   • sender in a different chat → status UPDATEs (✓✓ / blue) for
+        //     the delivered conversation never arrived → ticks never moved.
+        // Without the filter Realtime delivers every row this account may
+        // SEE — messages RLS already limits that to the user's own
+        // conversations, so nothing leaks; it is exactly the sync-messages
+        // scope, pushed live instead of polled.
+        if (!realtimeSubscribed) {
+            realtimeSubscribed = true
+            currentRealtimeFilter = null
             AppServiceContainer.supabaseClient.connectRealtime(
                 tables = listOf(
                     "public.messages",
                     "public.conversations",
                     "public.user_presences",
                     "public.live_location_shares"
-                ),
-                filter = filter
+                )
             )
         }
 

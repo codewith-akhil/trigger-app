@@ -282,51 +282,67 @@ fun ProfileScreen(
     // Genders + Countries fetched from backend (NO hardcoded fallback).
     // If the fetch fails, the list stays empty and the corresponding dialog
     // shows an error message instead of falling back to hardcoded values.
-    var genders by remember { mutableStateOf<List<String>>(emptyList()) }
-    var countries by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var genders by remember { mutableStateOf(com.example.util.RefDataCache.getCachedGenders() ?: emptyList()) }
+    var countries by remember { mutableStateOf(com.example.util.RefDataCache.getCachedCountries() ?: emptyList()) }
     var gendersFetchFailed by remember { mutableStateOf(false) }
     var countriesFetchFailed by remember { mutableStateOf(false) }
 
     // Fetch profile + reference data (genders, countries) from DB on first launch.
     // Also hydrate UserRepository from the server so name/email always show.
+    // v1.0.13: cached-first — the screen renders instantly from the process
+    // cache above; the network refresh only runs when the cache is stale
+    // (previously EVERY open re-fetched profile + genders + countries before
+    // the UI settled, which read as "the profile page loads every time").
     LaunchedEffect(Unit) {
+        val cacheFresh = com.example.util.RefDataCache.isMyProfileFresh() &&
+            genders.isNotEmpty() && countries.isNotEmpty()
+
         // 1) Hydrate the profile from the server (ensures name + email show
         //    on the Profile screen even after app restart or fresh login).
-        ProfileService.refreshFromServer(AppServiceContainer.supabaseClient)
-
-        // 2) Fetch genders from the genders table — NO fallback.
-        try {
-            val sr = AppServiceContainer.supabaseClient.getTable("genders", "select=name&order=sort_order.asc")
-            if (sr is SupabaseResult.Success) {
-                val list = mutableListOf<String>()
-                for (i in 0 until sr.data.length()) {
-                    list.add(sr.data.getJSONObject(i).getString("name"))
-                }
-                genders = list
-                gendersFetchFailed = false
-            } else {
-                gendersFetchFailed = true
-            }
-        } catch (_: Exception) {
-            gendersFetchFailed = true
+        if (!cacheFresh) {
+            ProfileService.refreshFromServer(AppServiceContainer.supabaseClient)
+            com.example.util.RefDataCache.markMyProfileRefreshed()
         }
 
-        // 3) Fetch countries from the countries table — NO fallback.
-        try {
-            val cr = AppServiceContainer.supabaseClient.getTable("countries", "select=currency_code,country_name&order=country_name.asc")
-            if (cr is SupabaseResult.Success) {
-                val list = mutableListOf<Pair<String, String>>()
-                for (i in 0 until cr.data.length()) {
-                    val obj = cr.data.getJSONObject(i)
-                    list.add(Pair(obj.getString("currency_code"), obj.getString("country_name")))
+        // 2) Genders — only when the process cache is cold.
+        if (genders.isEmpty()) {
+            try {
+                val sr = AppServiceContainer.supabaseClient.getTable("genders", "select=name&order=sort_order.asc")
+                if (sr is SupabaseResult.Success) {
+                    val list = mutableListOf<String>()
+                    for (i in 0 until sr.data.length()) {
+                        list.add(sr.data.getJSONObject(i).getString("name"))
+                    }
+                    com.example.util.RefDataCache.putGenders(list)
+                    genders = list
+                    gendersFetchFailed = false
+                } else {
+                    gendersFetchFailed = true
                 }
-                countries = list
-                countriesFetchFailed = false
-            } else {
+            } catch (_: Exception) {
+                gendersFetchFailed = true
+            }
+        }
+
+        // 3) Countries — only when the process cache is cold.
+        if (countries.isEmpty()) {
+            try {
+                val cr = AppServiceContainer.supabaseClient.getTable("countries", "select=currency_code,country_name&order=country_name.asc")
+                if (cr is SupabaseResult.Success) {
+                    val list = mutableListOf<Pair<String, String>>()
+                    for (i in 0 until cr.data.length()) {
+                        val obj = cr.data.getJSONObject(i)
+                        list.add(Pair(obj.getString("currency_code"), obj.getString("country_name")))
+                    }
+                    com.example.util.RefDataCache.putCountries(list)
+                    countries = list
+                    countriesFetchFailed = false
+                } else {
+                    countriesFetchFailed = true
+                }
+            } catch (_: Exception) {
                 countriesFetchFailed = true
             }
-        } catch (_: Exception) {
-            countriesFetchFailed = true
         }
     }
 

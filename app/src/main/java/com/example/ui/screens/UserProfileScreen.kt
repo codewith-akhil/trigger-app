@@ -85,6 +85,19 @@ fun UserProfileScreen(
     var isContact by remember { mutableStateOf(false) }
     var isBlocked by remember { mutableStateOf(false) }
 
+    // v1.0.13 cached-first: render the peer's last-known snapshot instantly
+    // (previously every open waited on get-peer-profile + block + contact
+    // round-trips before the header fields settled).
+    (com.example.util.RefDataCache.getCachedPeer(user.id))?.let { cached ->
+        cached.fullName?.let { currentName = it }
+        cached.username?.let { currentUsername = it }
+        cached.avatarUrl?.let { currentAvatarUrl = it }
+        cached.about?.let { aboutText = it }
+        isFollowing = cached.isFollowing
+        followersCount = cached.followersCount
+        followingCount = cached.followingCount
+    }
+
     var showBlockDialog by remember { mutableStateOf(false) }
     var showUnblockDialog by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
@@ -117,6 +130,19 @@ fun UserProfileScreen(
                 isFollowing = peerRes.data.optBoolean("isFollowing", false)
                 followersCount = peerRes.data.optInt("followersCount", 0)
                 followingCount = peerRes.data.optInt("followingCount", 0)
+                // cache the fresh snapshot for instant next-open rendering
+                com.example.util.RefDataCache.putPeer(
+                    user.id,
+                    com.example.util.RefDataCache.PeerSnapshot(
+                        about = aboutText.takeIf { it.isNotBlank() && it != "Hey there! I am using Trigger." },
+                        avatarUrl = currentAvatarUrl,
+                        username = currentUsername,
+                        fullName = currentName,
+                        isFollowing = isFollowing,
+                        followersCount = followersCount,
+                        followingCount = followingCount,
+                    )
+                )
             }
 
             // 3. Check blocked contacts (keyed on the peer's auth UUID, not a

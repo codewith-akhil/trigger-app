@@ -391,6 +391,8 @@ class ChatViewModel(
     val peerLiveLocation = MutableStateFlow<LiveLocationShareState?>(null)
     private var liveLocationMirrorJob: Job? = null
     private var peerLiveExpiryJob: Job? = null
+    /** 60s presence keep-alive loop (header last-seen freshness) — cancelled onCleared. */
+    private var presenceRefreshJob: Job? = null
 
     init {
         // Task 25: the windowed chat no longer collects the full Room message
@@ -423,6 +425,18 @@ class ChatViewModel(
             try {
                 (presenceService as? com.example.service.PresenceServiceImpl)?.refreshPeerPresence(peerId)
             } catch (_: Exception) {}
+        }
+        // Presence keep-alive: re-fetch the peer's presence every 60s while
+        // this chat is open. Realtime user_presences events normally keep the
+        // subtitle live; this covers dropped/replayed events so the displayed
+        // last-seen time never goes stale mid-conversation.
+        presenceRefreshJob = viewModelScope.launch {
+            while (isActive) {
+                kotlinx.coroutines.delay(60_000L)
+                try {
+                    (presenceService as? com.example.service.PresenceServiceImpl)?.refreshPeerPresence(peerId)
+                } catch (_: Exception) {}
+            }
         }
         // Catch up the DELIVERED receipt for everything already in Room
         // (history read while the sender was offline still flips to ✓✓).
@@ -1619,6 +1633,7 @@ class ChatViewModel(
         // the mic stayed held and the amplitude timer kept polling after the
         // user left the chat.
         recordingTimerJob?.cancel()
+        presenceRefreshJob?.cancel()
         try { mediaRecorder?.stop() } catch (_: Exception) {}
         try { mediaRecorder?.release() } catch (_: Exception) {}
         mediaRecorder = null
