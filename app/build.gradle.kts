@@ -19,8 +19,8 @@ android {
     applicationId = "com.trigger.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = 13
-    versionName = "1.0.13"
+    versionCode = 14
+    versionName = "1.0.14"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -83,6 +83,58 @@ secrets {
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
+
+// ---------------------------------------------------------------------------
+// RELEASE CREDENTIAL GUARD — fail loudly at build time instead of shipping an
+// app that shows "Supabase credentials missing" to every user (v1.0.12 did
+// exactly that because .env was absent and the secrets plugin fell back to
+// .env.example placeholders). Release builds are BLOCKED unless the repo .env
+// contains real backend credentials.
+// ---------------------------------------------------------------------------
+val triggerEnvFilePath = rootProject.file(".env").absolutePath
+val validateReleaseCredentials = tasks.register("validateReleaseCredentials") {
+  inputs.property("envFilePath", triggerEnvFilePath)
+  doLast {
+    val envFile = File(inputs.properties["envFilePath"] as String)
+    val env = mutableMapOf<String, String>()
+    if (envFile.exists()) {
+      envFile.readLines().forEach { raw ->
+        val line = raw.trim()
+        if (line.isNotEmpty() && !line.startsWith("#") && line.contains('=')) {
+          val idx = line.indexOf('=')
+          env[line.substring(0, idx).trim()] = line.substring(idx + 1).trim()
+        }
+      }
+    }
+    val bad = mutableListOf<String>()
+    val url = env["SUPABASE_URL"].orEmpty().trim()
+    val anon = env["SUPABASE_ANON_KEY"].orEmpty().trim()
+    val agora = env["AGORA_APP_ID"].orEmpty().trim()
+    if (!url.startsWith("https://") || url.contains("your-project") || url.contains("placeholder")) {
+      bad += "SUPABASE_URL"
+    }
+    if (anon.isBlank() || anon.equals("placeholder", true) ||
+      anon.contains("your-supabase-anon-key") || anon.length < 50
+    ) {
+      bad += "SUPABASE_ANON_KEY"
+    }
+    if (agora.isBlank() || agora.equals("placeholder", true) || agora.contains("your-agora")) {
+      bad += "AGORA_APP_ID"
+    }
+    if (bad.isNotEmpty()) {
+      throw GradleException(
+        "RELEASE BUILD BLOCKED — placeholder/missing credentials in .env: ${bad.joinToString(", ")}. " +
+          "Restore the real .env (durable backup: secrets/repo-env.txt) before building a release. " +
+          "A release must NEVER ship without working backend credentials."
+      )
+    }
+    println("validateReleaseCredentials: real Supabase + Agora credentials present OK")
+  }
+}
+
+tasks.matching { it.name in setOf("assembleRelease", "bundleRelease") }.configureEach {
+  dependsOn("validateReleaseCredentials")
+}
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.

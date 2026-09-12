@@ -105,7 +105,7 @@ fun ForgotPasswordScreen(
                     msg.contains("rate limit", ignoreCase = true) || msg.contains("Too many", ignoreCase = true) ->
                         "Too many reset attempts. Please wait 60 seconds and try again."
                     msg.contains("not configured", ignoreCase = true) ->
-                        "Email service is not configured. Please contact support."
+                        "We couldn't send the email right now. Please try again later."
                     else -> msg
                 }
             }

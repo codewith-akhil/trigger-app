@@ -411,7 +411,7 @@ class SupabaseClient(
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
                 return@withContext SupabaseResult.Error(
-                    BackendConfig.configurationError ?: "Supabase is not configured"
+                    BackendConfig.configurationError ?: BackendConfig.USER_SAFE_CONFIG_ERROR
                 )
             }
 
@@ -462,7 +462,7 @@ class SupabaseClient(
     suspend fun signInWithPassword(email: String, password: String): SupabaseResult<SupabaseSession> =
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
-                return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: "Supabase is not configured")
+                return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: BackendConfig.USER_SAFE_CONFIG_ERROR)
             }
 
             try {
@@ -500,7 +500,7 @@ class SupabaseClient(
     suspend fun verifyOtp(email: String, token: String, type: String = "signup"): SupabaseResult<SupabaseSession> =
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
-                return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: "Supabase is not configured")
+                return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: BackendConfig.USER_SAFE_CONFIG_ERROR)
             }
 
             try {
@@ -540,7 +540,7 @@ class SupabaseClient(
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
                 return@withContext SupabaseResult.Error(
-                    BackendConfig.configurationError ?: "Supabase is not configured"
+                    BackendConfig.configurationError ?: BackendConfig.USER_SAFE_CONFIG_ERROR
                 )
             }
 
@@ -573,7 +573,7 @@ class SupabaseClient(
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
                 return@withContext SupabaseResult.Error(
-                    BackendConfig.configurationError ?: "Supabase is not configured"
+                    BackendConfig.configurationError ?: BackendConfig.USER_SAFE_CONFIG_ERROR
                 )
             }
 
@@ -638,7 +638,7 @@ class SupabaseClient(
     suspend fun callRpc(functionName: String, args: JSONObject): SupabaseResult<JSONObject> =
         withContext(Dispatchers.IO) {
             if (!BackendConfig.isSupabaseConfigured) {
-                return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: "Supabase is not configured")
+                return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: BackendConfig.USER_SAFE_CONFIG_ERROR)
             }
             try {
                 val token = ensureFreshAccessToken() ?: anonKey
@@ -845,7 +845,7 @@ class SupabaseClient(
         upsert: Boolean = false
     ): SupabaseResult<String> = withContext(Dispatchers.IO) {
         if (!BackendConfig.isSupabaseConfigured) {
-            return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: "Supabase is not configured")
+            return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: BackendConfig.USER_SAFE_CONFIG_ERROR)
         }
 
         try {
@@ -925,7 +925,7 @@ class SupabaseClient(
         payload: JSONObject = JSONObject()
     ): SupabaseResult<JSONObject> = withContext(Dispatchers.IO) {
         if (!BackendConfig.isSupabaseConfigured) {
-            return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: "Supabase is not configured")
+            return@withContext SupabaseResult.Error(BackendConfig.configurationError ?: BackendConfig.USER_SAFE_CONFIG_ERROR)
         }
 
         try {

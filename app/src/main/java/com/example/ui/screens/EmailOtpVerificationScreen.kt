@@ -187,7 +187,7 @@ fun EmailOtpVerificationScreen(
                     err.contains("rate limit", ignoreCase = true) || err.contains("Too many", ignoreCase = true) ->
                         "Please wait 60 seconds before requesting another code."
                     err.contains("not configured", ignoreCase = true) ->
-                        "Email service is not configured. Please contact support."
+                        "We couldn't send the email right now. Please try again later."
                     else -> "Failed to resend code: $err"
                 }
             }

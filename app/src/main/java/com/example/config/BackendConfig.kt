@@ -1,8 +1,16 @@
 package com.example.config
 
+import android.util.Log
 import com.example.BuildConfig
 
 object BackendConfig {
+    /**
+     * The ONLY message a user may ever see for a backend configuration
+     * problem. Deliberately generic — no mention of Supabase, env files,
+     * keys, or build steps. Technical diagnostics live in [technicalDiagnostic]
+     * and must only ever be written to Logcat / crash reporting.
+     */
+    const val USER_SAFE_CONFIG_ERROR = "Connection error. Please try again later."
     // Supabase Credentials
     val SUPABASE_URL: String = BuildConfig.SUPABASE_URL.trimEnd('/')
     val SUPABASE_ANON_KEY: String = BuildConfig.SUPABASE_ANON_KEY
@@ -25,18 +33,28 @@ object BackendConfig {
                 SUPABASE_ANON_KEY.length > 50  // real JWT anon keys are ~200+ chars
 
     /**
-     * Human-readable diagnostic shown to the user (and logged) when the app
-     * is built without real credentials. Prevents the confusing "Invalid API
-     * key" message from Supabase.
+     * User-facing message when the backend is not configured. GUARANTEED to
+     * contain zero internal details — safe to render in any screen/dialog.
      */
     val configurationError: String?
-        get() = when {
-            !isSupabaseConfigured && SUPABASE_ANON_KEY.equals("placeholder", ignoreCase = true) ->
-                "App is not configured. Create a .env file with your real SUPABASE_ANON_KEY before building. See DEPLOYMENT.md."
-            !isSupabaseConfigured ->
-                "Supabase credentials missing or invalid. Check .env configuration."
-            else -> null
-        }
+        get() = if (isSupabaseConfigured) null else USER_SAFE_CONFIG_ERROR
+
+    /**
+     * Internal-only diagnostic (build info, key shape). FOR LOGCAT / CRASH
+     * REPORTING EYES ONLY — never return this from a ViewModel/screen/error
+     * state that reaches the UI.
+     */
+    val technicalDiagnostic: String?
+        get() = if (isSupabaseConfigured) null else
+            run {
+                Log.e(
+                    "BackendConfig",
+                    "Backend not configured: url=${SUPABASE_URL.take(24)}…, " +
+                        "anonKeyLen=${SUPABASE_ANON_KEY.length}. " +
+                        "Restore the repo .env before building (see secrets/repo-env.txt)."
+                )
+                "backend-not-configured"
+            }
 
     // Agora WebRTC Credentials (https://console.agora.io/)
     val AGORA_APP_ID: String = BuildConfig.AGORA_APP_ID

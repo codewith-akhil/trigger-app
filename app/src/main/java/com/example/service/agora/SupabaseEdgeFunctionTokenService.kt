@@ -113,10 +113,10 @@ class SupabaseEdgeFunctionTokenService(
             )
         }
 
+        Log.e(TAG, "Agora not configured: AGORA_APP_ID missing/placeholder in BuildConfig (.env).")
         Result.failure(
-            IllegalStateException(
-                "Agora is not configured. Please set AGORA_APP_ID in your Secrets or .env file."
-            )
+            // User-safe message only — internal details go to Logcat above.
+            IllegalStateException(BackendConfig.USER_SAFE_CONFIG_ERROR)
         )
     }
 }
