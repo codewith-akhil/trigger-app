@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import com.example.ui.components.TriggerAlertDialog
+import com.example.ui.components.TriggerTabLoadingView
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +44,7 @@ import com.example.model.ChatItem
 import com.example.model.ChatRepository
 import com.example.ui.theme.*
 import com.example.util.optStringOrNull
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class DashboardTab {
@@ -112,6 +114,10 @@ fun WhatsAppDashboardScreen(
         }
     }
 
+    val tabCoroutineScope = rememberCoroutineScope()
+    var isTabSwitching by remember { mutableStateOf(false) }
+    var switchingTabName by remember { mutableStateOf("Chats") }
+
     val tabHistory = remember {
         mutableStateListOf(if (com.example.StreamDeepLink.pendingStreamId != null) DashboardTab.STREAM else DashboardTab.CHATS)
     }
@@ -119,14 +125,41 @@ fun WhatsAppDashboardScreen(
     fun navigateToTab(tab: DashboardTab) {
         if (selectedTab != tab) {
             tabHistory.add(tab)
+            val name = when (tab) {
+                DashboardTab.CHATS -> "Chats"
+                DashboardTab.UPDATES -> "Updates"
+                DashboardTab.STREAM -> "Stream"
+                DashboardTab.CALLS -> "Calls"
+                DashboardTab.PROFILE -> "Profile"
+            }
+            switchingTabName = name
+            isTabSwitching = true
             selectedTab = tab
+            tabCoroutineScope.launch {
+                delay(280)
+                isTabSwitching = false
+            }
         }
     }
 
     fun navigateBackTab() {
         if (tabHistory.size > 1) {
             tabHistory.removeAt(tabHistory.lastIndex)
-            selectedTab = tabHistory.lastOrNull() ?: DashboardTab.CHATS
+            val prevTab = tabHistory.lastOrNull() ?: DashboardTab.CHATS
+            val name = when (prevTab) {
+                DashboardTab.CHATS -> "Chats"
+                DashboardTab.UPDATES -> "Updates"
+                DashboardTab.STREAM -> "Stream"
+                DashboardTab.CALLS -> "Calls"
+                DashboardTab.PROFILE -> "Profile"
+            }
+            switchingTabName = name
+            isTabSwitching = true
+            selectedTab = prevTab
+            tabCoroutineScope.launch {
+                delay(280)
+                isTabSwitching = false
+            }
         } else {
             selectedTab = DashboardTab.CHATS
         }
@@ -343,7 +376,10 @@ fun WhatsAppDashboardScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            when (selectedTab) {
+            if (isTabSwitching) {
+                TriggerTabLoadingView(tabName = switchingTabName)
+            } else {
+                when (selectedTab) {
                 DashboardTab.CHATS -> {
                     Column(modifier = Modifier.fillMaxSize()) {
                         // "Search or Ask Trigger AI" Pill Box
@@ -430,6 +466,7 @@ fun WhatsAppDashboardScreen(
                     )
                 }
             }
+        }
         }
     }
 
@@ -1287,7 +1324,7 @@ fun WhatsAppBottomNavBar(
                     badgeCount = unreadChatsCount,
                     icon = { isSelected ->
                         Icon(
-                            imageVector = if (isSelected) Icons.Filled.Forum else Icons.Outlined.Forum,
+                            imageVector = if (isSelected) Icons.Filled.Chat else Icons.Outlined.Chat,
                             contentDescription = "Chats",
                             modifier = Modifier.size(22.dp)
                         )
@@ -1295,14 +1332,14 @@ fun WhatsAppBottomNavBar(
                     onClick = { onTabSelected(DashboardTab.CHATS) }
                 )
 
-                // Tab 2: Feed
+                // Tab 2: Updates
                 BottomNavItem(
-                    title = "Feed",
+                    title = "Updates",
                     isSelected = selectedTab == DashboardTab.UPDATES,
                     icon = { isSelected ->
                         Icon(
-                            imageVector = if (isSelected) Icons.Filled.Explore else Icons.Outlined.Explore,
-                            contentDescription = "Feed",
+                            imageVector = if (isSelected) Icons.Filled.History else Icons.Outlined.History,
+                            contentDescription = "Updates",
                             modifier = Modifier.size(22.dp)
                         )
                     },
@@ -1315,7 +1352,7 @@ fun WhatsAppBottomNavBar(
                     isSelected = selectedTab == DashboardTab.STREAM,
                     icon = { isSelected ->
                         Icon(
-                            imageVector = if (isSelected) Icons.Filled.Videocam else Icons.Outlined.Videocam,
+                            imageVector = if (isSelected) Icons.Filled.LiveTv else Icons.Outlined.LiveTv,
                             contentDescription = "Stream",
                             modifier = Modifier.size(22.dp)
                         )
@@ -1329,7 +1366,7 @@ fun WhatsAppBottomNavBar(
                     isSelected = selectedTab == DashboardTab.CALLS,
                     icon = { isSelected ->
                         Icon(
-                            imageVector = if (isSelected) Icons.Filled.Phone else Icons.Outlined.Phone,
+                            imageVector = if (isSelected) Icons.Filled.Call else Icons.Outlined.Call,
                             contentDescription = "Calls",
                             modifier = Modifier.size(22.dp)
                         )
@@ -1343,7 +1380,7 @@ fun WhatsAppBottomNavBar(
                     isSelected = selectedTab == DashboardTab.PROFILE,
                     icon = { isSelected ->
                         Icon(
-                            imageVector = if (isSelected) Icons.Filled.AccountCircle else Icons.Outlined.AccountCircle,
+                            imageVector = if (isSelected) Icons.Filled.Person else Icons.Outlined.Person,
                             contentDescription = "Profile",
                             modifier = Modifier.size(22.dp)
                         )

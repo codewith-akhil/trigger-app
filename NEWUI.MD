@@ -182,3 +182,20 @@ This document details the newly created **Post View Page**, **Payment Overview P
 
 ### 6.5 Production Polish & Prototype Text Cleanup
 - Removed lingering placeholder copy, explanatory tooltips, and duplicate reaction widgets for a clean, production-grade finish.
+
+### 6.6 Attached Model UI for Payment Verification (Section.png Reference)
+- Overhauled `PaymentValidationScreen.kt` to mirror the user-attached specification:
+  - **Clean Header**: White background, back navigation arrow, "Payment" title, and bold "Amount payable: ₹{amount}".
+  - **Custom Two-Tone Circular Spinner (`TriggerProcessingSpinner.kt`)**: 84dp diameter with continuous 360-degree light grey track (`#E5E7EB`) and animated royal blue sweep arc (`#0052CC`).
+  - **Title & Message**: "Your payment is being processed." display text and "Please hold on as it may take upto 30 mins in some cases." helper text.
+  - **Anti-Exit Caution**: "Note: Do not hit back button or close this screen until the transaction is complete".
+  - **Bottom Navigation Bar**: 5 tabs matching design (Chats active with green pill indicator, Updates, Stream, Calls, Profile).
+  - **Leave Protection Dialog**: Hardware and UI back taps trigger a `TriggerAlertDialog` explaining that transaction is running to prevent accidental exits.
+  - **Instant State Resolution**: Transitions cleanly to itemized receipt + "Watch Post Now" upon verification or offers retry on failure.
+
+### 6.7 Tab Switching Navigation Loading Screen
+- Added smooth, responsive loading transitions between tab switches in `WhatsAppDashboardScreen.kt`:
+  - Uses `TriggerTabLoadingView` featuring the royal blue two-tone spinner.
+  - Custom dynamic tab indicator ("Loading Chats...", "Loading Updates...", "Loading Stream...", "Loading Calls...", "Loading Profile...").
+  - Ensures a fluid, high-performance transition across heavy views.
+
