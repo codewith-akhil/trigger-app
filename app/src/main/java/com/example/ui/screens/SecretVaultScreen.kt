@@ -51,14 +51,14 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
-private val HeaderGreen = Color(0xFF008069)
+private val HeaderGreen = Color(0xFFAD1457)
 private val DarkBackground = Color(0xFF0F172A)
 private val CardDark = Color(0xFF1E293B)
-private val AccentGreen = Color(0xFF00A884)
+private val AccentGreen = Color(0xFFD81B60)
 private val ErrorRed = Color(0xFFEF4444)
 
 // Compact-dialog convention colors (white AlertDialog, 16dp corners, 16sp bold title).
-private val CompactGreen = Color(0xFF008069)
+private val CompactGreen = Color(0xFFAD1457)
 private val CompactRed = Color(0xFFEA4335)
 private val DialogTitleDark = Color(0xFF111B21)
 private val DialogBodyGray = Color(0xFF5F6368)

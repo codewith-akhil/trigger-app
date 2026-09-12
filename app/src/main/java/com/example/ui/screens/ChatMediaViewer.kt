@@ -269,7 +269,7 @@ fun ChatMediaViewer(
                 },
                 dismissButton = {
                     TextButton(onClick = { showDeleteConfirmDialog = false }) {
-                        Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
+                        Text("Cancel", color = Color(0xFFAD1457), fontWeight = FontWeight.SemiBold)
                     }
                 }
             )

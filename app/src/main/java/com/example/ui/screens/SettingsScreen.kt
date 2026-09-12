@@ -26,7 +26,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.model.UserRepository
 
-private val SettingsGreenHeader = Color(0xFF008069)
+private val SettingsGreenHeader = Color(0xFFAD1457)
 private val SettingsBg = Color(0xFFF7F8FA)
 private val SettingsCardBg = Color(0xFFFFFFFF)
 private val SettingsTextPrimary = Color(0xFF111B21)
@@ -83,7 +83,7 @@ fun SettingsScreen(
                     modifier = Modifier.padding(16.dp),
                     action = {
                         TextButton(onClick = { showInviteSnackbar = false }) {
-                            Text("OK", color = Color(0xFF00A884))
+                            Text("OK", color = Color(0xFFD81B60))
                         }
                     }
                 ) {

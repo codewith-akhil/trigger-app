@@ -12,7 +12,7 @@ data class ConversationEntity(
     val id: String,
     val name: String,
     val avatarRes: Int? = null,
-    val initialColor: Long = 0xFF00A884,
+    val initialColor: Long = 0xFFD81B60,
     val lastMessage: String = "",
     val timestamp: String = "",
     /** Epoch millis of the last activity — drives recency ordering (v8). */

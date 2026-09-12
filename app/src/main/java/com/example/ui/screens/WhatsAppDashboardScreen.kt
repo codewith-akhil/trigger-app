@@ -1003,11 +1003,11 @@ fun MetaAISearchBar(
                         width = 3.dp,
                         brush = Brush.sweepGradient(
                             listOf(
-                                Color(0xFF00A884),
-                                Color(0xFF008069),
+                                Color(0xFFD81B60),
+                                Color(0xFFAD1457),
                                 Color(0xFF00C6FF),
                                 Color(0xFF0A56D1),
-                                Color(0xFF00A884)
+                                Color(0xFFD81B60)
                             )
                         ),
                         shape = CircleShape
@@ -2220,7 +2220,7 @@ fun ScheduledStreamCardItem(
                     text = slotText,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (stream.isFull) Color(0xFFD32F2F) else Color(0xFF008069)
+                    color = if (stream.isFull) Color(0xFFD32F2F) else Color(0xFFAD1457)
                 )
             }
 
@@ -2244,11 +2244,11 @@ fun ScheduledStreamCardItem(
             Spacer(modifier = Modifier.height(8.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.CalendarToday, contentDescription = null, tint = Color(0xFF00A884), modifier = Modifier.size(14.dp))
+                Icon(Icons.Filled.CalendarToday, contentDescription = null, tint = Color(0xFFD81B60), modifier = Modifier.size(14.dp))
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(stream.date, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = GeometricTextDark)
                 Spacer(modifier = Modifier.width(12.dp))
-                Icon(Icons.Filled.Schedule, contentDescription = null, tint = Color(0xFF00A884), modifier = Modifier.size(14.dp))
+                Icon(Icons.Filled.Schedule, contentDescription = null, tint = Color(0xFFD81B60), modifier = Modifier.size(14.dp))
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(stream.time, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = GeometricTextDark)
             }
@@ -2268,9 +2268,9 @@ fun ScheduledStreamCardItem(
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF008069))
+                    Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFFAD1457))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Share Link", fontSize = 12.sp, color = Color(0xFF008069))
+                    Text("Share Link", fontSize = 12.sp, color = Color(0xFFAD1457))
                 }
 
                 // Booking / Join action
@@ -2278,7 +2278,7 @@ fun ScheduledStreamCardItem(
                     onClick = onBookClick,
                     enabled = !stream.isFull,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (stream.isJoined) Color(0xFF4CAF50) else Color(0xFF008069)
+                        containerColor = if (stream.isJoined) Color(0xFF4CAF50) else Color(0xFFAD1457)
                     ),
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)

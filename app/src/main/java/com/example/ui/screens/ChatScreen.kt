@@ -1163,7 +1163,7 @@ fun ChatScreen(
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(26.dp),
                                     strokeWidth = 2.5.dp,
-                                    color = Color(0xFF008069)
+                                    color = Color(0xFFAD1457)
                                 )
                                 Spacer(Modifier.height(10.dp))
                                 Text(
@@ -1191,7 +1191,7 @@ fun ChatScreen(
                                     CircularProgressIndicator(
                                         modifier = Modifier.size(22.dp),
                                         strokeWidth = 2.5.dp,
-                                        color = Color(0xFF008069)
+                                        color = Color(0xFFAD1457)
                                     )
                                 }
                                 !hasMoreOlder -> Box(
@@ -1647,7 +1647,7 @@ fun ChatScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showBlockDialog = false }) {
-                    Text("Cancel", color = Color(0xFF008069))
+                    Text("Cancel", color = Color(0xFFAD1457))
                 }
             }
         )
@@ -1681,14 +1681,14 @@ fun ChatScreen(
                         showUnblockDialog = false
                         viewModel.setBlocked(false)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00A884))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD81B60))
                 ) {
                     Text("Unblock", color = Color.White)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showUnblockDialog = false }) {
-                    Text("Cancel", color = Color(0xFF008069))
+                    Text("Cancel", color = Color(0xFFAD1457))
                 }
             }
         )
@@ -1772,7 +1772,7 @@ fun ChatScreen(
                             Checkbox(
                                 checked = alsoDeleteForEveryone,
                                 onCheckedChange = { alsoDeleteForEveryone = it },
-                                colors = CheckboxDefaults.colors(checkedColor = Color(0xFF008069))
+                                colors = CheckboxDefaults.colors(checkedColor = Color(0xFFAD1457))
                             )
                             Text(
                                 text = "Also delete for $contactName",
@@ -1800,7 +1800,7 @@ fun ChatScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("CANCEL", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
+                    Text("CANCEL", color = Color(0xFFAD1457), fontWeight = FontWeight.SemiBold)
                 }
             }
         )
@@ -1934,7 +1934,7 @@ fun ChatMainTopBar(
                         modifier = Modifier
                             .size(40.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF25D366))
+                            .background(Color(0xFFD81B60))
                     ) {
                         when {
                             !avatarUrl.isNullOrBlank() -> {
@@ -2615,8 +2615,8 @@ fun WhatsAppAttachmentSheetContent(
             horizontalArrangement = Arrangement.SpaceAround
         ) {
             AttachmentIconItem(icon = Icons.Filled.Headphones, label = "Audio", color = Color(0xFFE56A38), onClick = onAudioSelected)
-            AttachmentIconItem(icon = Icons.Filled.LocationOn, label = "Location", color = Color(0xFF1FA855), onClick = onLocationSelected)
-            AttachmentIconItem(icon = Icons.Outlined.Lock, label = "Vault", color = Color(0xFF0F665E), onClick = onVaultSelected)
+            AttachmentIconItem(icon = Icons.Filled.LocationOn, label = "Location", color = Color(0xFFAD1457), onClick = onLocationSelected)
+            AttachmentIconItem(icon = Icons.Outlined.Lock, label = "Vault", color = Color(0xFF880E4F), onClick = onVaultSelected)
         }
     }
 }
@@ -2723,7 +2723,7 @@ fun VaultPinGateDialog(
                                 .size(12.dp)
                                 .clip(CircleShape)
                                 .background(
-                                    if (index < pin.length) Color(0xFF008069)
+                                    if (index < pin.length) Color(0xFFAD1457)
                                     else Color(0xFF667781).copy(alpha = 0.3f)
                                 )
                         )
@@ -2799,7 +2799,7 @@ fun VaultPinGateDialog(
                 onClick = { onDismiss() },
                 enabled = !verifying
             ) {
-                Text("Cancel", color = Color(0xFF008069))
+                Text("Cancel", color = Color(0xFFAD1457))
             }
         }
     )
@@ -3007,7 +3007,7 @@ private fun LiveLocationStatusBar(
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
         shape = RoundedCornerShape(12.dp),
-        color = Color(0xFFDCF8C6),
+        color = Color(0xFFFCE4EC),
         shadowElevation = 2.dp
     ) {
         Row(
@@ -3017,13 +3017,13 @@ private fun LiveLocationStatusBar(
             Icon(
                 imageVector = Icons.Filled.LocationOn,
                 contentDescription = null,
-                tint = Color(0xFF1FA855),
+                tint = Color(0xFFD81B60),
                 modifier = Modifier.size(20.dp)
             )
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF183B2A))
-                Text(subtitle, fontSize = 11.sp, color = Color(0xFF51705F))
+                Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF880E4F))
+                Text(subtitle, fontSize = 11.sp, color = Color(0xFFAD1457))
             }
             if (actionLabel != null) {
                 TextButton(onClick = onAction) {
@@ -3089,7 +3089,7 @@ private fun MessageRequestActionBanner(
                 Button(
                     onClick = onAccept,
                     enabled = actionInProgress == null,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00A884)),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD81B60)),
                     shape = RoundedCornerShape(20.dp),
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
@@ -3213,10 +3213,10 @@ private fun MessageRequestComposerLocked() {
 // Auto delete (disappearing messages): in-list notice + settings dialog
 // ============================================================================
 
-/** Colors for the auto-delete notice (our palette, not WhatsApp's yellow). */
-private val AutoDeleteNoticeBg = Color(0xFFE7F0EC)
+/** Colors for the auto-delete notice (dark pink palette). */
+private val AutoDeleteNoticeBg = Color(0xFFFDF2F6)
 private val AutoDeleteNoticeText = Color(0xFF3D4A44)
-private val WhatsAppDeepGreen = Color(0xFF008069)
+private val WhatsAppDeepGreen = Color(0xFFAD1457)
 
 /**
  * In-list system notice for auto delete — rendered as list item 0 whenever an
@@ -3338,7 +3338,7 @@ private fun AutoDeleteDialog(
                             selected = selected == option,
                             onClick = null,
                             colors = RadioButtonDefaults.colors(
-                                selectedColor = Color(0xFF00A884),
+                                selectedColor = Color(0xFFD81B60),
                                 unselectedColor = Color(0xFF667781)
                             ),
                             modifier = Modifier.size(20.dp)
@@ -3364,7 +3364,7 @@ private fun AutoDeleteDialog(
                     ) {
                         Text(
                             text = "CANCEL",
-                            color = Color(0xFF00A884),
+                            color = Color(0xFFD81B60),
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.5.sp
                         )
@@ -3374,8 +3374,8 @@ private fun AutoDeleteDialog(
                         onClick = onConfirm,
                         enabled = selected != current,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF00A884),
-                            disabledContainerColor = Color(0xFF00A884).copy(alpha = 0.35f),
+                            containerColor = Color(0xFFD81B60),
+                            disabledContainerColor = Color(0xFFD81B60).copy(alpha = 0.35f),
                             contentColor = Color.White,
                             disabledContentColor = Color.White.copy(alpha = 0.7f)
                         ),

@@ -56,8 +56,8 @@ import com.example.util.optStringOrNull
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-// Screen-local palette (compact dialog conventions: green #008069 confirm).
-private val BlockedGreen = Color(0xFF008069)
+// Screen-local palette (compact dialog conventions: dark pink #AD1457 confirm).
+private val BlockedGreen = Color(0xFFAD1457)
 private val BlockedTextPrimary = Color(0xFF111B21)
 private val BlockedTextSecondary = Color(0xFF667781)
 private val BlockedDanger = Color(0xFFEA4335)

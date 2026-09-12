@@ -37,8 +37,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private val TriggerLightBg = Color(0xFFFFFFFF)
-private val TriggerGreenHeader = Color(0xFF008069)
-private val TriggerGreenAccent = Color(0xFF00A884)
+private val TriggerGreenHeader = Color(0xFFAD1457)
+private val TriggerGreenAccent = Color(0xFFD81B60)
 private val TriggerTextPrimary = Color(0xFF111B21)
 private val TriggerTextSecondary = Color(0xFF667781)
 private val TriggerDivider = Color(0xFFF0F2F5)
@@ -80,7 +80,7 @@ fun SelectContactScreen(
             id = selfId,
             name = currentUserProfile.name.ifEmpty { "You" },
             subtitle = "Message yourself",
-            initialColor = 0xFF1FA855,
+            initialColor = 0xFFD81B60,
             isSelf = true
         )
     }

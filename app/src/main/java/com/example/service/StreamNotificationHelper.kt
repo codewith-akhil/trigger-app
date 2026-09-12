@@ -26,7 +26,7 @@ object StreamNotificationHelper {
             ).apply {
                 description = "Notifications for scheduled streams, ticket bookings, and live broadcast alerts"
                 enableLights(true)
-                lightColor = Color.parseColor("#008069")
+                lightColor = Color.parseColor("#AD1457")
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 250, 150, 250)
             }
@@ -79,7 +79,7 @@ object StreamNotificationHelper {
             .setSound(soundUri)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
-            .setColor(Color.parseColor("#008069"))
+            .setColor(Color.parseColor("#AD1457"))
             .build()
 
         notificationManager.notify((System.currentTimeMillis() % 100000).toInt(), notification)
@@ -128,7 +128,7 @@ object StreamNotificationHelper {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
-            .setColor(Color.parseColor("#008069"))
+            .setColor(Color.parseColor("#AD1457"))
             .build()
 
         notificationManager.notify((System.currentTimeMillis() % 100000).toInt() + 1, notification)

@@ -830,7 +830,7 @@ fun DomainChatBubble(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (isSelected) Color(0xFF00A884).copy(alpha = 0.18f) else Color.Transparent)
+            .background(if (isSelected) Color(0xFFD81B60).copy(alpha = 0.18f) else Color.Transparent)
             .padding(horizontal = 4.dp, vertical = 2.dp),
         contentAlignment = if (isOutgoing) Alignment.CenterEnd else Alignment.CenterStart
     ) {
@@ -918,7 +918,7 @@ fun DomainChatBubble(
                                         enabled = !message.isViewed && !message.isOutgoing,
                                         onClick = onOpenViewOnce
                                     )
-                                    .background(if (message.isViewed) Color.Black.copy(alpha = 0.05f) else Color(0xFFE8F5E9))
+                                    .background(if (message.isViewed) Color.Black.copy(alpha = 0.05f) else Color(0xFFFCE4EC))
                                     .padding(horizontal = 10.dp, vertical = 8.dp)
                             ) {
                                 Box(
@@ -1528,7 +1528,7 @@ fun DomainChatBubble(
                                 modifier = Modifier
                                     .size(32.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFFE8F5E9)),
+                                    .background(Color(0xFFFCE4EC)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(

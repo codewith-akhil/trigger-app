@@ -23,12 +23,12 @@ import com.example.di.AppServiceContainer
 import com.example.service.StreamHistoryItem
 import kotlinx.coroutines.launch
 
-private val HeaderGreen = Color(0xFF008069)
+private val HeaderGreen = Color(0xFFAD1457)
 private val DarkBackground = Color(0xFFF7F9FA)
 private val CardBackground = Color(0xFFFFFFFF)
 private val TextMain = Color(0xFF111B21)
 private val TextSub = Color(0xFF667781)
-private val AccentGreen = Color(0xFF00A884)
+private val AccentGreen = Color(0xFFD81B60)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -38,12 +38,12 @@ import com.example.ui.payment.RazorpayCheckoutParams
 import com.example.ui.payment.RazorpayCheckoutResult
 import kotlinx.coroutines.launch
 
-private val HeaderGreen = Color(0xFF008069)
+private val HeaderGreen = Color(0xFFAD1457)
 private val DarkBackground = Color(0xFFF7F9FA)
 private val CardBackground = Color(0xFFFFFFFF)
 private val TextMain = Color(0xFF111B21)
 private val TextSub = Color(0xFF667781)
-private val AccentGreen = Color(0xFF00A884)
+private val AccentGreen = Color(0xFFD81B60)
 private val RedAlert = Color(0xFFD32F2F)
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -192,7 +192,7 @@ fun WalletScreen(
                             .fillMaxWidth()
                             .background(
                                 Brush.linearGradient(
-                                    colors = listOf(Color(0xFF006853), Color(0xFF008069), Color(0xFF00A884))
+                                    colors = listOf(Color(0xFF880E4F), Color(0xFFAD1457), Color(0xFFD81B60))
                                 )
                             )
                             .padding(20.dp)

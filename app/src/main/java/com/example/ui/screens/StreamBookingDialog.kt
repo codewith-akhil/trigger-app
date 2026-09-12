@@ -31,10 +31,10 @@ import com.example.ui.payment.RazorpayCheckoutParams
 import com.example.ui.payment.RazorpayCheckoutResult
 import kotlinx.coroutines.launch
 
-private val HeaderGreen = Color(0xFF008069)
+private val HeaderGreen = Color(0xFFAD1457)
 private val TextDark = Color(0xFF111B21)
 private val TextMuted = Color(0xFF667781)
-private val AccentGreen = Color(0xFF00A884)
+private val AccentGreen = Color(0xFFD81B60)
 private val RedAlert = Color(0xFFD32F2F)
 
 @Composable

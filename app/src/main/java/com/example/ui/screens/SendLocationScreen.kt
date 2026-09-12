@@ -486,7 +486,7 @@ fun SendLocationScreen(
 
             // ------------------ Top App Bar ------------------
             Surface(
-                color = Color(0xFF008069),
+                color = Color(0xFFAD1457),
                 shadowElevation = 0.dp
             ) {
                 Row(
@@ -510,7 +510,7 @@ fun SendLocationScreen(
                             value = searchQuery,
                             onValueChange = { searchQuery = it },
                             textStyle = TextStyle(color = Color.White, fontSize = 17.sp),
-                            cursorBrush = SolidColor(Color(0xFF00A884)),
+                            cursorBrush = SolidColor(Color(0xFFD81B60)),
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(horizontal = 8.dp),
@@ -567,7 +567,7 @@ fun SendLocationScreen(
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(20.dp),
                                     strokeWidth = 2.dp,
-                                    color = Color(0xFF00A884)
+                                    color = Color(0xFFD81B60)
                                 )
                             } else {
                                 Icon(
@@ -807,7 +807,7 @@ fun SendLocationScreen(
                                 Icon(
                                     imageVector = Icons.Filled.LocationOn,
                                     contentDescription = null,
-                                    tint = Color(0xFF00A884),
+                                    tint = Color(0xFFD81B60),
                                     modifier = Modifier.size(26.dp)
                                 )
                             }
@@ -878,7 +878,7 @@ fun SendLocationScreen(
                                 Icon(
                                     imageVector = Icons.Filled.Adjust,
                                     contentDescription = null,
-                                    tint = Color(0xFF00A884),
+                                    tint = Color(0xFFD81B60),
                                     modifier = Modifier.size(26.dp)
                                 )
                             }
@@ -940,13 +940,13 @@ fun SendLocationScreen(
                                 Icon(
                                     imageVector = Icons.Filled.Settings,
                                     contentDescription = null,
-                                    tint = Color(0xFF00A884),
+                                    tint = Color(0xFFD81B60),
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "Enable location to share your position",
-                                    color = Color(0xFF00A884),
+                                    color = Color(0xFFD81B60),
                                     fontSize = 14.sp
                                 )
                             }
@@ -968,7 +968,7 @@ fun SendLocationScreen(
                             CircularProgressIndicator(
                                 modifier = Modifier.size(18.dp),
                                 strokeWidth = 2.dp,
-                                color = Color(0xFF00A884)
+                                color = Color(0xFFD81B60)
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Text(
@@ -1130,7 +1130,7 @@ fun SendLocationScreen(
                         val isSelected = selectedDuration == dur
                         Surface(
                             shape = RoundedCornerShape(20.dp),
-                            color = if (isSelected) Color(0xFF00A884) else Color(0xFF2A3942),
+                            color = if (isSelected) Color(0xFFD81B60) else Color(0xFF2A3942),
                             modifier = Modifier.clickable { selectedDuration = dur }
                         ) {
                             Text(
@@ -1153,7 +1153,7 @@ fun SendLocationScreen(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(24.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xFF00A884),
+                        focusedBorderColor = Color(0xFFD81B60),
                         unfocusedBorderColor = Color(0xFF2A3942),
                         focusedTextColor = Color.White,
                         unfocusedTextColor = Color.White
@@ -1175,7 +1175,7 @@ fun SendLocationScreen(
                             Icon(
                                 imageVector = Icons.Filled.Send,
                                 contentDescription = "Send",
-                                tint = if (fix != null) Color(0xFF00A884) else Color(0xFF4A5A64)
+                                tint = if (fix != null) Color(0xFFD81B60) else Color(0xFF4A5A64)
                             )
                         }
                     }
@@ -1206,7 +1206,7 @@ private fun placeDotIcon(context: Context): android.graphics.drawable.BitmapDraw
     val size = (18 * density).toInt()
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
-    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color(0xFF00A884).toArgb() }
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color(0xFFD81B60).toArgb() }
     val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.WHITE
         style = Paint.Style.STROKE
@@ -1226,7 +1226,7 @@ private fun droppedPinIcon(context: Context): android.graphics.drawable.BitmapDr
     val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color(0xFF00A884).toArgb()
+        color = Color(0xFFD81B60).toArgb()
         style = Paint.Style.FILL
     }
     val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {

@@ -8,8 +8,8 @@ import androidx.compose.ui.graphics.Color
 private val GeometricColorScheme = lightColorScheme(
     primary = GeometricGreenPrimary,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFE8F5E9),
-    onPrimaryContainer = Color(0xFF004D40),
+    primaryContainer = Color(0xFFFCE4EC),
+    onPrimaryContainer = Color(0xFF880E4F),
     secondary = GeometricGreenDark,
     onSecondary = Color.White,
     background = GeometricCanvasBg,

@@ -42,12 +42,12 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
-private val HeaderGreen = Color(0xFF008069)
+private val HeaderGreen = Color(0xFFAD1457)
 private val DarkBackground = Color(0xFFF7F9FA)
 private val CardBackground = Color(0xFFFFFFFF)
 private val TextMain = Color(0xFF111B21)
 private val TextSub = Color(0xFF667781)
-private val AccentGreen = Color(0xFF00A884)
+private val AccentGreen = Color(0xFFD81B60)
 private val BorderGrey = Color(0xFFE2E8F0)
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -160,7 +160,7 @@ fun ScheduleStreamScreen(
                         modifier = Modifier
                             .size(48.dp)
                             .clip(CircleShape)
-                            .background(Brush.linearGradient(listOf(Color(0xFF008069), Color(0xFF00A884)))),
+                            .background(Brush.linearGradient(listOf(Color(0xFFAD1457), Color(0xFFD81B60)))),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -629,7 +629,7 @@ fun ScheduleStreamScreen(
                         Switch(
                             checked = sendPushNotification,
                             onCheckedChange = { sendPushNotification = it },
-                            colors = SwitchDefaults.colors(checkedThumbColor = HeaderGreen, checkedTrackColor = Color(0xFFC8E6C9))
+                            colors = SwitchDefaults.colors(checkedThumbColor = HeaderGreen, checkedTrackColor = Color(0xFFF8BBD0))
                         )
                     }
                 }
@@ -658,7 +658,7 @@ fun ScheduleStreamScreen(
                         .weight(1f)
                         .height(52.dp)
                         .testTag("go_live_now_btn"),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD81B60)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Icon(Icons.Filled.Videocam, contentDescription = null, modifier = Modifier.size(20.dp), tint = Color.White)

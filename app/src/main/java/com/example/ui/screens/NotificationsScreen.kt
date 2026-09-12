@@ -57,8 +57,8 @@ import com.example.util.optStringOrNull
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-// Screen-local palette (same values as the settings screens).
-private val NotifGreenAccent = Color(0xFF008069)
+// Screen-local palette (dark pink palette).
+private val NotifGreenAccent = Color(0xFFAD1457)
 private val NotifTextPrimary = Color(0xFF111B21)
 private val NotifTextSecondary = Color(0xFF667781)
 private val NotifDanger = Color(0xFFEA4335)

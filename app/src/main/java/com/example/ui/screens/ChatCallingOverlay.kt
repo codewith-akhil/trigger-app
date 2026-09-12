@@ -49,8 +49,8 @@ fun ChatCallingOverlay(
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    if (isVideo) listOf(Color(0xFF075E54), Color(0xFF008069))
-                    else listOf(Color(0xFF075E54), Color(0xFF008069), Color(0xFF054C44))
+                    if (isVideo) listOf(Color(0xFF880E4F), Color(0xFFAD1457))
+                    else listOf(Color(0xFF880E4F), Color(0xFFAD1457), Color(0xFF700B40))
                 )
             )
             .statusBarsPadding()
@@ -95,7 +95,7 @@ fun ChatCallingOverlay(
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             CircularProgressIndicator(
-                                color = Color(0xFF25D366),
+                                color = Color(0xFFD81B60),
                                 strokeWidth = 3.dp,
                                 modifier = Modifier.size(36.dp)
                             )
@@ -171,7 +171,7 @@ fun ChatCallingOverlay(
 
             Text(
                 text = statusText,
-                color = if (session.state == CallState.CONNECTED) Color(0xFF25D366) else Color(0xFF8696A0),
+                color = if (session.state == CallState.CONNECTED) Color(0xFFD81B60) else Color(0xFF8696A0),
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium
             )
@@ -220,7 +220,7 @@ fun ChatCallingOverlay(
                     modifier = Modifier
                         .size(130.dp)
                         .clip(CircleShape)
-                        .border(2.dp, Color(0xFF25D366).copy(alpha = 0.5f), CircleShape)
+                        .border(2.dp, Color(0xFFD81B60).copy(alpha = 0.5f), CircleShape)
                         .background(Color(0xFF2A3942)),
                     contentAlignment = Alignment.Center
                 ) {
@@ -283,12 +283,12 @@ fun ChatCallingOverlay(
                         Text("Decline", color = Color(0xFF8696A0), fontSize = 12.sp)
                     }
 
-                    // Accept (green)
+                    // Accept (dark pink)
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         FloatingActionButton(
                             onClick = onAcceptCall,
                             shape = CircleShape,
-                            containerColor = Color(0xFF25D366),
+                            containerColor = Color(0xFFD81B60),
                             contentColor = Color.White,
                             modifier = Modifier.size(58.dp).testTag("accept_call_button")
                         ) {
@@ -300,7 +300,7 @@ fun ChatCallingOverlay(
                             )
                         }
                         Spacer(modifier = Modifier.height(6.dp))
-                        Text("Accept", color = Color(0xFF25D366), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("Accept", color = Color(0xFFD81B60), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             } else {
@@ -324,7 +324,7 @@ fun ChatCallingOverlay(
                     Icon(
                         imageVector = if (session.isSpeakerOn) Icons.Filled.VolumeUp else Icons.Filled.VolumeDown,
                         contentDescription = "Speaker",
-                        tint = if (session.isSpeakerOn) Color(0xFF25D366) else Color.White
+                        tint = if (session.isSpeakerOn) Color(0xFFD81B60) else Color.White
                     )
                 }
 
@@ -341,7 +341,7 @@ fun ChatCallingOverlay(
                     Icon(
                         imageVector = if (session.isVideoEnabled) Icons.Filled.Videocam else Icons.Filled.VideocamOff,
                         contentDescription = "Video",
-                        tint = if (session.isVideoEnabled) Color(0xFF25D366) else Color(0xFFEA4335)
+                        tint = if (session.isVideoEnabled) Color(0xFFD81B60) else Color(0xFFEA4335)
                     )
                 }
 

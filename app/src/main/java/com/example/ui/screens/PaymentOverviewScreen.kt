@@ -166,14 +166,14 @@ fun PaymentOverviewScreen(
                             Icon(
                                 imageVector = Icons.Filled.Lock,
                                 contentDescription = null,
-                                tint = Color(0xFFA7E8D8),
+                                tint = Color(0xFFF8BBD0),
                                 modifier = Modifier.size(11.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = "256-Bit SSL Encrypted Checkout",
                                 fontSize = 11.sp,
-                                color = Color(0xFFA7E8D8)
+                                color = Color(0xFFF8BBD0)
                             )
                         }
                     }
@@ -477,8 +477,8 @@ fun PaymentOverviewScreen(
             // ----------------------------------------------------------------
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = Color(0xFFE8F5E9).copy(alpha = 0.6f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFC8E6C9)),
+                color = Color(0xFFFCE4EC).copy(alpha = 0.7f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF8BBD0)),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -497,12 +497,12 @@ fun PaymentOverviewScreen(
                             text = "Billing to: ${userProfile.name.ifBlank { "Current User" }}",
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 13.sp,
-                            color = Color(0xFF1B5E20)
+                            color = Color(0xFF880E4F)
                         )
                         Text(
                             text = userProfile.email.ifBlank { "user@trigger.app" },
                             fontSize = 11.5.sp,
-                            color = Color(0xFF2E7D32)
+                            color = Color(0xFFAD1457)
                         )
                     }
                 }

@@ -33,7 +33,7 @@ import com.example.service.supabase.SupabaseResult
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-private val ScreenGreenHeader = Color(0xFF008069)
+private val ScreenGreenHeader = Color(0xFFAD1457)
 private val ScreenBg = Color(0xFFF7F8FA)
 private val CardBg = Color(0xFFFFFFFF)
 private val TextPrimary = Color(0xFF111B21)

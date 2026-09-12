@@ -127,7 +127,7 @@ fun ChatContactInfoSheet(
                                 modifier = Modifier
                                     .size(100.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFF25D366)),
+                                    .background(Color(0xFFD81B60)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (contactAvatarRes != null) {
@@ -657,7 +657,7 @@ fun ChatContactInfoSheet(
             },
             dismissButton = {
                 TextButton(onClick = { showBlockDialog = false }) {
-                    Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
+                    Text("Cancel", color = Color(0xFFAD1457), fontWeight = FontWeight.SemiBold)
                 }
             }
         )
@@ -698,7 +698,7 @@ fun ChatContactInfoSheet(
             },
             dismissButton = {
                 TextButton(onClick = { showUnblockDialog = false }) {
-                    Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
+                    Text("Cancel", color = Color(0xFFAD1457), fontWeight = FontWeight.SemiBold)
                 }
             }
         )
@@ -817,12 +817,12 @@ fun ChatContactInfoSheet(
                         showReportDialog = false
                     }
                 ) {
-                    Text("Report", color = Color(0xFF008069), fontWeight = FontWeight.Bold)
+                    Text("Report", color = Color(0xFFAD1457), fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showReportDialog = false }) {
-                    Text("Cancel", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
+                    Text("Cancel", color = Color(0xFFAD1457), fontWeight = FontWeight.SemiBold)
                 }
             }
         )

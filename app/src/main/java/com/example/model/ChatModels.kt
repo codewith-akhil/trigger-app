@@ -9,7 +9,7 @@ data class ChatItem(
     /** The peer's profile photo URL (Room peerAvatarUrl) — rendered with
      *  AsyncImage; takes precedence over the legacy local drawable. */
     val avatarUrl: String? = null,
-    val initialColor: Long = 0xFF00A884,
+    val initialColor: Long = 0xFFD81B60,
     val lastMessage: String,
     val timestamp: String,
     val unreadCount: Int = 0,

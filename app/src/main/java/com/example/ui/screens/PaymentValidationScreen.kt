@@ -158,7 +158,7 @@ fun PaymentValidationScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showLeaveConfirmDialog = false }) {
-                    Text("Stay", color = Color(0xFF008069), fontWeight = FontWeight.SemiBold)
+                    Text("Stay", color = Color(0xFFAD1457), fontWeight = FontWeight.SemiBold)
                 }
             }
         )
@@ -251,14 +251,14 @@ fun PaymentValidationScreen(
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0xFFD1FADF))
+                                    .background(Color(0xFFFCE4EC))
                                     .padding(horizontal = 16.dp, vertical = 4.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Filled.Chat,
                                     contentDescription = "Chats",
-                                    tint = Color(0xFF008069),
+                                    tint = Color(0xFFAD1457),
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
@@ -267,7 +267,7 @@ fun PaymentValidationScreen(
                                 text = "Chats",
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF008069)
+                                color = Color(0xFFAD1457)
                             )
                         }
 

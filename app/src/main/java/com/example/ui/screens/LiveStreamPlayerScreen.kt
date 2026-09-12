@@ -69,7 +69,7 @@ fun LiveStreamPlayerScreen(
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(color = Color(0xFF25D366), strokeWidth = 3.dp)
+                CircularProgressIndicator(color = Color(0xFFD81B60), strokeWidth = 3.dp)
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(
                     text = "Loading live stream…",
@@ -137,7 +137,7 @@ fun LiveStreamPlayerScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(color = Color(0xFF25D366), strokeWidth = 3.dp)
+                            CircularProgressIndicator(color = Color(0xFFD81B60), strokeWidth = 3.dp)
                             Spacer(modifier = Modifier.height(14.dp))
                             Text(
                                 text = "Connecting to live broadcast…",
@@ -214,8 +214,8 @@ fun LiveStreamPlayerScreen(
                                     }
                                 },
                                 colors = ButtonDefaults.textButtonColors(
-                                    containerColor = Color(0xFF25D366).copy(alpha = 0.18f),
-                                    contentColor = Color(0xFF25D366)
+                                    containerColor = Color(0xFFD81B60).copy(alpha = 0.18f),
+                                    contentColor = Color(0xFFD81B60)
                                 ),
                                 shape = RoundedCornerShape(20.dp)
                             ) {
@@ -257,7 +257,7 @@ fun LiveStreamPlayerScreen(
                         modifier = Modifier
                             .size(34.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF008069)),
+                            .background(Color(0xFFAD1457)),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -281,7 +281,7 @@ fun LiveStreamPlayerScreen(
                         )
                         Text(
                             text = stream.category,
-                            color = Color(0xFF25D366),
+                            color = Color(0xFFD81B60),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium
                         )
@@ -403,7 +403,7 @@ fun LiveStreamPlayerScreen(
                         ) {
                             Text(
                                 text = "${comment.userName}: ",
-                                color = Color(0xFF25D366),
+                                color = Color(0xFFD81B60),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp
                             )
@@ -509,7 +509,7 @@ fun LiveStreamPlayerScreen(
                                         }
                                     }
                                 ) {
-                                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Color(0xFF25D366))
+                                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Color(0xFFD81B60))
                                 }
                             }
                         }

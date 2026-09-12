@@ -41,8 +41,8 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
-private val TriggerGreenAccent = Color(0xFF008069)
-private val TriggerFabGreen = Color(0xFF00A884)
+private val TriggerGreenAccent = Color(0xFFAD1457)
+private val TriggerFabGreen = Color(0xFFD81B60)
 private val TriggerTextPrimary = Color(0xFF111B21)
 private val TriggerTextSecondary = Color(0xFF667781)
 private val TriggerLightBg = Color(0xFFF7F8FA)

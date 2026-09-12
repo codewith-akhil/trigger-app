@@ -23,14 +23,14 @@ import com.example.service.supabase.SupabaseResult
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-private val ScreenGreenHeader = Color(0xFF008069)
+private val ScreenGreenHeader = Color(0xFFAD1457)
 private val ScreenBg = Color(0xFFF7F8FA)
 private val CardBg = Color(0xFFFFFFFF)
 private val TextPrimary = Color(0xFF111B21)
 private val TextSecondary = Color(0xFF667781)
 private val IconTint = Color(0xFF54656F)
 private val DividerColor = Color(0xFFF0F2F5)
-private val SwitchGreen = Color(0xFF00A884)
+private val SwitchGreen = Color(0xFFD81B60)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

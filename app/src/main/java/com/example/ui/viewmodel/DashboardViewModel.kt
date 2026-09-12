@@ -202,7 +202,7 @@ class DashboardViewModel : ViewModel() {
                         peerId = otherId.takeIf { it.isNotBlank() },
                         name = obj.optString("peer_name", "Unknown"),
                         avatarRes = null,
-                        initialColor = obj.optLong("peer_avatar_color", 0xFF00A884),
+                        initialColor = obj.optLong("peer_avatar_color", 0xFFD81B60),
                         lastMessage = obj.optString("last_message", ""),
                         timestamp = lastMessageAt,
                         lastActivityMillis = lastActivityMillis,

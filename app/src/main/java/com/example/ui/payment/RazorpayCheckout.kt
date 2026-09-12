@@ -31,7 +31,7 @@ data class RazorpayCheckoutParams(
     val prefillName: String? = null,
     val prefillEmail: String? = null,
     val prefillContact: String? = null,
-    val themeColorHex: String = "#008069" // Trigger brand green
+    val themeColorHex: String = "#AD1457" // Trigger brand dark pink
 ) {
     fun toCheckoutJson(): JSONObject = JSONObject().apply {
         put("order_id", orderId)

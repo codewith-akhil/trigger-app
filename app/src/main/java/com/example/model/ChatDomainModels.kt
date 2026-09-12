@@ -125,7 +125,7 @@ data class DomainConversation(
     /** The OTHER user's profile photo URL (Room peerAvatarUrl — sync pull /
      *  profile-resolved). Rendered by the chat list when non-null. */
     val peerAvatarUrl: String? = null,
-    val initialColor: Long = 0xFF00A884,
+    val initialColor: Long = 0xFFD81B60,
     val lastMessage: String = "",
     val timestamp: String = "",
     val unreadCount: Int = 0,
