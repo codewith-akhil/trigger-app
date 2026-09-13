@@ -106,7 +106,8 @@ async function handler(req: Request): Promise<Response> {
     .from("feed_posts")
     .select(`
       id, author_id, description, media_type, post_type, price_amount,
-      currency, status, created_at, updated_at, published_at
+      currency, status, created_at, updated_at, published_at,
+      like_count, comment_count
     `);
 
   if (scope === "drafts") {
@@ -153,6 +154,14 @@ async function handler(req: Request): Promise<Response> {
     .eq("buyer_id", userId)
     .in("post_id", postIds);
   const unlockedSet = new Set((unlocks ?? []).map((u) => u.post_id));
+
+  // Caller's likes (for isLikedByMe badges)
+  const { data: myLikes } = await supabase
+    .from("feed_post_likes")
+    .select("post_id")
+    .eq("user_id", userId)
+    .in("post_id", postIds);
+  const likedSet = new Set((myLikes ?? []).map((l) => l.post_id));
 
   // ---------------------------------------------------------------------
   // Signed URLs — full only when visible; tiny preview for locked images
@@ -226,6 +235,9 @@ async function handler(req: Request): Promise<Response> {
       media,
       isMine,
       isUnlocked,
+      likeCount: p.like_count ?? 0,
+      commentCount: p.comment_count ?? 0,
+      isLikedByMe: likedSet.has(p.id),
     };
   });
 

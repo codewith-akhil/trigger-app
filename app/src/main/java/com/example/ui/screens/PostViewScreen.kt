@@ -86,9 +86,11 @@ fun PostViewScreen(
     val reportedCommentIds by feedRepository.reportedCommentIds.collectAsState()
 
     // Re-fetch the post on open — signed media URLs expire (1h TTL) and the
-    // unlock state may have changed on another device.
+    // unlock state may have changed on another device. Also (re)load the
+    // post's comments from the backend (server-persisted likes/comments).
     LaunchedEffect(postId) {
         feedRepository.getPostLive(postId)
+        feedRepository.loadComments(postId)
     }
 
     var showCommentsSheet by remember { mutableStateOf(false) }

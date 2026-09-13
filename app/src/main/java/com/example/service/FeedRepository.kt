@@ -11,6 +11,10 @@ import com.example.model.FeedPost
 import com.example.model.PostComment
 import com.example.model.PostMediaType
 import com.example.model.PostType
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,12 +32,16 @@ sealed class FeedResult {
 }
 
 /**
- * REAL feed backend — every post, draft and media file lives in Supabase
- * (tables `feed_posts` / `feed_post_media` / `post_unlocks`, bucket
+ * REAL feed backend — every post, draft, media file, like and comment lives in
+ * Supabase (tables `feed_posts` / `feed_post_media` / `post_unlocks` /
+ * `feed_post_likes` / `feed_comments` / `feed_comment_likes`, bucket
  * `feed-media`). There is NO mock or seed data in the app anymore.
  *
- * Likes and comments are session overlays for now (in-memory) — they reset
- * on app restart and are never faked with counts.
+ * Engagement is SERVER-PERSISTENT via edge functions (toggle-post-like,
+ * add-post-comment, toggle-comment-like, get-post-comments). The client keeps
+ * in-memory comment lists only as a render cache for the open post; counters
+ * and like state always come from the server (optimistic UI reconciled with
+ * the authoritative response).
  */
 class FeedRepository(context: Context) {
 
@@ -62,11 +70,13 @@ class FeedRepository(context: Context) {
     private val _backendMissing = MutableStateFlow<String?>(null)
     val backendMissing: StateFlow<String?> = _backendMissing.asStateFlow()
 
-    // Session-only engagement overlays (NOT persisted, never seeded)
-    private val likedPostIds = mutableSetOf<String>()
-    private val likeDeltas = mutableMapOf<String, Int>()
+    // Render cache for the open post's comments (server data, refreshed on
+    // every post open via get-post-comments). NOT the source of truth —
+    // counters/like state come from the server responses.
     private val commentsByPost = mutableMapOf<String, MutableList<PostComment>>()
-    private val likedCommentIds = mutableSetOf<String>()
+
+    /** Background scope for optimistic UI + server reconciliation. */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _reportedCommentIds = MutableStateFlow<Set<String>>(emptySet())
     val reportedCommentIds: StateFlow<Set<String>> = _reportedCommentIds.asStateFlow()
@@ -101,7 +111,6 @@ class FeedRepository(context: Context) {
         }
 
         val comments = commentsByPost[obj.optString("id")] ?: emptyList()
-        val likeDelta = likeDeltas[obj.optString("id")] ?: 0
         val isMine = obj.optBoolean("isMine", false)
 
         return FeedPost(
@@ -118,9 +127,9 @@ class FeedRepository(context: Context) {
             timestamp = obj.optLong("publishedAt", 0L).takeIf { it > 0 }
                 ?: (obj.optString("publishedAt").takeIf { it.isNotBlank() }?.let { parseIsoDate(it) }
                     ?: System.currentTimeMillis()),
-            likesCount = likeDelta.coerceAtLeast(0),
-            isLikedByMe = likedPostIds.contains(obj.optString("id")),
-            commentsCount = comments.size,
+            likesCount = obj.optInt("likeCount", 0),
+            isLikedByMe = obj.optBoolean("isLikedByMe", false),
+            commentsCount = if (comments.isNotEmpty()) comments.size else obj.optInt("commentCount", 0),
             comments = comments,
             isUnlocked = obj.optBoolean("isUnlocked", false),
             isMine = isMine,
@@ -456,47 +465,149 @@ class FeedRepository(context: Context) {
     }
 
     // --------------------------------------------------------------------
-    // Session engagement overlays
+    // Engagement — server-persistent (likes + comments), optimistic UI
     // --------------------------------------------------------------------
     fun getPost(postId: String): FeedPost? =
         _posts.value.find { it.id == postId } ?: _drafts.value.find { it.id == postId }
 
-    fun toggleLike(postId: String) {
-        val willLike = !likedPostIds.contains(postId)
-        if (willLike) likedPostIds.add(postId) else likedPostIds.remove(postId)
-        likeDeltas[postId] = ((likeDeltas[postId] ?: 0) + if (willLike) 1 else -1).coerceAtLeast(0)
-
-        fun bump(p: FeedPost) = if (p.id == postId) {
-            p.copy(isLikedByMe = willLike, likesCount = (p.likesCount + if (willLike) 1 else -1).coerceAtLeast(0))
-        } else p
-        _posts.value = _posts.value.map(::bump)
-        _drafts.value = _drafts.value.map(::bump)
+    private fun bumpPost(postId: String, transform: (FeedPost) -> FeedPost) {
+        _posts.value = _posts.value.map { if (it.id == postId) transform(it) else it }
+        _drafts.value = _drafts.value.map { if (it.id == postId) transform(it) else it }
     }
 
+    /** Server comment JSON → UI model. */
+    private fun parseComment(o: JSONObject): PostComment = PostComment(
+        id = o.optString("id"),
+        authorId = o.optString("authorId"),
+        authorName = o.optString("authorName", "Creator"),
+        authorAvatarUrl = o.optString("authorAvatarUrl", "").takeIf { it.isNotBlank() },
+        text = o.optString("body", ""),
+        timestamp = parseIsoDate(o.optString("createdAt")) ?: System.currentTimeMillis(),
+        likesCount = o.optInt("likesCount", 0),
+        isLiked = o.optBoolean("likedByMe", false)
+    )
+
+    /**
+     * Load (or refresh) the post's comments from the server. Called on post
+     * open — PostViewScreen LaunchedEffect.
+     */
+    suspend fun loadComments(postId: String): FeedResult {
+        val res = client.invokeFunction(
+            "get-post-comments",
+            JSONObject().put("postId", postId).put("limit", 50).put("offset", 0)
+        )
+        return when (res) {
+            is SupabaseResult.Success -> {
+                val list = mutableListOf<PostComment>()
+                val arr = res.data.optJSONArray("comments") ?: JSONArray()
+                for (i in 0 until arr.length()) list.add(parseComment(arr.getJSONObject(i)))
+                commentsByPost[postId] = list
+                bumpPost(postId) { it.copy(comments = list.toList(), commentsCount = list.size) }
+                FeedResult.Success
+            }
+            is SupabaseResult.Error -> {
+                Log.w(TAG, "loadComments failed: ${res.message}")
+                mapFunctionError(res.message)
+            }
+        }
+    }
+
+    /**
+     * Optimistic like flip, then server toggle; the authoritative likeCount /
+     * liked state from the response replaces the optimistic values.
+     */
+    fun toggleLike(postId: String) {
+        val current = getPost(postId) ?: return
+        val willLike = !current.isLikedByMe
+        bumpPost(postId) {
+            it.copy(
+                isLikedByMe = willLike,
+                likesCount = (it.likesCount + if (willLike) 1 else -1).coerceAtLeast(0)
+            )
+        }
+        scope.launch {
+            val res = client.invokeFunction(
+                "toggle-post-like", JSONObject().put("postId", postId)
+            )
+            if (res is SupabaseResult.Success) {
+                val liked = res.data.optBoolean("liked", willLike)
+                val count = res.data.optInt("likeCount", -1)
+                bumpPost(postId) {
+                    it.copy(
+                        isLikedByMe = liked,
+                        likesCount = if (count >= 0) count else it.likesCount
+                    )
+                }
+            } else if (res is SupabaseResult.Error) {
+                Log.w(TAG, "toggleLike server call failed, keeping optimistic state: ${res.message}")
+            }
+        }
+    }
+
+    /**
+     * Optimistic append, then server insert; on success the local placeholder
+     * is replaced by the server row (real id, profile, counters).
+     */
     fun addComment(postId: String, comment: PostComment) {
         val list = commentsByPost.getOrPut(postId) { mutableListOf() }
         list.add(comment)
-        fun bump(p: FeedPost) = if (p.id == postId) {
-            p.copy(comments = list.toList(), commentsCount = list.size)
-        } else p
-        _posts.value = _posts.value.map(::bump)
-        _drafts.value = _drafts.value.map(::bump)
+        bumpPost(postId) { it.copy(comments = list.toList(), commentsCount = list.size) }
+        scope.launch {
+            val res = client.invokeFunction(
+                "add-post-comment",
+                JSONObject().put("postId", postId).put("body", comment.text)
+            )
+            if (res is SupabaseResult.Success) {
+                val server = res.data.optJSONObject("comment")
+                val count = res.data.optInt("commentCount", -1)
+                if (server != null) {
+                    val fresh = parseComment(server)
+                    val updated = commentsByPost.getOrPut(postId) { mutableListOf() }
+                    val idx = updated.indexOfFirst { it.id == comment.id }
+                    if (idx >= 0) updated[idx] = fresh else updated.add(fresh)
+                    bumpPost(postId) {
+                        it.copy(
+                            comments = updated.toList(),
+                            commentsCount = if (count >= 0) count else updated.size
+                        )
+                    }
+                }
+            } else if (res is SupabaseResult.Error) {
+                Log.w(TAG, "addComment server call failed, keeping optimistic state: ${res.message}")
+            }
+        }
     }
 
+    /** Optimistic comment-like flip, reconciled with the server response. */
     fun toggleCommentLike(postId: String, commentId: String) {
-        val willLike = !likedCommentIds.contains(commentId)
-        if (willLike) likedCommentIds.add(commentId) else likedCommentIds.remove(commentId)
         val list = commentsByPost[postId] ?: return
         val idx = list.indexOfFirst { it.id == commentId }
-        if (idx >= 0) {
-            val c = list[idx]
-            list[idx] = c.copy(
-                isLiked = willLike,
-                likesCount = (c.likesCount + if (willLike) 1 else -1).coerceAtLeast(0)
+        if (idx < 0) return
+        val willLike = !list[idx].isLiked
+        list[idx] = list[idx].copy(
+            isLiked = willLike,
+            likesCount = (list[idx].likesCount + if (willLike) 1 else -1).coerceAtLeast(0)
+        )
+        bumpPost(postId) { it.copy(comments = list.toList()) }
+        scope.launch {
+            val res = client.invokeFunction(
+                "toggle-comment-like", JSONObject().put("commentId", commentId)
             )
-            fun bump(p: FeedPost) = if (p.id == postId) p.copy(comments = list.toList()) else p
-            _posts.value = _posts.value.map(::bump)
-            _drafts.value = _drafts.value.map(::bump)
+            if (res is SupabaseResult.Success) {
+                val liked = res.data.optBoolean("liked", willLike)
+                val count = res.data.optInt("likesCount", -1)
+                val current = commentsByPost[postId] ?: return@launch
+                val i = current.indexOfFirst { it.id == commentId }
+                if (i >= 0) {
+                    current[i] = current[i].copy(
+                        isLiked = liked,
+                        likesCount = if (count >= 0) count else current[i].likesCount
+                    )
+                    bumpPost(postId) { it.copy(comments = current.toList()) }
+                }
+            } else if (res is SupabaseResult.Error) {
+                Log.w(TAG, "toggleCommentLike server call failed: ${res.message}")
+            }
         }
     }
 
