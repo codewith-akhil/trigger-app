@@ -7,9 +7,11 @@ import com.example.config.BackendConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -247,11 +249,109 @@ class SupabaseClient(
     private val _reconnectSignals = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     val reconnectSignals: SharedFlow<Unit> = _reconnectSignals.asSharedFlow()
 
+    // Live connection state for the UI / health checks. False while the
+    // socket is dead, reconnecting, or never opened.
+    private val _realtimeConnected = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val realtimeConnected: kotlinx.coroutines.flow.StateFlow<Boolean> =
+        _realtimeConnected.asStateFlow()
+
     // Tracks the last connectRealtime args so auto-reconnect can re-subscribe.
     private var lastRealtimeTables: List<String> = emptyList()
     private var lastRealtimeFilter: String? = null
     private var hasConnectedBefore = false
     private val realtimeFailureCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+    // Phoenix heartbeat — Supabase Realtime (Phoenix protocol) REQUIRES the
+    // client to send a heartbeat on the socket itself. OkHttp's TCP-level
+    // pingInterval keeps the transport alive but the SERVER side drops
+    // clients it considers idle, and half-open connections stay silent until
+    // the next send. A 25s heartbeat + ack tracking detects both.
+    private var heartbeatJob: kotlinx.coroutines.Job? = null
+    private val heartbeatRef = java.util.concurrent.atomic.AtomicInteger(0)
+    @Volatile private var lastRealtimeTrafficMs: Long = 0L
+    private val HEARTBEAT_INTERVAL_MS = 25_000L
+    private val HEARTBEAT_STALE_MS = 65_000L   // 2+ unanswered heartbeats
+
+    /**
+     * Health-check + repair entry point. Call on app foreground: if the
+     * socket is dead (or was never opened since the last drop) this
+     * re-connects with the last subscription args. No-op when healthy.
+     */
+    fun ensureRealtimeConnected() {
+        if (currentSession == null) return
+        if (realtimeSocket != null && _realtimeConnected.value) return
+        Log.i(TAG, "ensureRealtimeConnected: socket dead — reconnecting")
+        connectRealtime(
+            lastRealtimeTables.ifEmpty {
+                listOf(
+                    "public.messages", "public.conversations",
+                    "public.user_presences", "public.live_location_shares"
+                )
+            },
+            lastRealtimeFilter
+        )
+    }
+
+    /**
+     * Single death path for every way a socket can die (failure, server
+     * close, heartbeat timeout, phx_error). Only the CURRENT socket may
+     * schedule a reconnect — a replaced socket's callbacks are ignored, and
+     * the delayed reconnect skips itself when a newer socket already exists.
+     * Without this, one dead socket made the app deaf for the WHOLE session:
+     * the old guard compared against a non-null dead reference so the
+     * auto-reconnect never fired.
+     */
+    private fun onSocketDead(socket: WebSocket, why: String) {
+        val wasCurrent = (socket === realtimeSocket)
+        if (!wasCurrent) return          // already replaced — nothing to do
+        realtimeSocket = null
+        stopRealtimeHeartbeat()
+        _realtimeConnected.value = false
+        Log.w(TAG, "Realtime socket dead ($why) — scheduling reconnect")
+        if (currentSession == null) return
+        val attempt = realtimeFailureCount.incrementAndGet().coerceAtMost(5)
+        val backoffMs = (1000L * (1L shl attempt)).coerceAtMost(32_000L)
+        clientScope.launch {
+            kotlinx.coroutines.delay(backoffMs)
+            if (currentSession != null && realtimeSocket == null) {
+                connectRealtime(lastRealtimeTables, lastRealtimeFilter)
+            }
+        }
+    }
+
+    private fun startRealtimeHeartbeat(ws: WebSocket) {
+        heartbeatJob?.cancel()
+        lastRealtimeTrafficMs = System.currentTimeMillis()
+        heartbeatJob = clientScope.launch {
+            while (isActive) {
+                kotlinx.coroutines.delay(HEARTBEAT_INTERVAL_MS)
+                val socket = realtimeSocket
+                if (socket == null || socket !== ws) break
+                val silence = System.currentTimeMillis() - lastRealtimeTrafficMs
+                if (silence > HEARTBEAT_STALE_MS) {
+                    onSocketDead(socket, "heartbeat timeout ${silence}ms")
+                    break
+                }
+                try {
+                    socket.send(
+                        JSONObject()
+                            .put("topic", "phoenix")
+                            .put("event", "heartbeat")
+                            .put("payload", JSONObject())
+                            .put("ref", heartbeatRef.incrementAndGet().toString())
+                            .toString()
+                    )
+                } catch (_: Exception) {
+                    // Send failed → socket is dying; onFailure/onClosing will fire.
+                }
+            }
+        }
+    }
+
+    private fun stopRealtimeHeartbeat() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+    }
 
     /**
      * Connects to the Supabase Realtime WebSocket and subscribes to the given
@@ -289,10 +389,16 @@ class SupabaseClient(
             .addHeader("Authorization", "Bearer $token")
             .build()
 
+        // Supersede any orphaned in-flight socket (raced reconnects could
+        // otherwise leave two live sockets receiving duplicate events).
+        realtimeSocket?.close(1000, "Superseded")
+
         realtimeSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.i(TAG, "Realtime WebSocket connected")
                 realtimeFailureCount.set(0)
+                _realtimeConnected.value = true
+                startRealtimeHeartbeat(webSocket)
                 // Emit on EVERY successful open — INCLUDING the first connect
                 // of the process. The old `if (hasConnectedBefore)` guard
                 // suppressed the signal exactly when it mattered most: the
@@ -346,6 +452,29 @@ class SupabaseClient(
                     val event = json.optString("event", "")
                     val payload = json.optJSONObject("payload") ?: return
 
+                    // ANY inbound traffic proves the connection is alive —
+                    // heartbeats, join replies, everything.
+                    lastRealtimeTrafficMs = System.currentTimeMillis()
+
+                    // Server closed the channel/subscription — treat as death.
+                    if (event == "phx_error") {
+                        Log.w(TAG, "Realtime phx_error — reconnecting")
+                        onSocketDead(webSocket, "phx_error")
+                        return
+                    }
+                    if (event == "phx_close") {
+                        Log.i(TAG, "Realtime phx_close")
+                        onSocketDead(webSocket, "phx_close")
+                        return
+                    }
+                    if (event == "phx_reply") {
+                        val status = payload.optString("status", "")
+                        if (status == "error") {
+                            Log.w(TAG, "Realtime reply error on ${json.optString("topic")}: $payload")
+                        }
+                        return
+                    }
+
                     // Realtime change events come as "INSERT" / "UPDATE" / "DELETE"
                     if (event == "INSERT" || event == "UPDATE" || event == "DELETE") {
                         val data = payload.optJSONObject("data") ?: payload
@@ -370,23 +499,18 @@ class SupabaseClient(
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 webSocket.close(1000, null)
                 Log.i(TAG, "Realtime WebSocket closing: $code $reason")
+                // A server-side close (idle GC, deploy, load balancer) used to
+                // leave the app deaf — the socket was never replaced.
+                onSocketDead(webSocket, "closed by server ($code)")
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e(TAG, "Realtime WebSocket failure: ${t.message}")
-                // Exponential backoff (2s → 32s cap) on the client scope —
-                // the previous bare fixed-3s Thread spun forever while offline
-                // and raced fresh connectRealtime calls from a new login.
-                if (currentSession == null) return
-                val attempt = (realtimeFailureCount.incrementAndGet()).coerceAtMost(5)
-                val backoffMs = (1000L * (1L shl attempt)).coerceAtMost(32_000L)
-                clientScope.launch {
-                    kotlinx.coroutines.delay(backoffMs)
-                    if (currentSession != null && realtimeSocket == null) {
-                        Log.i(TAG, "Auto-reconnecting Realtime WebSocket (backoff ${backoffMs}ms)...")
-                        connectRealtime(lastRealtimeTables, lastRealtimeFilter)
-                    }
-                }
+                // onSocketDead nulls the dead reference BEFORE the backoff
+                // check — the previous inline guard tested against the dead
+                // (non-null) socket, so auto-reconnect never fired and the app
+                // stopped receiving live events until a process restart.
+                onSocketDead(webSocket, "failure: ${t?.message ?: "unknown"}")
             }
         })
     }
@@ -395,6 +519,8 @@ class SupabaseClient(
      * Disconnects the Realtime WebSocket. Call on logout.
      */
     fun disconnectRealtime() {
+        stopRealtimeHeartbeat()
+        _realtimeConnected.value = false
         realtimeSocket?.close(1000, "User logged out")
         realtimeSocket = null
         Log.i(TAG, "Realtime WebSocket disconnected")

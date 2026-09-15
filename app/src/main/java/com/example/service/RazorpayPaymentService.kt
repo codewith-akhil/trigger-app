@@ -91,8 +91,11 @@ class RazorpayPaymentService {
                 }
             }
             is SupabaseResult.Error -> {
+                // Technical detail → Logcat only. The user-safe copy must
+                // NEVER leak server-side configuration state ("keys are not
+                // configured", HTTP codes, etc.).
                 Log.e(TAG, "create-razorpay-order failed: ${res.message}")
-                RazorpayOrderResult.Failed(res.message)
+                RazorpayOrderResult.Failed("Payments are temporarily unavailable. Please try again later.")
             }
         }
     }

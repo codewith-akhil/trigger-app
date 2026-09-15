@@ -96,6 +96,22 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 override fun onStart(owner: LifecycleOwner) {
                     // App came to foreground
                     (com.example.di.AppServiceContainer.presenceService as? com.example.service.PresenceServiceImpl)?.onAppForeground()
+                    // WhatsApp-style resume: Android killed our sockets while
+                    // backgrounded (almost always). Repair the Realtime
+                    // connection if dead, then pull everything missed during
+                    // the gap — the user must NEVER return to a stale chat.
+                    if (com.example.di.AppServiceContainer.supabaseClient.hasActiveSession()) {
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            try {
+                                com.example.di.AppServiceContainer.supabaseClient.ensureRealtimeConnected()
+                            } catch (_: Exception) {
+                            }
+                            try {
+                                com.example.di.AppServiceContainer.messageService.backgroundCatchUpSync()
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
                 }
 
                 override fun onStop(owner: LifecycleOwner) {

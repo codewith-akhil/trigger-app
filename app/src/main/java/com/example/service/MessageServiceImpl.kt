@@ -259,17 +259,28 @@ class MessageServiceImpl(
                 }
             }
 
-            // Reconnect signal — pull what the CURRENT chat missed during the
-            // WebSocket gap, using ITS OWN watermark.
+            // Reconnect signal — the socket just came back. The old handler
+            // pulled ONLY the currently open conversation, leaving every
+            // other chat stale until it was opened. Run the full WhatsApp
+            // catch-up instead: every recent conversation, watermark-scoped,
+            // plus a fresh outbox retry. Debounced so a flapping connection
+            // doesn't hammer the sync endpoints.
             scope.launch {
+                var lastCatchUpAt = 0L
                 AppServiceContainer.supabaseClient.reconnectSignals.collect {
-                    val conv = activeConversationId ?: return@collect
-                    Log.i(TAG, "Realtime reconnected — pulling missed messages for $conv")
+                    val now = System.currentTimeMillis()
+                    if (now - lastCatchUpAt < 4_000L) return@collect
+                    lastCatchUpAt = now
+                    Log.i(TAG, "Realtime (re)connected — full catch-up")
                     try {
-                        val lastTs = prefs?.getLong(lastSyncKey(conv), 0L) ?: 0L
-                        syncMessages(conversationId = conv, sinceTs = lastTs)
+                        retryPendingOutbox()
                     } catch (e: Exception) {
-                        Log.w(TAG, "Post-reconnect sync failed: ${e.message}")
+                        Log.w(TAG, "post-reconnect outbox retry failed: ${e.message}")
+                    }
+                    try {
+                        backgroundCatchUpSync()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Post-reconnect catch-up failed: ${e.message}")
                     }
                 }
             }
